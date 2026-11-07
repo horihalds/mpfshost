@@ -1,0 +1,9 @@
+# Scratch space for temporary files (see AGENTS.md)
+tmp/
+
+# Build output
+build/
+compile_commands.json
+
+# JetBrains Junie session artifacts
+.junie/

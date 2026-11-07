@@ -1,0 +1,5 @@
+# No plugin payload is vendored: mpfshost does not use any MemProcFS plugin, but the directory has
+# to exist or VMMDLL_InitializePlugins reports it missing and the handle is discarded. This file
+# keeps the empty directory tracked.
+*
+!.gitignore

@@ -1,0 +1,21 @@
+[Unit]
+Description=mpfshost MemProcFS host
+Documentation=file://@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_DOCDIR@/README.md
+After=libvirtd.service
+
+[Service]
+Type=simple
+# MemProcFS reads guest memory through the QEMU process, so the host needs root and broad /proc
+# access; keep the sandbox conservative instead of breaking the device connection.
+# The unit runs with the binary's default access policy: only members of group mpfshost may connect,
+# and the socket is created 0660 and owned by that group. --allow-all, --allow-uid, --allow-user,
+# --allow-gid, --allow-group, --socket-group and --socket-mode in ExecStart are the override points.
+ExecStart=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/mpfshost --socket /run/mpfshost.sock
+Restart=on-failure
+RestartSec=2s
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

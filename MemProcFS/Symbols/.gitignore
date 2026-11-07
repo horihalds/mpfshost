@@ -1,0 +1,4 @@
+# Symbol caches downloaded at runtime stay out of the tree; this file keeps the directory itself
+# tracked, because MemProcFS expects MemProcFS/Symbols next to vmm.so.
+*
+!.gitignore
