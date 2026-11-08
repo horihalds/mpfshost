@@ -190,6 +190,11 @@ TEST_CASE("MCP hides write tools unless explicitly enabled", "[mcp][protocol][to
     CHECK(hidden.lines.back().find("\"name\":\"write_memory\"") == std::string::npos);
     CHECK(hidden.lines.back().find("\"name\":\"write_vfs\"") == std::string::npos);
     CHECK(hidden.lines.back().find("\"name\":\"config_set\"") == std::string::npos);
+
+    const auto visible = runMcp({initializeRequest(), kInitialized, kToolsList}, true);
+    REQUIRE(visible.lines.size() == 2);
+    CHECK(visible.lines.back().find("\"name\":\"write_memory\"") != std::string::npos);
+    CHECK(visible.lines.back().find("\"destructiveHint\":true") != std::string::npos);
 }
 
 TEST_CASE("MCP tool calls reject unknown and disabled tools", "[mcp][protocol][tools]")
@@ -202,6 +207,17 @@ TEST_CASE("MCP tool calls reject unknown and disabled tools", "[mcp][protocol][t
                     R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"nope","arguments":{}}})"});
         REQUIRE(run.lines.size() == 2);
         CHECK(run.lines.back().find("\"code\":-32602") != std::string::npos);
+    }
+
+    SECTION("hidden write tool is rejected as an error result")
+    {
+        const auto run = runMcp(
+            {initializeRequest(),
+             kInitialized,
+             R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write_memory","arguments":{}}})"});
+        REQUIRE(run.lines.size() == 2);
+        CHECK(run.lines.back().find("\"isError\":true") != std::string::npos);
+        CHECK(run.lines.back().find("--mcp-allow-write") != std::string::npos);
     }
 
     SECTION("missing arguments are a tool error, not a protocol error")
@@ -266,7 +282,12 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "prefetch_pages",
         "search_memory",
     };
-    const std::vector<std::string> writeCapabilities;
+    const std::vector<std::string> writeCapabilities = {
+        "config_set",
+        "write_memory",
+        "write_vfs",
+        "write_physical_memory",
+    };
 
     const auto readOnly = mpfshost::mcp::toolInfos(false);
     REQUIRE(readOnly.size() == readCapabilities.size());
