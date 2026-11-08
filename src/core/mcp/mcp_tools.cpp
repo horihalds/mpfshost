@@ -689,7 +689,6 @@ namespace mpfshost::mcp
                                                                               {"max_results", "integer", "Stop after this many hits (default 1024)", false},
                                                                               limit,
                                                                               offset}                 },
-                // Write tools are hidden unless --mcp-allow-write is given.
                 {           "config_set",
                  "Set host configuration", "Set an allow-listed MemProcFS cache/tick, refresh or process-DTB option. Changes host state.",
                  false,    {target,
@@ -761,15 +760,11 @@ namespace mpfshost::mcp
         }
     } // namespace
 
-    std::vector<ToolInfo> toolInfos(bool allowWrite)
+    std::vector<ToolInfo> toolInfos()
     {
         std::vector<ToolInfo> infos;
         for (const auto& spec : toolSpecs())
         {
-            if (!spec.readOnly && !allowWrite)
-            {
-                continue;
-            }
             infos.push_back({spec.name, spec.readOnly});
         }
         return infos;
@@ -781,15 +776,11 @@ namespace mpfshost::mcp
         return spec != nullptr && !spec->readOnly;
     }
 
-    std::string toolListJson(bool allowWrite)
+    std::string toolListJson()
     {
         Json tools = Json::array();
         for (const auto& spec : toolSpecs())
         {
-            if (!spec.readOnly && !allowWrite)
-            {
-                continue;
-            }
             Json tool = {
                 {       "name",spec.name                               },
                 {      "title",       spec.title},
@@ -814,12 +805,6 @@ namespace mpfshost::mcp
         {
             return failure("unknown tool '" + std::string {name} + "'");
         }
-        if (!spec->readOnly && !context.allowWrite)
-        {
-            return failure("tool '" + std::string {name}
-                           + "' is disabled; start the MCP server with --mcp-allow-write to enable write tools");
-        }
-
         try
         {
             Json args = Json::object();

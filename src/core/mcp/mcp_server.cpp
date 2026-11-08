@@ -235,7 +235,7 @@ namespace mpfshost::mcp
             {
                 sendResult(id,
                            Json {
-                               {"tools", Json::parse(toolListJson(_options.allowWrite))}
+                               {"tools", Json::parse(toolListJson())}
                 });
             }
             catch (const std::exception& exception)
@@ -269,7 +269,7 @@ namespace mpfshost::mcp
             }
             const auto argumentsJson = arguments == paramsIterator->end() ? std::string {"{}"} : arguments->dump();
 
-            const auto infos = toolInfos(_options.allowWrite);
+            const auto infos = toolInfos();
             const auto known = std::find_if(infos.begin(),
                                             infos.end(),
                                             [&name](const ToolInfo& info)
@@ -278,27 +278,14 @@ namespace mpfshost::mcp
                                             });
             if (known == infos.end())
             {
-                if (isWriteTool(name) && !_options.allowWrite)
-                {
-                    const auto disabled =
-                        "tool '" + name
-                        + "' is disabled; start the MCP server with --mcp-allow-write to enable write tools";
-                    Json result = {
-                        {"content", Json::array({{{"type", "text"}, {"text", disabled}}})},
-                        {"isError",                                                  true}
-                    };
-                    sendResult(id, std::move(result));
-                    return;
-                }
                 sendError(id, kInvalidParams, "Invalid params: unknown tool '" + name + "'");
                 return;
             }
 
             try
             {
-                const auto outcome =
-                    callTool(name, argumentsJson, ToolContext {_options.socketPath, _options.allowWrite});
-                Json result = {
+                const auto outcome = callTool(name, argumentsJson, ToolContext {_options.socketPath});
+                Json       result  = {
                     {"content", Json::array({{{"type", "text"}, {"text", outcome.text}}})},
                 };
                 if (outcome.isError)

@@ -43,7 +43,6 @@ namespace mpfshost::cli
         ServerOptions                server;
         std::optional<ClientOptions> client; // Set when --client was given.
         bool                         mcp {}; // Set when --mcp was given.
-        bool                         mcpAllowWrite {};
     };
 
     // Continue: the whole command line was accepted. ExitSuccess: --help or --version already printed its output.

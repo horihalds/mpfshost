@@ -15,19 +15,17 @@ namespace mpfshost::mcp
         bool        readOnly {};
     };
 
-    // Tools exposed to the model. Write tools are only present when the MCP server was started with
-    // --mcp-allow-write.
-    [[nodiscard]] std::vector<ToolInfo> toolInfos(bool allowWrite);
+    // Tools exposed to the model. Write tools are always present.
+    [[nodiscard]] std::vector<ToolInfo> toolInfos();
 
     [[nodiscard]] bool isWriteTool(std::string_view name);
 
     // The JSON array of MCP tool descriptors, already annotated for the model.
-    [[nodiscard]] std::string toolListJson(bool allowWrite);
+    [[nodiscard]] std::string toolListJson();
 
     struct ToolContext
     {
         std::filesystem::path socketPath;
-        bool                  allowWrite {};
     };
 
     struct ToolOutcome

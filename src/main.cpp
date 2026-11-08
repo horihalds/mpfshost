@@ -194,11 +194,7 @@ int main(int argc, char* argv[])
     {
         mpfshost::mcp::ServerOptions mcpOptions;
         mcpOptions.socketPath = commandLine.server.socketPath;
-        mcpOptions.allowWrite = commandLine.mcpAllowWrite;
-        mpfshost::log::info("mcp",
-                            "serving MCP over stdio; host socket ",
-                            mcpOptions.socketPath.string(),
-                            mcpOptions.allowWrite ? "; write tools enabled" : "");
+        mpfshost::log::info("mcp", "serving MCP over stdio; host socket ", mcpOptions.socketPath.string());
         return mpfshost::mcp::McpServer {std::cin, std::cout, std::move(mcpOptions)}.run();
     }
 

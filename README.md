@@ -256,7 +256,7 @@ with the same client library, so the host's access policy still applies and MCP 
 root, or embeds the host.
 
 ```sh
-./build/mpfshost --mcp [--mcp-allow-write] [--socket /run/mpfshost.sock]
+./build/mpfshost --mcp [--socket /run/mpfshost.sock]
 ```
 
 `--mcp` is mutually exclusive with `--client` and with the server-only flags (`--workers`, `--allow-*`,
@@ -289,9 +289,9 @@ Results are shaped for a model: 64-bit values are `0x`-prefixed hex strings, rea
 preview, and list tools accept `limit` (1-1000, default 100) and `offset` plus return a `truncated` flag. Memory,
 physical-memory and VFS reads default to a small size (256 bytes, 4096 for VFS) and are capped at 1 MiB per call.
 
-Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`) are hidden from `tools/list` and
-rejected unless the server is started with `--mcp-allow-write`. They are annotated `destructiveHint: true`. The
-host's own `--allow-vfs-write` check still applies to `write_vfs`.
+Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`) are exposed alongside the read
+tools and annotated `destructiveHint: true`. They can modify the guest; use them deliberately. The host's own
+`--allow-vfs-write` check still applies to `write_vfs`.
 
  Tool | Description |
 ------|-------------|

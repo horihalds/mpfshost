@@ -87,8 +87,7 @@ namespace
         std::jthread     _thread;
     };
 
-    std::vector<std::string>
-    runMcp(const std::vector<std::string>& messages, const std::filesystem::path& socket, bool allowWrite = false)
+    std::vector<std::string> runMcp(const std::vector<std::string>& messages, const std::filesystem::path& socket)
     {
         std::string input;
         for (const auto& message : messages)
@@ -99,9 +98,7 @@ namespace
 
         std::istringstream       in {input};
         std::ostringstream       out;
-        mpfshost::mcp::McpServer server {
-            in, out, {socket, allowWrite}
-        };
+        mpfshost::mcp::McpServer server {in, out, {socket}};
         REQUIRE(server.run() == 0);
 
         std::vector<std::string> lines;
@@ -273,7 +270,7 @@ TEST_CASE("MCP maps host and transport failures to isError results", "[mcp][tool
     }
 }
 
-TEST_CASE("MCP write tools stay disabled until --mcp-allow-write", "[mcp][tools][write]")
+TEST_CASE("MCP write tools are always available", "[mcp][tools][write]")
 {
     McpFixture                          fixture;
     mpfshost::testing::FakeTargetSource targets;
@@ -283,25 +280,14 @@ TEST_CASE("MCP write tools stay disabled until --mcp-allow-write", "[mcp][tools]
     mpfshost::testing::FakeBackend backend;
     RunningServer                  server {fixture.socketPath(), targets, backend};
 
-    const auto hidden =
+    const auto lines =
         runMcp({kInitialize,
                 kInitialized,
                 toolCall(2, "write_memory", R"({"target":"vm-alpha","pid":100,"address":"0x1000","data":"deadbeef"})")},
                fixture.socketPath());
-    REQUIRE(hidden.size() == 2);
-    CHECK(hidden[1].find("\"isError\":true") != std::string::npos);
-    CHECK(hidden[1].find("--mcp-allow-write") != std::string::npos);
-    CHECK(backend.memoryState()->lastWriteData.empty());
-
-    const auto enabled =
-        runMcp({kInitialize,
-                kInitialized,
-                toolCall(2, "write_memory", R"({"target":"vm-alpha","pid":100,"address":"0x1000","data":"deadbeef"})")},
-               fixture.socketPath(),
-               true);
-    REQUIRE(enabled.size() == 2);
-    CHECK(enabled[1].find("\"isError\":false") != std::string::npos);
-    CHECK(enabled[1].find("\"bytes_written\":\"0x0000000000000004\"") != std::string::npos);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].find("\"isError\":false") != std::string::npos);
+    CHECK(lines[1].find("\"bytes_written\":\"0x0000000000000004\"") != std::string::npos);
     REQUIRE(backend.memoryState()->lastWriteData.size() == 4);
     CHECK(backend.memoryState()->lastWriteAddress == 0x1000);
     CHECK(backend.memoryState()->lastWritePid == 100);

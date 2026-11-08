@@ -94,11 +94,6 @@ namespace mpfshost::cli
                 commandLine.mcp = true;
                 continue;
             }
-            if (argument == "--mcp-allow-write")
-            {
-                commandLine.mcpAllowWrite = true;
-                continue;
-            }
             if (argument == "--socket")
             {
                 if (index + 1 >= argc)
@@ -354,12 +349,6 @@ namespace mpfshost::cli
                 return ParseOutcome::ExitFailure;
             }
         }
-        if (commandLine.mcpAllowWrite && !commandLine.mcp)
-        {
-            mpfshost::log::error("mcp", "--mcp-allow-write requires --mcp");
-            return ParseOutcome::ExitFailure;
-        }
-
         if (clientArgs.empty())
         {
             return ParseOutcome::Continue;

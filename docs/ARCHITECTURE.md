@@ -212,14 +212,14 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   in-process. stdout carries only JSON-RPC; logs go through `mpfshost::log` to stderr.
 - `src/core/mcp/mcp_tools.{hpp,cpp}` holds the tool catalogue and the argument/result mapping. One tool exists per
   read capability in `client.hpp`; the four write capabilities (`config_set`, `write_memory`, `write_vfs`,
-  `write_physical_memory`) are hidden from `tools/list` and rejected unless `--mcp-allow-write` is given, and are
-  annotated destructive. The host's `--allow-vfs-write` check is still the final authority for `write_vfs`.
+  `write_physical_memory`) are exposed and annotated destructive. The host's `--allow-vfs-write` check is still the
+  final authority for `write_vfs`.
 - Argument names and limits follow the CLI flags and `docs/PROTOCOL.md`. Results convert 64-bit values to hex
   strings, render bytes as hex plus ASCII, and apply `limit`/`offset`/`truncated` to list tools. Guest-derived data
   is never logged.
-- `src/cli/options.cpp` only recognises `--mcp`/`--mcp-allow-write` and rejects them alongside `--client` or
-  server-only flags; `main()` dispatches to the MCP server before the root check and access-group lookup. The
-  implementation stays out of `src/host/` and `src/cli/`, and the wire protocol is unchanged.
+- `src/cli/options.cpp` only recognises `--mcp` and rejects it alongside `--client` or server-only flags; `main()`
+  dispatches to the MCP server before the root check and access-group lookup. The implementation stays out of
+  `src/host/` and `src/cli/`, and the wire protocol is unchanged.
 
 ## Testing architecture
 

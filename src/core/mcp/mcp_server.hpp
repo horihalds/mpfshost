@@ -14,7 +14,6 @@ namespace mpfshost::mcp
     struct ServerOptions
     {
         std::filesystem::path socketPath;
-        bool                  allowWrite {};
     };
 
     // One JSON-RPC 2.0 message per line over the supplied streams. The CLI passes std::cin and std::cout; tests

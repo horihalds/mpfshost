@@ -20,8 +20,7 @@ namespace
     };
 
     McpRun runMcp(const std::vector<std::string>& messages,
-                  bool                            allowWrite = false,
-                  const std::filesystem::path&    socket     = "/nonexistent/mpfshost.sock")
+                  const std::filesystem::path&    socket = "/nonexistent/mpfshost.sock")
     {
         std::string input;
         for (const auto& message : messages)
@@ -32,10 +31,8 @@ namespace
 
         std::istringstream       in {input};
         std::ostringstream       out;
-        mpfshost::mcp::McpServer server {
-            in, out, {socket, allowWrite}
-        };
-        McpRun run;
+        mpfshost::mcp::McpServer server {in, out, {socket}};
+        McpRun                   run;
         run.status = server.run();
 
         std::istringstream output {out.str()};
@@ -182,22 +179,18 @@ TEST_CASE("MCP exits cleanly on EOF", "[mcp][protocol]")
     CHECK(run.lines.empty());
 }
 
-TEST_CASE("MCP hides write tools unless explicitly enabled", "[mcp][protocol][tools]")
+TEST_CASE("MCP exposes write tools with destructive annotations", "[mcp][protocol][tools]")
 {
-    const auto hidden = runMcp({initializeRequest(), kInitialized, kToolsList});
-    REQUIRE(hidden.lines.size() == 2);
-    CHECK(hidden.lines.back().find("\"name\":\"list_processes\"") != std::string::npos);
-    CHECK(hidden.lines.back().find("\"name\":\"write_memory\"") == std::string::npos);
-    CHECK(hidden.lines.back().find("\"name\":\"write_vfs\"") == std::string::npos);
-    CHECK(hidden.lines.back().find("\"name\":\"config_set\"") == std::string::npos);
-
-    const auto visible = runMcp({initializeRequest(), kInitialized, kToolsList}, true);
-    REQUIRE(visible.lines.size() == 2);
-    CHECK(visible.lines.back().find("\"name\":\"write_memory\"") != std::string::npos);
-    CHECK(visible.lines.back().find("\"destructiveHint\":true") != std::string::npos);
+    const auto run = runMcp({initializeRequest(), kInitialized, kToolsList});
+    REQUIRE(run.lines.size() == 2);
+    CHECK(run.lines.back().find("\"name\":\"list_processes\"") != std::string::npos);
+    CHECK(run.lines.back().find("\"name\":\"write_memory\"") != std::string::npos);
+    CHECK(run.lines.back().find("\"name\":\"write_vfs\"") != std::string::npos);
+    CHECK(run.lines.back().find("\"name\":\"config_set\"") != std::string::npos);
+    CHECK(run.lines.back().find("\"destructiveHint\":true") != std::string::npos);
 }
 
-TEST_CASE("MCP tool calls reject unknown and disabled tools", "[mcp][protocol][tools]")
+TEST_CASE("MCP tool calls reject unknown tools and report validation errors", "[mcp][protocol][tools]")
 {
     SECTION("unknown tool is a protocol error")
     {
@@ -209,7 +202,7 @@ TEST_CASE("MCP tool calls reject unknown and disabled tools", "[mcp][protocol][t
         CHECK(run.lines.back().find("\"code\":-32602") != std::string::npos);
     }
 
-    SECTION("hidden write tool is rejected as an error result")
+    SECTION("write tool validation is a tool error")
     {
         const auto run = runMcp(
             {initializeRequest(),
@@ -217,7 +210,7 @@ TEST_CASE("MCP tool calls reject unknown and disabled tools", "[mcp][protocol][t
              R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write_memory","arguments":{}}})"});
         REQUIRE(run.lines.size() == 2);
         CHECK(run.lines.back().find("\"isError\":true") != std::string::npos);
-        CHECK(run.lines.back().find("--mcp-allow-write") != std::string::npos);
+        CHECK(run.lines.back().find("target") != std::string::npos);
     }
 
     SECTION("missing arguments are a tool error, not a protocol error")
@@ -289,34 +282,32 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "write_physical_memory",
     };
 
-    const auto readOnly = mpfshost::mcp::toolInfos(false);
-    REQUIRE(readOnly.size() == readCapabilities.size());
+    const auto infos = mpfshost::mcp::toolInfos();
+    REQUIRE(infos.size() == readCapabilities.size() + writeCapabilities.size());
     for (const auto& name : readCapabilities)
     {
-        const auto found = std::find_if(readOnly.begin(),
-                                        readOnly.end(),
+        const auto found = std::find_if(infos.begin(),
+                                        infos.end(),
                                         [&name](const mpfshost::mcp::ToolInfo& info)
                                         {
                                             return info.name == name;
                                         });
         INFO(name);
-        CHECK(found != readOnly.end());
-        CHECK((found != readOnly.end() && found->readOnly));
+        CHECK(found != infos.end());
+        CHECK((found != infos.end() && found->readOnly));
     }
 
-    const auto all = mpfshost::mcp::toolInfos(true);
-    REQUIRE(all.size() == readCapabilities.size() + writeCapabilities.size());
     for (const auto& name : writeCapabilities)
     {
-        const auto found = std::find_if(all.begin(),
-                                        all.end(),
+        const auto found = std::find_if(infos.begin(),
+                                        infos.end(),
                                         [&name](const mpfshost::mcp::ToolInfo& info)
                                         {
                                             return info.name == name;
                                         });
         INFO(name);
-        CHECK(found != all.end());
-        CHECK((found != all.end() && !found->readOnly));
+        CHECK(found != infos.end());
+        CHECK((found != infos.end() && !found->readOnly));
         CHECK(mpfshost::mcp::isWriteTool(name));
     }
 }
