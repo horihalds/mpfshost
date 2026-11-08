@@ -98,6 +98,21 @@ On 2026-11-09 against the target `windows` (12 vCPUs):
 - `capabilities` listed `DebugStateRequest` (`0x003B`) and `DebugControlRequest` (`0x003C`).
 - A request for a missing target failed with `target 'does-not-exist' is not available`.
 
+### Register validation
+
+On 2026-11-09 against the same `windows` target (12 vCPUs), with the rebuilt host installed:
+
+- `debug-registers` while the guest was running failed with `the guest must be paused before its registers can be read`.
+- `debug-stop` reported `paused`, `host-paused=yes`.
+- `debug-registers` returned 12 records in one response. vCPU 0 matched QEMU's `info registers` exactly for the fields
+  compared: `RIP=0xfffff800aa6ac7cf`, `RSP=0xfffff8003c8ca368`, `RBP=0xfffff8003c8ca4a0`, `RFL=0x00040282`,
+  `CR0=0x0000000080050033`, `CR3=0x00000000001ae000`, `CR4=0x0000000000350ef8`, and the general registers shown by
+  both.
+- `debug-registers --vcpu 1` returned one record (`thread p01.02`, `RIP=0xfffff800aa6acae1`, `CR3=0x00000000001ae000`).
+- After the read, `debug-status` still reported `paused`, `host-paused=yes`, `stub-active=no`. HMP `info chardev`
+  had no `gdb:` line, and `/tmp/mpfshost-gdb-<pid>.sock` was gone.
+- `debug-continue` reported `running`, `host-paused=no`, and the next status stayed `running`.
+
 ## Stub endpoint and ownership
 
 `debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry.
