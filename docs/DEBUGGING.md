@@ -84,6 +84,20 @@ another client paused it.
 Run the same sequence through MCP (`debug_status`, `debug_stop`, `debug_continue`) once, to confirm the destructive
 annotations and result shape.
 
+## Validation record
+
+On 2026-11-09 against the target `windows` (12 vCPUs):
+
+- `debug-status` reported `running`, `host-paused=no`, `stub-active=no`, `watches=0`.
+- `debug-stop` reported `paused`/`host-paused=yes`; a second query two seconds later was still `paused` and still
+  `host-paused=yes`, so the pause persisted.
+- A second `debug-stop` was a no-op and kept `host-paused=yes`. `debug-continue` while already running was a no-op.
+- `debug-continue` reported `running`/`host-paused=no`; the next query stayed `running`.
+- MCP `debug_status`, `debug_stop` and `debug_continue` returned the same values. The tool list marks `debug_status`
+  read-only and both control tools destructive.
+- `capabilities` listed `DebugStateRequest` (`0x003B`) and `DebugControlRequest` (`0x003C`).
+- A request for a missing target failed with `target 'does-not-exist' is not available`.
+
 ## Checks still owed to a live guest
 
 These were listed as prerequisites for the later debug slices and have not yet been verified on this machine:
