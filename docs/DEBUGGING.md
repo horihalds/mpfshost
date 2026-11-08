@@ -18,8 +18,8 @@ connection again.
 | Registers, watchpoints, stepping | GDB remote serial protocol | see later slices |
 
 `gdbserver` is **HMP-only** in the QEMU versions tested; there is no QMP-native equivalent. The host therefore has to
-start and stop a stub through `human-monitor-command`. Task 1 (state, stop, continue) does not start a stub, so
-`stubActive` stays false and `watchCount` stays zero.
+start and stop a stub through `human-monitor-command`. `debug-registers` and `debug-watch` start a stub; the
+host records that it owns it and stops it during teardown.
 
 The QMP socket is root-equivalent over the guest: anyone who can connect can reset it, read all RAM, inject input and
 hotplug devices. The host's Unix-socket access policy is the gate. Do not expose the QMP socket to broader groups than
@@ -140,19 +140,55 @@ Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs)
 - The `g` packet is 608 bytes of hex. The relevant offsets are `rip` 128, `cr0` 188, `cr3` 204, `cr4` 212 and
   `cr8` 220. The 8 vCPUs appeared as threads `p01.01` to `p01.08`.
 
+## Manual check: write watchpoint
+
+This procedure needs a live Windows guest and root. It has not been run yet for this slice; record the result here
+after the first run.
+
+1. Pick a process and a writable buffer, and confirm the address with `read_memory`. A UTF-16 text buffer with spare
+   capacity is easier than one that is about to be reallocated.
+2. Start the watch with a dedicated connection:
+
+   ```sh
+   ./build/mpfshost --client debug-watch <vm> --pid <pid> --address <hex> --width 2 --max-hits 1 --timeout 30
+   ```
+
+3. Trigger the write from another shell or from the guest desktop (a keystroke works for an edit control). Expect one
+   `DebugWatchData` frame with `rip`, `rsp`, `cr3`, old/new values, module and nearest export, followed by
+   `completed  hits=1  skipped=0`.
+4. Confirm the trap PC is the instruction after the store and that `before` holds the preceding bytes.
+5. Afterwards check that the VM is running again, the stub is gone and the watch count is zero:
+
+   ```sh
+   ./build/mpfshost --client debug-status <vm>
+   ```
+
+6. Run the same sequence through MCP `debug_watch`. Confirm that cancelling the client (Ctrl-C) still leaves the VM
+   running and the stub stopped.
+
+Only one watch runs at a time: a second debug operation is refused with `Busy`, so a watch holds one of the four
+hardware debug-register slots. If the guest already uses that slot, arming the `Z2` package fails and the request
+reports an error instead of silently missing writes.
+
+Record here: whether `Z2` had to be armed on every vCPU or once per target, the observed `cr3` values, and whether
+repeated hits kept the guest responsive.
+
 ## Checks still owed to a live guest
 
-- Whether `Z2` watchpoints must be armed per vCPU. Verify in the watchpoint slice.
-- Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration.
+- ~~Whether `Z2` watchpoints must be armed per vCPU.~~ The implementation arms `Z2` on every stub thread; a live
+  run still has to confirm that this catches a write on any vCPU.
+- Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
+  debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
 
-Record the answers here when the watchpoint slice reaches them.
+Record the remaining answers here after the next live run.
 
 ## Teardown rules for later slices
 
 Any future slice that starts a stub or arms a watchpoint must:
 
 - remember whether the host started the stub and never stop one it did not start;
-- remove watchpoints and stop the stub on success, timeout, cancellation, error and client death;
-- resume the VM if the request paused it, then verify with `query-status`;
+- remove watchpoints from every armed vCPU and stop the stub on success, timeout, cancellation, error and client
+  death;
+- resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
 - refuse concurrent debug operations with `Busy`;
 - never log guest memory contents.

@@ -215,4 +215,138 @@ namespace mpfshost
         }
         return message;
     }
+
+    std::string_view debugWatchStatusName(DebugWatchStatus status) noexcept
+    {
+        switch (status)
+        {
+        case DebugWatchStatus::Completed:
+            return "completed";
+        case DebugWatchStatus::Timeout:
+            return "timeout";
+        case DebugWatchStatus::Cancelled:
+            return "cancelled";
+        case DebugWatchStatus::Error:
+            return "error";
+        }
+        return "error";
+    }
+
+    std::vector<std::byte> encodeDebugWatchRequest(const DebugWatchRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        writer.writeU32(message.width);
+        writer.writeU8(static_cast<std::uint8_t>(message.access));
+        writer.writeU32(message.maxHits);
+        writer.writeU32(message.timeoutMs);
+        return writer.take();
+    }
+
+    std::optional<DebugWatchRequest> decodeDebugWatchRequest(std::span<const std::byte> payload)
+    {
+        ByteReader        reader {payload};
+        DebugWatchRequest message;
+        message.pid       = reader.readU32();
+        message.address   = reader.readU64();
+        message.width     = reader.readU32();
+        message.access    = static_cast<DebugWatchAccess>(reader.readU8());
+        message.maxHits   = reader.readU32();
+        message.timeoutMs = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.access != DebugWatchAccess::Write)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchData(const DebugWatchData& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.hitIndex);
+        writer.writeU32(message.vcpu);
+        writer.writeString(message.threadId);
+        writer.writeU64(message.rip);
+        writer.writeU64(message.rsp);
+        writer.writeU64(message.cr3);
+        writer.writeU64(message.address);
+        writer.writeU64(message.oldValue);
+        writer.writeU64(message.newValue);
+        writer.writeBytes(message.bytesBefore);
+        writer.writeString(message.module);
+        writer.writeU64(message.moduleOffset);
+        writer.writeU8(message.exportFound ? 1 : 0);
+        writer.writeU64(message.exportAddress);
+        writer.writeU64(message.exportOffset);
+        writer.writeString(message.exportName);
+        writer.writeU8(message.pdbFound ? 1 : 0);
+        writer.writeString(message.pdbSymbol);
+        writer.writeU32(message.pdbDisplacement);
+        return writer.take();
+    }
+
+    std::optional<DebugWatchData> decodeDebugWatchData(std::span<const std::byte> payload)
+    {
+        ByteReader     reader {payload};
+        DebugWatchData message;
+        message.hitIndex        = reader.readU32();
+        message.vcpu            = reader.readU32();
+        message.threadId        = reader.readString();
+        message.rip             = reader.readU64();
+        message.rsp             = reader.readU64();
+        message.cr3             = reader.readU64();
+        message.address         = reader.readU64();
+        message.oldValue        = reader.readU64();
+        message.newValue        = reader.readU64();
+        message.bytesBefore     = reader.readBytes();
+        message.module          = reader.readString();
+        message.moduleOffset    = reader.readU64();
+        message.exportFound     = reader.readU8() != 0;
+        message.exportAddress   = reader.readU64();
+        message.exportOffset    = reader.readU64();
+        message.exportName      = reader.readString();
+        message.pdbFound        = reader.readU8() != 0;
+        message.pdbSymbol       = reader.readString();
+        message.pdbDisplacement = reader.readU32();
+        if (!reader.ok() || !reader.atEnd() || message.bytesBefore.size() > kDebugWatchBytesBefore)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchEnd(const DebugWatchEnd& message)
+    {
+        ByteWriter writer;
+        writer.writeU8(static_cast<std::uint8_t>(message.status));
+        writer.writeU32(message.hitCount);
+        writer.writeU32(message.skippedCount);
+        writer.writeString(message.error);
+        return writer.take();
+    }
+
+    std::optional<DebugWatchEnd> decodeDebugWatchEnd(std::span<const std::byte> payload)
+    {
+        ByteReader    reader {payload};
+        DebugWatchEnd message;
+        message.status       = static_cast<DebugWatchStatus>(reader.readU8());
+        message.hitCount     = reader.readU32();
+        message.skippedCount = reader.readU32();
+        message.error        = reader.readString();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.status != DebugWatchStatus::Completed && message.status != DebugWatchStatus::Timeout
+            && message.status != DebugWatchStatus::Cancelled && message.status != DebugWatchStatus::Error)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
 } // namespace mpfshost

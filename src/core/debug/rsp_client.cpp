@@ -356,6 +356,22 @@ namespace mpfshost::debug
             return bytes;
         }
 
+        std::string buildPacket(std::string_view data)
+        {
+            std::string packet {"$"};
+            packet.append(data);
+            packet.push_back('#');
+            unsigned sum = 0;
+            for (const char value : data)
+            {
+                sum += static_cast<unsigned char>(value);
+            }
+            static constexpr char digits[] = "0123456789abcdef";
+            packet.push_back(digits[(sum >> 4) & 0x0F]);
+            packet.push_back(digits[sum & 0x0F]);
+            return packet;
+        }
+
         const std::array<RspRegisterInfo, 22>& fallbackTable()
         {
             static const std::array<RspRegisterInfo, 22> table {
@@ -738,6 +754,191 @@ namespace mpfshost::debug
         return true;
     }
 
+    bool RspClient::insertWatchpoint(std::uint64_t             address,
+                                     std::uint32_t             size,
+                                     std::chrono::milliseconds timeout,
+                                     std::string&              error)
+    {
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string           command {"Z2,"};
+        bool                  started = false;
+        for (int shift = 60; shift >= 0; shift -= 4)
+        {
+            const auto digit = (address >> shift) & 0x0F;
+            if (digit != 0)
+            {
+                started = true;
+            }
+            if (started)
+            {
+                command.push_back(digits[digit]);
+            }
+        }
+        if (!started)
+        {
+            command.push_back('0');
+        }
+        command.push_back(',');
+        command += std::to_string(size);
+        return checkAccepted(command, timeout, error);
+    }
+
+    bool RspClient::removeWatchpoint(std::uint64_t             address,
+                                     std::uint32_t             size,
+                                     std::chrono::milliseconds timeout,
+                                     std::string&              error)
+    {
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string           command {"z2,"};
+        bool                  started = false;
+        for (int shift = 60; shift >= 0; shift -= 4)
+        {
+            const auto digit = (address >> shift) & 0x0F;
+            if (digit != 0)
+            {
+                started = true;
+            }
+            if (started)
+            {
+                command.push_back(digits[digit]);
+            }
+        }
+        if (!started)
+        {
+            command.push_back('0');
+        }
+        command.push_back(',');
+        command += std::to_string(size);
+        return checkAccepted(command, timeout, error);
+    }
+
+    bool RspClient::continueExecution(std::chrono::milliseconds timeout, std::string& error)
+    {
+        const auto command = _supported.find("vCont;c") != std::string::npos ? "vCont;c" : "c";
+        return writePacketOnly(command, timeout, error);
+    }
+
+    RspPollResult RspClient::pollPacket(std::string& packet, std::chrono::milliseconds timeout, std::string& error)
+    {
+        const auto deadline = Clock::now() + timeout;
+        while (true)
+        {
+            while (!_buffer.empty() && (_buffer.front() == '+' || _buffer.front() == '-'))
+            {
+                _buffer.erase(0, 1);
+            }
+
+            const auto start = _buffer.find('$');
+            if (start != std::string::npos)
+            {
+                if (start != 0)
+                {
+                    _buffer.erase(0, start);
+                }
+                const auto end = _buffer.find('#', 1);
+                if (end != std::string::npos && _buffer.size() >= end + 3)
+                {
+                    const int high = hexDigit(_buffer[end + 1]);
+                    const int low  = hexDigit(_buffer[end + 2]);
+                    if (high < 0 || low < 0)
+                    {
+                        error = "the stub sent a malformed checksum";
+                        return RspPollResult::Closed;
+                    }
+                    unsigned expected = 0;
+                    for (std::size_t index = 1; index < end; ++index)
+                    {
+                        expected += static_cast<unsigned char>(_buffer[index]);
+                    }
+                    if (((high << 4) | low) != static_cast<int>(expected & 0xFF))
+                    {
+                        error = "the stub sent a bad checksum";
+                        return RspPollResult::Closed;
+                    }
+                    packet = _buffer.substr(1, end - 1);
+                    _buffer.erase(0, end + 3);
+                    if (!_noAck)
+                    {
+                        const std::array<std::byte, 1> accept {std::byte {'+'}};
+                        const auto                     left = remaining(deadline);
+                        if (!_transport->writeAll(accept, left, error))
+                        {
+                            return RspPollResult::Closed;
+                        }
+                    }
+                    return RspPollResult::Packet;
+                }
+            }
+            else if (!_buffer.empty())
+            {
+                error = "the stub sent an unexpected byte";
+                return RspPollResult::Closed;
+            }
+
+            std::array<std::byte, 4096> chunk {};
+            const auto                  left = remaining(deadline);
+            if (left == std::chrono::milliseconds::zero())
+            {
+                return RspPollResult::Timeout;
+            }
+            const auto result = _transport->readSome(chunk, left, error);
+            if (result < 0)
+            {
+                if (error.find("timed out") != std::string::npos)
+                {
+                    error.clear();
+                    return RspPollResult::Timeout;
+                }
+                return RspPollResult::Closed;
+            }
+            if (result == 0)
+            {
+                if (error.empty())
+                {
+                    error = "the stub closed the connection";
+                }
+                return RspPollResult::Closed;
+            }
+            _buffer.append(reinterpret_cast<const char*>(chunk.data()), static_cast<std::size_t>(result));
+        }
+    }
+
+    void RspClient::drainPending()
+    {
+        std::string ignored;
+        for (int packet = 0; packet < 16; ++packet)
+        {
+            const auto drained = pollPacket(ignored, std::chrono::milliseconds {10}, ignored);
+            if (drained != RspPollResult::Packet)
+            {
+                return;
+            }
+            ignored.clear();
+        }
+    }
+
+    bool RspClient::writePacketOnly(std::string_view data, std::chrono::milliseconds timeout, std::string& error)
+    {
+        const auto packet   = buildPacket(data);
+        const auto deadline = Clock::now() + timeout;
+        return writeRaw(std::as_bytes(std::span {packet}), deadline, error);
+    }
+
+    bool RspClient::checkAccepted(std::string_view command, std::chrono::milliseconds timeout, std::string& error)
+    {
+        std::string reply;
+        if (!sendPacket(command, reply, timeout, error))
+        {
+            return false;
+        }
+        if (reply != "OK")
+        {
+            error = "the stub rejected " + std::string {command};
+            return false;
+        }
+        return true;
+    }
+
     bool RspClient::noAck() const noexcept
     {
         return _noAck;
@@ -755,17 +956,7 @@ namespace mpfshost::debug
     {
         for (int attempt = 0; attempt < 3; ++attempt)
         {
-            std::string packet {"$"};
-            packet.append(data);
-            packet.push_back('#');
-            unsigned sum = 0;
-            for (const char value : data)
-            {
-                sum += static_cast<unsigned char>(value);
-            }
-            static constexpr char digits[] = "0123456789abcdef";
-            packet.push_back(digits[(sum >> 4) & 0x0F]);
-            packet.push_back(digits[sum & 0x0F]);
+            const std::string packet = buildPacket(data);
 
             const auto deadline = Clock::now() + timeout;
             if (!writeRaw(std::as_bytes(std::span {packet}), deadline, error))

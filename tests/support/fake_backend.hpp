@@ -424,6 +424,13 @@ namespace mpfshost::testing
         bool                                 registersInvalidState {};
         std::optional<DebugRegistersRequest> lastRegistersRequest;
         std::uint32_t                        registersCalls {};
+
+        std::optional<DebugWatchRequest> lastWatchRequest;
+        std::vector<DebugWatchData>      watchHits;
+        DebugWatchEnd                    watchEnd;
+        std::string                      watchFailure;
+        bool                             watchBusy {};
+        std::uint32_t                    watchCalls {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1568,7 +1575,7 @@ namespace mpfshost::testing
             return true;
         }
 
-        [[nodiscard]] std::optional<DebugStatus> debugState(std::string& error) override
+        [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error) override
         {
             ++_debugState->stateCalls;
             if (!_debugState->stateFailure.empty())
@@ -1576,10 +1583,12 @@ namespace mpfshost::testing
                 error = _debugState->stateFailure;
                 return std::nullopt;
             }
+            busy = false;
             return _debugState->status;
         }
 
-        [[nodiscard]] std::optional<DebugStatus> debugControl(DebugControlAction action, std::string& error) override
+        [[nodiscard]] std::optional<DebugStatus>
+        debugControl(DebugControlAction action, bool& busy, std::string& error) override
         {
             ++_debugState->controlCalls;
             _debugState->lastAction = action;
@@ -1588,11 +1597,12 @@ namespace mpfshost::testing
                 error = _debugState->controlFailure;
                 return std::nullopt;
             }
+            busy = false;
             return _debugState->status;
         }
 
-        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
-        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, std::string& error) override
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> debugRegisters(
+            const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error) override
         {
             ++_debugState->registersCalls;
             _debugState->lastRegistersRequest = request;
@@ -1602,7 +1612,33 @@ namespace mpfshost::testing
                 error        = _debugState->registersFailure;
                 return std::nullopt;
             }
+            busy = false;
             return _debugState->registers;
+        }
+
+        [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
+                                                              const DebugWatchHitSink&    onHit,
+                                                              const DebugWatchAbortCheck& aborted,
+                                                              bool&                       busy,
+                                                              std::string&                error) override
+        {
+            ++_debugState->watchCalls;
+            _debugState->lastWatchRequest = request;
+            if (!_debugState->watchFailure.empty())
+            {
+                busy  = _debugState->watchBusy;
+                error = _debugState->watchFailure;
+                return std::nullopt;
+            }
+            for (const auto& hit : _debugState->watchHits)
+            {
+                if ((aborted && aborted()) || (onHit && !onHit(hit)))
+                {
+                    break;
+                }
+            }
+            busy = false;
+            return _debugState->watchEnd;
         }
 
     private:
@@ -2136,6 +2172,18 @@ namespace mpfshost::testing
         {
             _debugState->registersFailure      = std::move(message);
             _debugState->registersInvalidState = invalidState;
+        }
+
+        void setDebugWatch(std::vector<DebugWatchData> hits, DebugWatchEnd end)
+        {
+            _debugState->watchHits = std::move(hits);
+            _debugState->watchEnd  = std::move(end);
+        }
+
+        void failDebugWatchWith(std::string message, bool busy = false)
+        {
+            _debugState->watchFailure = std::move(message);
+            _debugState->watchBusy    = busy;
         }
 
         void setHandlesBare(bool bare)

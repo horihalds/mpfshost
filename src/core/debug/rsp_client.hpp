@@ -61,6 +61,13 @@ namespace mpfshost::debug
         std::string                  xml; // target.xml plus every fetched include, concatenated
     };
 
+    enum class RspPollResult
+    {
+        Packet,  // a complete packet is in the out parameter
+        Timeout, // no complete packet yet; the connection is still usable
+        Closed,  // the peer went away or the stream is unusable
+    };
+
     // Parses `<reg>` elements in document order, honouring an explicit `regnum` and otherwise numbering
     // sequentially. XML comments are ignored, so a commented-out register does not shift the layout.
     [[nodiscard]] RspTargetDescription           parseRspTargetDescription(const std::string& xml);
@@ -91,6 +98,23 @@ namespace mpfshost::debug
         readAllRegisters(std::vector<std::byte>& registers, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool
         readRegister(std::uint32_t number, std::uint64_t& value, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool insertWatchpoint(std::uint64_t             address,
+                                            std::uint32_t             size,
+                                            std::chrono::milliseconds timeout,
+                                            std::string&              error);
+        [[nodiscard]] bool removeWatchpoint(std::uint64_t             address,
+                                            std::uint32_t             size,
+                                            std::chrono::milliseconds timeout,
+                                            std::string&              error);
+        // Writes the continue packet and returns at once; pollPacket then waits for the stop reply.
+        [[nodiscard]] bool continueExecution(std::chrono::milliseconds timeout, std::string& error);
+        // Reads whatever the stub has sent without blocking past the timeout. A partial packet is kept for the
+        // next call, so a short poll does not lose a stop reply that arrives in pieces.
+        [[nodiscard]] RspPollResult
+             pollPacket(std::string& packet, std::chrono::milliseconds timeout, std::string& error);
+        // Drops any packet already on the wire, such as a stop reply that arrived after the last resume, so a
+        // teardown command is not answered by a stale reply. Never waits for new data.
+        void drainPending();
 
         [[nodiscard]] bool               noAck() const noexcept;
         [[nodiscard]] const std::string& supported() const noexcept;
@@ -98,6 +122,10 @@ namespace mpfshost::debug
     private:
         [[nodiscard]] bool
         sendPacket(std::string_view data, std::string& reply, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool
+        writePacketOnly(std::string_view data, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool
+        checkAccepted(std::string_view command, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool
         readByte(std::chrono::steady_clock::time_point deadline, unsigned char& value, std::string& error);
         [[nodiscard]] bool

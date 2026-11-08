@@ -622,6 +622,67 @@ namespace mpfshost
         std::vector<DebugRegisterRecord> records;
     };
 
+    enum class DebugWatchAccess : std::uint8_t
+    {
+        Write = 0,
+    };
+
+    enum class DebugWatchStatus : std::uint8_t
+    {
+        Completed = 0,
+        Timeout   = 1,
+        Cancelled = 2,
+        Error     = 3,
+    };
+
+    [[nodiscard]] std::string_view debugWatchStatusName(DebugWatchStatus status) noexcept;
+
+    inline constexpr std::uint32_t kMaxDebugWatchWidth     = 8;
+    inline constexpr std::uint32_t kMaxDebugWatchHits      = 64;
+    inline constexpr std::uint32_t kMaxDebugWatchTimeoutMs = 3'600'000;
+    inline constexpr std::size_t   kDebugWatchBytesBefore  = 16;
+
+    struct DebugWatchRequest
+    {
+        std::uint32_t    pid {};
+        std::uint64_t    address {};
+        std::uint32_t    width {4}; // 1, 2, 4 or 8 bytes
+        DebugWatchAccess access {DebugWatchAccess::Write};
+        std::uint32_t    maxHits {1};
+        std::uint32_t    timeoutMs {30000};
+    };
+
+    struct DebugWatchData
+    {
+        std::uint32_t          hitIndex {};
+        std::uint32_t          vcpu {};
+        std::string            threadId;
+        std::uint64_t          rip {};
+        std::uint64_t          rsp {};
+        std::uint64_t          cr3 {};
+        std::uint64_t          address {}; // the watched linear address
+        std::uint64_t          oldValue {};
+        std::uint64_t          newValue {};
+        std::vector<std::byte> bytesBefore; // up to kDebugWatchBytesBefore bytes ending at rip
+        std::string            module;      // empty when rip is outside every module
+        std::uint64_t          moduleOffset {};
+        bool                   exportFound {};
+        std::uint64_t          exportAddress {};
+        std::uint64_t          exportOffset {};
+        std::string            exportName; // empty for an ordinal-only export
+        bool                   pdbFound {};
+        std::string            pdbSymbol;
+        std::uint32_t          pdbDisplacement {};
+    };
+
+    struct DebugWatchEnd
+    {
+        DebugWatchStatus status {DebugWatchStatus::Completed};
+        std::uint32_t    hitCount {};
+        std::uint32_t    skippedCount {};
+        std::string      error;
+    };
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -1842,6 +1903,13 @@ namespace mpfshost
     [[nodiscard]] std::vector<std::byte> encodeDebugRegistersResponse(const DebugRegistersResponse& message);
     [[nodiscard]] std::optional<DebugRegistersResponse>
     decodeDebugRegistersResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchRequest(const DebugWatchRequest& message);
+    [[nodiscard]] std::optional<DebugWatchRequest> decodeDebugWatchRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchData(const DebugWatchData& message);
+    [[nodiscard]] std::optional<DebugWatchData>    decodeDebugWatchData(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchEnd(const DebugWatchEnd& message);
+    [[nodiscard]] std::optional<DebugWatchEnd>     decodeDebugWatchEnd(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

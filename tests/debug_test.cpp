@@ -174,6 +174,67 @@ TEST_CASE("debug register requests and responses round trip", "[core][debug][cod
         mpfshost::decodeDebugRegistersRequest(std::vector<std::byte> {static_cast<std::byte>(0)}).has_value());
 }
 
+TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec]")
+{
+    const auto request = mpfshost::decodeDebugWatchRequest(
+        mpfshost::encodeDebugWatchRequest({7, 0x12345678, 4, mpfshost::DebugWatchAccess::Write, 3, 1500}));
+    REQUIRE(request.has_value());
+    REQUIRE(request->pid == 7);
+    REQUIRE(request->address == 0x12345678);
+    REQUIRE(request->width == 4);
+    REQUIRE(request->maxHits == 3);
+    REQUIRE(request->timeoutMs == 1500);
+
+    mpfshost::DebugWatchData hit;
+    hit.hitIndex        = 1;
+    hit.vcpu            = 8;
+    hit.threadId        = "p01.09";
+    hit.rip             = 0x7ff84522b1f1;
+    hit.rsp             = 0x1234;
+    hit.cr3             = 0x200123;
+    hit.address         = 0x5000;
+    hit.oldValue        = 0xAA;
+    hit.newValue        = 0xBB;
+    hit.bytesBefore     = {std::byte {0x90}, std::byte {0xC3}};
+    hit.module          = "msvcrt.dll";
+    hit.moduleOffset    = 0x7b1f1;
+    hit.exportFound     = true;
+    hit.exportAddress   = 0x7ff84522b180;
+    hit.exportOffset    = 0x71;
+    hit.exportName      = "memcpy";
+    hit.pdbFound        = true;
+    hit.pdbSymbol       = "memcpy";
+    hit.pdbDisplacement = 4;
+
+    const auto decodedHit = mpfshost::decodeDebugWatchData(mpfshost::encodeDebugWatchData(hit));
+    REQUIRE(decodedHit.has_value());
+    REQUIRE(decodedHit->hitIndex == 1);
+    REQUIRE(decodedHit->vcpu == 8);
+    REQUIRE(decodedHit->threadId == "p01.09");
+    REQUIRE(decodedHit->rip == hit.rip);
+    REQUIRE(decodedHit->cr3 == hit.cr3);
+    REQUIRE(decodedHit->oldValue == 0xAA);
+    REQUIRE(decodedHit->newValue == 0xBB);
+    REQUIRE(decodedHit->bytesBefore.size() == 2);
+    REQUIRE(decodedHit->module == "msvcrt.dll");
+    REQUIRE(decodedHit->exportFound);
+    REQUIRE(decodedHit->exportName == "memcpy");
+    REQUIRE(decodedHit->pdbFound);
+    REQUIRE(decodedHit->pdbDisplacement == 4);
+
+    const auto decodedEnd = mpfshost::decodeDebugWatchEnd(
+        mpfshost::encodeDebugWatchEnd({mpfshost::DebugWatchStatus::Timeout, 2, 1, "timed out"}));
+    REQUIRE(decodedEnd.has_value());
+    REQUIRE(decodedEnd->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE(decodedEnd->hitCount == 2);
+    REQUIRE(decodedEnd->skippedCount == 1);
+    REQUIRE(decodedEnd->error == "timed out");
+
+    REQUIRE_FALSE(mpfshost::decodeDebugWatchRequest({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugWatchData({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugWatchEnd({}).has_value());
+}
+
 TEST_CASE("debug requests report the fake status and control action", "[core][debug][session]")
 {
     DebugFixture  fixture;
@@ -229,6 +290,7 @@ TEST_CASE("debug capabilities are listed", "[core][debug][session]")
     };
     REQUIRE(has(mpfshost::MessageType::DebugStateRequest));
     REQUIRE(has(mpfshost::MessageType::DebugControlRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugWatchRequest));
 }
 
 TEST_CASE("a handle without the debug provider reports a capability error", "[core][debug][session]")
@@ -316,4 +378,85 @@ TEST_CASE("a handle without the debug provider cannot read registers", "[core][d
     const auto  records = mpfshost::debugRegisters(fixture.socketPath(), {"vm1"}, error);
     REQUIRE_FALSE(records.has_value());
     REQUIRE(error.find("cannot read debug registers") != std::string::npos);
+}
+
+TEST_CASE("debug watch hits stream through the fake backend", "[core][debug][session]")
+{
+    DebugFixture fixture;
+
+    mpfshost::DebugWatchData hit;
+    hit.hitIndex = 0;
+    hit.vcpu     = 2;
+    hit.threadId = "p01.03";
+    hit.rip      = 0x1000;
+    hit.address  = 0x2000;
+    hit.oldValue = 1;
+    hit.newValue = 2;
+    hit.module   = "ntdll.dll";
+    mpfshost::DebugWatchEnd end;
+    end.status   = mpfshost::DebugWatchStatus::Completed;
+    end.hitCount = 1;
+    fixture.backend().setDebugWatch({hit}, end);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::vector<mpfshost::DebugWatchData> received;
+    std::string                           error;
+    const auto                            result = mpfshost::debugWatch(
+        fixture.socketPath(),
+        {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 2, 5000},
+        [&received](const mpfshost::DebugWatchData& data)
+        {
+            received.push_back(data);
+        },
+        error);
+    REQUIRE(result.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(result->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(result->hitCount == 1);
+    REQUIRE(received.size() == 1);
+    REQUIRE(received[0].rip == 0x1000);
+    REQUIRE(received[0].module == "ntdll.dll");
+    REQUIRE(fixture.backend().debugState()->watchCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest->pid == 42);
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest->maxHits == 2);
+}
+
+TEST_CASE("a handle without the debug provider cannot run a watch", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().setHandlesBare(true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  result = mpfshost::debugWatch(
+        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, error);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(error.find("cannot run a debug watch") != std::string::npos);
+}
+
+TEST_CASE("a concurrent debug operation is reported as Busy", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().failDebugWatchWith("another debug operation is in progress", true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  result = mpfshost::debugWatch(
+        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, error);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(error.find("another debug operation") != std::string::npos);
+
+    const auto connection = mpfshost::detail::connectAndBind(fixture.socketPath(), "vm1", error);
+    REQUIRE(connection.has_value());
+    const auto response = mpfshost::detail::exchange(
+        connection->fd(),
+        mpfshost::MessageType::DebugWatchRequest,
+        mpfshost::encodeDebugWatchRequest({42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}),
+        error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->type == mpfshost::MessageType::ErrorResponse);
+    const auto decoded = mpfshost::decodeErrorResponse(response->payload);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->code == mpfshost::ErrorCode::Busy);
 }

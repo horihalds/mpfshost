@@ -97,6 +97,7 @@ namespace mpfshost
         void               handleDebugState(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugControl(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugRegisters(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugWatch(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleConfigSet(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleVmList(std::uint64_t requestId);
         void               handleGpaTranslate(std::uint64_t requestId, std::span<const std::byte> payload);
@@ -118,6 +119,9 @@ namespace mpfshost
         void               handleCancel(std::uint64_t requestId, std::span<const std::byte> payload);
         // Reports whether the in-flight request must stop before its next frame, naming the reason in code.
         [[nodiscard]] bool requestAborted(std::uint64_t requestId, ErrorCode& code);
+        // True when a non-blocking peek sees the client's end of the connection; used by long streams that
+        // would otherwise keep the guest paused after the client disappears.
+        [[nodiscard]] bool peerGone();
         void               abortRequest(std::uint64_t requestId, ErrorCode code);
         [[nodiscard]] ScatterSession* findScatter(std::uint32_t scatterId);
         [[nodiscard]] bool

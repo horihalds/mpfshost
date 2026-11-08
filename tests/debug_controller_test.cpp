@@ -1,8 +1,10 @@
 #include <catch2/catch.hpp>
 
 #include "core/debug/debug_controller.hpp"
+#include "core/debug/debug_inspector.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -123,6 +125,16 @@ namespace
                 _state->stubActive = false;
                 _state->incoming.emplace_back(R"({"return":"Disabled gdbserver\r\n"})");
             }
+            else if (text.find(R"("execute":"stop")") != std::string::npos)
+            {
+                _state->running = false;
+                _state->incoming.emplace_back(R"({"return":{}})");
+            }
+            else if (text.find(R"("execute":"cont")") != std::string::npos)
+            {
+                _state->running = true;
+                _state->incoming.emplace_back(R"({"return":{}})");
+            }
             else
             {
                 _state->incoming.emplace_back(R"({"return":{}})");
@@ -153,11 +165,26 @@ namespace
     class FakeRspTransport : public RspTransport
     {
     public:
-        std::string pending;
-        std::string registersXml;
-        std::string registerBytes;
-        bool        noAck {false};
-        bool        fail {false};
+        struct StopReply
+        {
+            std::string   thread;
+            std::uint64_t rip {};
+            std::uint64_t rsp {};
+            std::uint64_t cr3 {};
+        };
+
+        std::string           pending;
+        std::string           registersXml;
+        std::string           registerBytes;
+        bool                  noAck {false};
+        bool                  fail {false};
+        std::deque<StopReply> stops;
+        std::uint64_t         currentRip {};
+        std::uint64_t         currentRsp {};
+        std::uint64_t         currentCr3 {};
+        std::size_t           watchInserts {0};
+        std::size_t           watchRemoves {0};
+        std::size_t           continues {0};
 
         [[nodiscard]] bool open(const RspEndpoint&, std::chrono::milliseconds, std::string&) override
         {
@@ -167,9 +194,14 @@ namespace
         [[nodiscard]] std::ptrdiff_t
         readSome(std::span<std::byte> buffer, std::chrono::milliseconds, std::string& error) override
         {
-            if (fail || pending.empty())
+            if (fail)
             {
                 error = "the fake RSP has no data";
+                return -1;
+            }
+            if (pending.empty())
+            {
+                error = "the GDB stub socket timed out";
                 return -1;
             }
             const auto size = std::min(buffer.size(), pending.size());
@@ -235,9 +267,56 @@ namespace
             {
                 quoteAck(registerBytes);
             }
+            else if (body.starts_with("Z2,"))
+            {
+                ++watchInserts;
+                quoteAck("OK");
+            }
+            else if (body.starts_with("z2,"))
+            {
+                ++watchRemoves;
+                quoteAck("OK");
+            }
+            else if (body == "vCont;c" || body == "c")
+            {
+                ++continues;
+                if (!stops.empty())
+                {
+                    const auto stop = stops.front();
+                    stops.pop_front();
+                    currentRip = stop.rip;
+                    currentRsp = stop.rsp;
+                    currentCr3 = stop.cr3;
+                    quoteAck("T05thread:" + stop.thread + ";");
+                }
+            }
             else if (body.starts_with("p"))
             {
-                quoteAck("0000000000000000");
+                std::uint32_t number = 0;
+                std::from_chars(body.data() + 1, body.data() + body.size(), number, 16);
+                std::uint64_t value = 0;
+                if (number == 16)
+                {
+                    value = currentRip;
+                }
+                else if (number == 7)
+                {
+                    value = currentRsp;
+                }
+                else if (number == 19)
+                {
+                    value = currentCr3;
+                }
+                static constexpr char digits[] = "0123456789abcdef";
+                std::string           hex;
+                hex.reserve(16);
+                for (int byteIndex = 0; byteIndex < 8; ++byteIndex)
+                {
+                    const auto byte = (value >> (byteIndex * 8)) & 0xFF;
+                    hex.push_back(digits[(byte >> 4) & 0x0F]);
+                    hex.push_back(digits[byte & 0x0F]);
+                }
+                quoteAck(hex);
             }
             else
             {
@@ -295,6 +374,74 @@ namespace
         }
         return hex;
     }
+
+    class FakeInspector : public mpfshost::debug::DebugInspector
+    {
+    public:
+        std::uint64_t                               dtb {0x1ae000};
+        std::uint64_t                               dtbUser {0x200000};
+        std::uint64_t                               watchAddress {0x5000};
+        std::vector<std::uint64_t>                  values;
+        std::size_t                                 valueIndex {0};
+        mpfshost::debug::DebugModuleHit             module {0x7ff8451b0000, 0x100000, 0x7b1f1, "msvcrt.dll"};
+        mpfshost::debug::DebugExportHit             exportHit {true, 0x7ff84522b180, 0x71, "memcpy"};
+        std::optional<mpfshost::debug::DebugPdbHit> pdb {
+            mpfshost::debug::DebugPdbHit {"memcpy", 4}
+        };
+        bool hasModule {true};
+
+        [[nodiscard]] std::optional<mpfshost::debug::DebugProcessDtbs> processDtbs(std::uint32_t, std::string&) override
+        {
+            return mpfshost::debug::DebugProcessDtbs {dtb, dtbUser};
+        }
+
+        [[nodiscard]] std::optional<mpfshost::debug::DebugModuleHit>
+        moduleForAddress(std::uint32_t, std::uint64_t address, std::string&) override
+        {
+            if (!hasModule || address < module.base || address >= module.base + module.imageSize)
+            {
+                return std::nullopt;
+            }
+            return module;
+        }
+
+        [[nodiscard]] mpfshost::debug::DebugExportHit
+        nearestExport(std::uint32_t, const std::string&, std::uint64_t, std::string&) override
+        {
+            return exportHit;
+        }
+
+        [[nodiscard]] std::optional<mpfshost::debug::DebugPdbHit>
+        pdbSymbol(std::uint32_t, const std::string&, std::uint64_t, std::string&) override
+        {
+            return pdb;
+        }
+
+        [[nodiscard]] bool readMemory(std::uint32_t,
+                                      std::uint64_t           address,
+                                      std::uint32_t           size,
+                                      std::vector<std::byte>& out,
+                                      std::string&            error) override
+        {
+            out.clear();
+            if (address == watchAddress)
+            {
+                if (valueIndex >= values.size())
+                {
+                    error = "the fake memory read failed";
+                    return false;
+                }
+                const auto value = values[valueIndex++];
+                for (std::uint32_t index = 0; index < size; ++index)
+                {
+                    out.push_back(static_cast<std::byte>((value >> (index * 8)) & 0xFF));
+                }
+                return true;
+            }
+            out.assign(size, std::byte {0x90});
+            return true;
+        }
+    };
 } // namespace
 
 TEST_CASE("the debug controller starts and tears down a stub for register reads", "[core][debug][controller]")
@@ -318,8 +465,9 @@ TEST_CASE("the debug controller starts and tears down a stub for register reads"
                                 }};
 
     bool        invalidState = false;
+    bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, error);
+    const auto  records = controller.registers({}, invalidState, busy, error);
     REQUIRE(records.has_value());
     REQUIRE_FALSE(invalidState);
     REQUIRE(records->size() == 1);
@@ -354,8 +502,9 @@ TEST_CASE("the debug controller refuses registers while the guest runs", "[core]
                                 }};
 
     bool        invalidState = false;
+    bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, error);
+    const auto  records = controller.registers({}, invalidState, busy, error);
     REQUIRE_FALSE(records.has_value());
     REQUIRE(invalidState);
     REQUIRE(error.find("paused") != std::string::npos);
@@ -381,8 +530,9 @@ TEST_CASE("the debug controller refuses a stub owned by someone else", "[core][d
                                 }};
 
     bool        invalidState = false;
+    bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, error);
+    const auto  records = controller.registers({}, invalidState, busy, error);
     REQUIRE_FALSE(records.has_value());
     REQUIRE(invalidState);
     REQUIRE(error.find("another GDB stub") != std::string::npos);
@@ -409,10 +559,290 @@ TEST_CASE("the debug controller tears the stub down after a read failure", "[cor
                                 }};
 
     bool        invalidState = false;
+    bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, error);
+    const auto  records = controller.registers({}, invalidState, busy, error);
     REQUIRE_FALSE(records.has_value());
     REQUIRE_FALSE(invalidState);
     REQUIRE(qmp->count("gdbserver unix:") == 1);
     REQUIRE(qmp->count("gdbserver none") == 1);
+}
+
+TEST_CASE("the debug controller arms, resolves and tears down a write watchpoint", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE_FALSE(busy);
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(end->skippedCount == 0);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits[0].rip == 0x7ff84522b1f1ull);
+    REQUIRE(hits[0].rsp == 0x1234);
+    REQUIRE(hits[0].cr3 == 0x200123);
+    REQUIRE(hits[0].oldValue == 0xAA);
+    REQUIRE(hits[0].newValue == 0xBB);
+    REQUIRE(hits[0].module == "msvcrt.dll");
+    REQUIRE(hits[0].moduleOffset == 0x7b1f1);
+    REQUIRE(hits[0].exportFound);
+    REQUIRE(hits[0].exportName == "memcpy");
+    REQUIRE(hits[0].pdbFound);
+    REQUIRE(hits[0].pdbSymbol == "memcpy");
+    REQUIRE(hits[0].bytesBefore.size() == 16);
+    REQUIRE(rsp->watchInserts == 1);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE(rsp->continues == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+}
+
+TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x999123});
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(end->skippedCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(rsp->continues == 2);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a watchpoint times out and still restores the guest", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+    inspector.values = {0xAA};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        busy = false;
+    std::string error;
+    const auto  end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5}, {}, {}, busy, error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE(end->hitCount == 0);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("cancelling a watchpoint tears the stub down", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+    inspector.values = {0xAA};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        busy = false;
+    std::string error;
+    const auto  end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
+        {},
+        []
+        {
+            return true;
+        },
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("cancelling a watchpoint after its first hit stops the watch", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB, 0xCC};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    auto        first = true;
+    std::size_t hits  = 0;
+    bool        busy  = false;
+    std::string error;
+    const auto  end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 2, 5000},
+        [&hits](const mpfshost::DebugWatchData&)
+        {
+            ++hits;
+            return true;
+        },
+        [&first]
+        {
+            const auto result = !first;
+            first             = false;
+            return result;
+        },
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(hits == 1);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a memory read failure during a watchpoint ends it as an error", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        busy = false;
+    std::string error;
+    const auto end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Error);
+    REQUIRE(end->error.find("fake memory read") != std::string::npos);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
 }

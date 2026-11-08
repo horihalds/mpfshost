@@ -286,6 +286,7 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "write_physical_memory",
         "debug_stop",
         "debug_continue",
+        "debug_watch",
     };
 
     const auto infos = mpfshost::mcp::toolInfos();

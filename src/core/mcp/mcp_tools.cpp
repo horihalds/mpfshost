@@ -482,6 +482,31 @@ namespace mpfshost::mcp
             };
         }
 
+        Json debugWatchJson(const DebugWatchData& hit)
+        {
+            return Json {
+                {       "hit_index",                 hit.hitIndex},
+                {            "vcpu",                     hit.vcpu},
+                {       "thread_id",                 hit.threadId},
+                {             "rip",           hexString(hit.rip)},
+                {             "rsp",           hexString(hit.rsp)},
+                {             "cr3",           hexString(hit.cr3)},
+                {         "address",       hexString(hit.address)},
+                {       "old_value",      hexString(hit.oldValue)},
+                {       "new_value",      hexString(hit.newValue)},
+                {          "before",   bytesJson(hit.bytesBefore)},
+                {          "module",                   hit.module},
+                {   "module_offset",   hexSmall(hit.moduleOffset)},
+                {    "export_found",              hit.exportFound},
+                {  "export_address", hexString(hit.exportAddress)},
+                {   "export_offset",   hexSmall(hit.exportOffset)},
+                {     "export_name",               hit.exportName},
+                {       "pdb_found",                 hit.pdbFound},
+                {      "pdb_symbol",                hit.pdbSymbol},
+                {"pdb_displacement",          hit.pdbDisplacement}
+            };
+        }
+
         ToolOutcome success(Json structured)
         {
             ToolOutcome outcome;
@@ -507,13 +532,13 @@ namespace mpfshost::mcp
             const auto offset = ParamSpec {"offset", "integer", "Entries to skip before returning results", false};
 
             static const std::vector<ToolSpec> specs = {
-                {         "list_targets","List VM targets",                                                        "List the QEMU/KVM guests the host can serve.",true,                                                                                              {}                       },
+                {         "list_targets","List VM targets",                                                        "List the QEMU/KVM guests the host can serve.",true,                                                                                             {}                       },
                 {         "capabilities",
                  "Host capabilities",                                             "Show the host version and the request types it handles.",
                  true,                                                                                                    {} },
                 {          "bind_target",
                  "Bind to a VM target",                    "Bind a connection to one VM target and report the resulting session. Most other tools bind "
-                    "implicitly, so this is only needed to inspect the target record.", true,
+                    "implicitly, so this is only needed to inspect the target record.",  true,
                  {target}                                                                                                    },
                 {       "list_processes",
                  "List processes",                              "List the processes of a VM target, optionally filtered by pid or name.",
@@ -744,7 +769,7 @@ namespace mpfshost::mcp
     {"value", "integer", "Decimal or 0x-hex value for options that take one", false}}                 },
                 {         "debug_status",
                  "Guest run state",                                                         "Report QEMU's run state, whether a stub is active, whether the host paused the guest, the vCPU count "
-                                                         "and the active watch count.", true,
+                                                         "and the active watch count.",  true,
                  {target}                                                                                                    },
                 {      "debug_registers",
                  "Read vCPU registers",                        "Read the x86-64 register set of a paused guest through a temporary GDB stub.",
@@ -755,6 +780,16 @@ namespace mpfshost::mcp
                 {       "debug_continue",
                  "Resume the guest", "Resume a guest paused by debug_stop or another client. Destructive: the guest starts running again.",
                  false,                                                                                              {target}},
+                {          "debug_watch",
+                 "Watch a process write",         "Arm a hardware write watchpoint on a process address, run the guest, and return each hit with the "
+         "trap PC, CR3 and nearest symbol. Destructive: pauses and resumes the guest.", false,
+                 {target,
+                 pid,
+                 {"address", "string", "Watched linear address (hex)", true},
+                 {"width", "integer", "Watch width in bytes: 1, 2, 4 or 8 (default 4)", false},
+                 {"access", "string", "Access to watch; only write is supported", false},
+                 {"max_hits", "integer", "Stop after this many hits (default 1)", false},
+                 {"timeout", "integer", "Seconds to wait for a write (default 30)", false}}                                  },
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -2272,6 +2307,57 @@ namespace mpfshost::mcp
                     return failure(error);
                 }
                 return success(debugStatusJson(*response));
+            }
+
+            if (name == "debug_watch")
+            {
+                const auto accessText = optionalString(args, "access", "write");
+                if (accessText != "write")
+                {
+                    return failure("access only accepts write");
+                }
+                const auto width   = hasArg(args, "width") ? numberValue(args, "width", false) : 4;
+                const auto maxHits = hasArg(args, "max_hits") ? numberValue(args, "max_hits", false) : 1;
+                const auto timeout = hasArg(args, "timeout") ? numberValue(args, "timeout", false) : 30;
+                if (width != 1 && width != 2 && width != 4 && width != 8)
+                {
+                    return failure("width must be 1, 2, 4 or 8");
+                }
+                if (maxHits == 0 || maxHits > kMaxDebugWatchHits)
+                {
+                    return failure("max_hits is out of range");
+                }
+                if (timeout == 0 || timeout > kMaxDebugWatchTimeoutMs / 1000)
+                {
+                    return failure("timeout is out of range");
+                }
+
+                Json       hits = Json::array();
+                const auto end  = debugWatch(
+                    socket,
+                    {requireString(args, "target"),
+                     u32Value(args, "pid", true),
+                     hexValue(args, "address", true),
+                     static_cast<std::uint32_t>(width),
+                     DebugWatchAccess::Write,
+                     static_cast<std::uint32_t>(maxHits),
+                     static_cast<std::uint32_t>(timeout * 1000)},
+                    [&hits](const DebugWatchData& hit)
+                    {
+                        hits.push_back(debugWatchJson(hit));
+                    },
+                    error);
+                if (!end)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {       "status", std::string {debugWatchStatusName(end->status)}},
+                    {    "hit_count",                                   end->hitCount},
+                    {"skipped_count",                               end->skippedCount},
+                    {        "error",                                      end->error},
+                    {         "hits",                                 std::move(hits)}
+                });
             }
 
             if (name == "write_memory")

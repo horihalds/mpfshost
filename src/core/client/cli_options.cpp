@@ -61,7 +61,7 @@ namespace mpfshost
                 || command == "pdb-symbol" || command == "pdb-address" || command == "pdb-type-size"
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
                 || command == "process-for-dtb" || command == "debug-status" || command == "debug-stop"
-                || command == "debug-continue" || command == "debug-registers";
+                || command == "debug-continue" || command == "debug-registers" || command == "debug-watch";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -92,6 +92,32 @@ namespace mpfshost
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
+            if (command != "debug-watch"
+                && (options.watchWidthSet || options.watchAccessSet || options.maxHitsSet || options.watchTimeoutSet))
+            {
+                error = "--width, --access, --max-hits and --timeout are only valid for --client debug-watch";
+                return false;
+            }
+            if (command == "debug-watch")
+            {
+                if (options.watchWidth != 1 && options.watchWidth != 2 && options.watchWidth != 4
+                    && options.watchWidth != 8)
+                {
+                    error = "--width must be 1, 2, 4 or 8";
+                    return false;
+                }
+                if (options.maxHits == 0 || options.maxHits > kMaxDebugWatchHits)
+                {
+                    error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWatchHits);
+                    return false;
+                }
+                if (options.watchTimeoutSeconds == 0 || options.watchTimeoutSeconds > kMaxDebugWatchTimeoutMs / 1000)
+                {
+                    error = "--timeout must be between 1 and " + std::to_string(kMaxDebugWatchTimeoutMs / 1000)
+                          + " seconds";
+                    return false;
+                }
+            }
             if (options.pid == kPhysicalPid && !commandSupportsPhysicalMemory(command))
             {
                 error = "--pid -1 (physical memory) is only valid for page, prefetch and search";
@@ -118,6 +144,14 @@ namespace mpfshost
                 if (options.pid == 0 || !options.addressSet)
                 {
                     error = "--client module-at needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "debug-watch")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client debug-watch needs --pid and --address";
                     return false;
                 }
             }
@@ -430,6 +464,74 @@ namespace mpfshost
                 }
                 options.vcpu    = *parsed;
                 options.vcpuSet = true;
+                continue;
+            }
+            if (argument == "--width")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--width needs 1, 2, 4 or 8";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--width needs 1, 2, 4 or 8";
+                    return std::nullopt;
+                }
+                options.watchWidth    = *parsed;
+                options.watchWidthSet = true;
+                continue;
+            }
+            if (argument == "--access")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--access only accepts write";
+                    return std::nullopt;
+                }
+                const std::string_view value {args[++index]};
+                if (value != "write")
+                {
+                    error = "--access only accepts write";
+                    return std::nullopt;
+                }
+                options.watchAccess    = mpfshost::DebugWatchAccess::Write;
+                options.watchAccessSet = true;
+                continue;
+            }
+            if (argument == "--max-hits")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--max-hits needs a positive integer";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--max-hits needs a positive integer";
+                    return std::nullopt;
+                }
+                options.maxHits    = *parsed;
+                options.maxHitsSet = true;
+                continue;
+            }
+            if (argument == "--timeout")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--timeout needs a positive number of seconds";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--timeout needs a positive number of seconds";
+                    return std::nullopt;
+                }
+                options.watchTimeoutSeconds = *parsed;
+                options.watchTimeoutSet     = true;
                 continue;
             }
             if (argument == "--address")

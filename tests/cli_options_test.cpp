@@ -80,6 +80,7 @@ namespace
         "debug-stop",
         "debug-continue",
         "debug-registers",
+        "debug-watch",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)
@@ -566,6 +567,45 @@ TEST_CASE("a command line with every required option parses", "[cli-options]")
         REQUIRE(parsed.options.has_value());
         CHECK(parsed.error.empty());
     }
+}
+
+TEST_CASE("debug watch options are parsed and validated", "[cli-options]")
+{
+    const auto parsed = parse({"--client",
+                               "debug-watch",
+                               "vm1",
+                               "--pid",
+                               "42",
+                               "--address",
+                               "0x5000",
+                               "--width",
+                               "2",
+                               "--access",
+                               "write",
+                               "--max-hits",
+                               "3",
+                               "--timeout",
+                               "5"});
+    REQUIRE(parsed.options.has_value());
+    CHECK(parsed.options->watchWidth == 2);
+    CHECK(parsed.options->watchAccess == mpfshost::DebugWatchAccess::Write);
+    CHECK(parsed.options->maxHits == 3);
+    CHECK(parsed.options->watchTimeoutSeconds == 5);
+
+    const auto badWidth =
+        parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--width", "3"});
+    REQUIRE_FALSE(badWidth.options.has_value());
+    CHECK(badWidth.error.find("--width") != std::string::npos);
+
+    const auto badAccess =
+        parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--access", "read"});
+    REQUIRE_FALSE(badAccess.options.has_value());
+    CHECK(badAccess.error.find("--access") != std::string::npos);
+
+    const auto misplaced =
+        parse({"--client", "read", "vm1", "--pid", "42", "--address", "0x5000", "--size", "16", "--width", "2"});
+    REQUIRE_FALSE(misplaced.options.has_value());
+    CHECK(misplaced.error.find("only valid") != std::string::npos);
 }
 
 TEST_CASE("decimal u32 values are parsed strictly", "[util][number]")

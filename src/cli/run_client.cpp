@@ -1614,6 +1614,74 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-watch")
+        {
+            const auto end = mpfshost::debugWatch(
+                options.socketPath,
+                {options.target,
+                 options.pid,
+                 options.address,
+                 options.watchWidth,
+                 options.watchAccess,
+                 options.maxHits,
+                 options.watchTimeoutSeconds * 1000},
+                [](const mpfshost::DebugWatchData& hit)
+                {
+                    std::printf("hit %u  vcpu %u  thread %s\n",
+                                static_cast<unsigned>(hit.hitIndex),
+                                static_cast<unsigned>(hit.vcpu),
+                                hit.threadId.c_str());
+                    std::printf("  address=0x%016llx  old=0x%016llx  new=0x%016llx\n",
+                                static_cast<unsigned long long>(hit.address),
+                                static_cast<unsigned long long>(hit.oldValue),
+                                static_cast<unsigned long long>(hit.newValue));
+                    std::printf("  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
+                                static_cast<unsigned long long>(hit.rip),
+                                static_cast<unsigned long long>(hit.rsp),
+                                static_cast<unsigned long long>(hit.cr3));
+                    if (!hit.module.empty())
+                    {
+                        std::printf("  module=%s+0x%llx\n",
+                                    hit.module.c_str(),
+                                    static_cast<unsigned long long>(hit.moduleOffset));
+                    }
+                    if (hit.exportFound)
+                    {
+                        std::printf("  export=%s+0x%llx\n",
+                                    hit.exportName.empty() ? "?" : hit.exportName.c_str(),
+                                    static_cast<unsigned long long>(hit.exportOffset));
+                    }
+                    if (hit.pdbFound)
+                    {
+                        std::printf("  symbol=%s+0x%x\n", hit.pdbSymbol.c_str(), hit.pdbDisplacement);
+                    }
+                    if (!hit.bytesBefore.empty())
+                    {
+                        std::printf("  before=");
+                        for (const auto value : hit.bytesBefore)
+                        {
+                            std::printf("%02x", std::to_integer<unsigned>(value));
+                        }
+                        std::printf("\n");
+                    }
+                },
+                error);
+            if (!end)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            std::printf("%s  hits=%u  skipped=%u\n",
+                        std::string {mpfshost::debugWatchStatusName(end->status)}.c_str(),
+                        static_cast<unsigned>(end->hitCount),
+                        static_cast<unsigned>(end->skippedCount));
+            if (!end->error.empty())
+            {
+                mpfshost::log::error("client", end->error);
+            }
+            return end->status == mpfshost::DebugWatchStatus::Completed ? 0 : 1;
+        }
+
         if (options.command == "search")
         {
             mpfshost::SearchTerm term;

@@ -27,9 +27,15 @@ namespace mpfshost
         }
 
         std::string error;
-        auto        status = provider->debugState(error);
+        bool        busy   = false;
+        auto        status = provider->debugState(busy, error);
         if (!status.has_value())
         {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug state query failed" : error);
             return;
         }
@@ -59,9 +65,15 @@ namespace mpfshost
         }
 
         std::string error;
-        auto        status = provider->debugControl(request->action, error);
+        bool        busy   = false;
+        auto        status = provider->debugControl(request->action, busy, error);
         if (!status.has_value())
         {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug control failed" : error);
             return;
         }
@@ -96,10 +108,16 @@ namespace mpfshost
         }
 
         bool        invalidState = false;
+        bool        busy         = false;
         std::string error;
-        auto        records = provider->debugRegisters(*request, invalidState, error);
+        auto        records = provider->debugRegisters(*request, invalidState, busy, error);
         if (!records.has_value())
         {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
             if (invalidState)
             {
                 sendError(requestId,
@@ -112,5 +130,108 @@ namespace mpfshost
         }
 
         sendPayload(requestId, MessageType::DebugRegistersResponse, encodeDebugRegistersResponse({*records}));
+    }
+
+    void Session::handleDebugWatch(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugWatchRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug watch request");
+            return;
+        }
+        if (request->pid == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug watch needs a process id");
+            return;
+        }
+        if (request->address == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug watch needs a nonzero address");
+            return;
+        }
+        if (request->width != 1 && request->width != 2 && request->width != 4 && request->width != 8)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the watch width must be 1, 2, 4 or 8 bytes");
+            return;
+        }
+        if (request->maxHits == 0 || request->maxHits > kMaxDebugWatchHits)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the hit limit is out of range");
+            return;
+        }
+        if (request->timeoutMs == 0 || request->timeoutMs > kMaxDebugWatchTimeoutMs)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the watch timeout is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot run a debug watch");
+            return;
+        }
+
+        bool                       aborted    = false;
+        const DebugWatchAbortCheck abortCheck = [&]()
+        {
+            if (aborted)
+            {
+                return true;
+            }
+            ErrorCode code {};
+            if (requestAborted(requestId, code))
+            {
+                aborted = true;
+                return true;
+            }
+            if (peerGone())
+            {
+                aborted      = true;
+                _writeFailed = true;
+                return true;
+            }
+            return false;
+        };
+        const DebugWatchHitSink onHit = [&](const DebugWatchData& hit)
+        {
+            if (abortCheck())
+            {
+                return false;
+            }
+            sendPayload(requestId, MessageType::DebugWatchData, encodeDebugWatchData(hit));
+            if (_writeFailed)
+            {
+                aborted = true;
+                return false;
+            }
+            return true;
+        };
+
+        bool        busy = false;
+        std::string error;
+        const auto  end = provider->debugWatch(*request, onHit, abortCheck, busy, error);
+        if (!end.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "the debug watch failed" : error);
+            return;
+        }
+        if (aborted)
+        {
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugWatchEnd, encodeDebugWatchEnd(*end));
     }
 } // namespace mpfshost

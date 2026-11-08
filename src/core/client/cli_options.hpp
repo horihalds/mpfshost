@@ -45,6 +45,14 @@ namespace mpfshost
         std::uint32_t                       vmIndex {};
         std::uint32_t                       vcpu {};
         bool                                vcpuSet {};
+        std::uint32_t                       watchWidth {4};
+        DebugWatchAccess                    watchAccess {DebugWatchAccess::Write};
+        std::uint32_t                       maxHits {1};
+        std::uint32_t                       watchTimeoutSeconds {30};
+        bool                                watchWidthSet {};
+        bool                                watchAccessSet {};
+        bool                                maxHitsSet {};
+        bool                                watchTimeoutSet {};
         std::string                         path {"\\"};
         bool                                pathSet {};
         std::uint64_t                       offset {};

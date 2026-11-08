@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "core/debug/debug_inspector.hpp"
 #include "core/debug/qmp_client.hpp"
 #include "core/debug/rsp_client.hpp"
 #include "core/ipc/message.hpp"
@@ -18,8 +19,10 @@
 
 namespace mpfshost::debug
 {
-    using QmpTransportFactory = std::move_only_function<std::unique_ptr<QmpTransport>()>;
-    using RspTransportFactory = std::move_only_function<std::unique_ptr<RspTransport>()>;
+    using QmpTransportFactory  = std::move_only_function<std::unique_ptr<QmpTransport>()>;
+    using RspTransportFactory  = std::move_only_function<std::unique_ptr<RspTransport>()>;
+    using DebugWatchHitSink    = std::function<bool(const DebugWatchData&)>;
+    using DebugWatchAbortCheck = std::function<bool()>;
 
     // Owns the host-side debug bookkeeping and the QMP/GDB stub lifecycle for one VM. QEMU's QMP socket is
     // the source of truth for the guest's run state. The factory arguments exist so tests can script both
@@ -30,16 +33,30 @@ namespace mpfshost::debug
         DebugController(std::filesystem::path qmpSocket,
                         std::filesystem::path stubSocket,
                         QmpTransportFactory   qmpFactory = {},
-                        RspTransportFactory   rspFactory = {});
+                        RspTransportFactory   rspFactory = {},
+                        DebugInspector*       inspector  = nullptr);
 
         DebugController(const DebugController&)            = delete;
         DebugController& operator=(const DebugController&) = delete;
 
-        [[nodiscard]] std::optional<DebugStatus> state(std::string& error);
-        [[nodiscard]] std::optional<DebugStatus> control(DebugControlAction action, std::string& error);
+        // `busy` is set when another debug operation holds the controller; the caller maps it to Busy.
+        [[nodiscard]] std::optional<DebugStatus> state(bool& busy, std::string& error);
+        [[nodiscard]] std::optional<DebugStatus> control(DebugControlAction action, bool& busy, std::string& error);
         // `invalidState` is set when the guest is running or another stub owns the debug channel.
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
-        registers(const DebugRegistersRequest& request, bool& invalidState, std::string& error);
+        registers(const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error);
+        // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
+        // returns nullopt; once the watch is armed, an error is reported through the end record instead.
+        [[nodiscard]] std::optional<DebugWatchEnd> watch(const DebugWatchRequest&    request,
+                                                         const DebugWatchHitSink&    onHit,
+                                                         const DebugWatchAbortCheck& aborted,
+                                                         bool&                       busy,
+                                                         std::string&                error);
+
+        void setInspector(DebugInspector* inspector) noexcept
+        {
+            _inspector = inspector;
+        }
 
     private:
         [[nodiscard]] std::unique_ptr<QmpClient> makeQmp();
@@ -60,6 +77,7 @@ namespace mpfshost::debug
         std::filesystem::path _stubSocket;
         QmpTransportFactory   _qmpFactory;
         RspTransportFactory   _rspFactory;
+        DebugInspector*       _inspector {nullptr};
         bool                  _stubActive {false};
         bool                  _hostPaused {false};
         std::uint32_t         _watchCount {0};

@@ -84,7 +84,8 @@ namespace mpfshost
                       public VirtualQueryProvider,
                       public MemorySearchProvider,
                       public ConfigProvider,
-                      public DebugProvider
+                      public DebugProvider,
+                      public debug::DebugInspector
     {
     public:
         VmmHandle(VMM_HANDLE            handle,
@@ -92,7 +93,7 @@ namespace mpfshost
                   std::filesystem::path qmpSocket,
                   std::filesystem::path stubSocket)
             : _handle {handle}, _targetName {std::move(targetName)}, _lookupCache {handle},
-              _debug {std::move(qmpSocket), std::move(stubSocket)}
+              _debug {std::move(qmpSocket), std::move(stubSocket), {}, {}, this}
         {
         }
 
@@ -253,10 +254,25 @@ namespace mpfshost
 
         [[nodiscard]] bool setConfig(const ConfigSetRequest& request, std::string& error) override;
 
-        [[nodiscard]] std::optional<DebugStatus> debugState(std::string& error) override;
-        [[nodiscard]] std::optional<DebugStatus> debugControl(DebugControlAction action, std::string& error) override;
-        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
-        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, std::string& error) override;
+        [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error) override;
+        [[nodiscard]] std::optional<DebugStatus>
+        debugControl(DebugControlAction action, bool& busy, std::string& error) override;
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> debugRegisters(
+            const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error) override;
+        [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
+                                                              const DebugWatchHitSink&    onHit,
+                                                              const DebugWatchAbortCheck& aborted,
+                                                              bool&                       busy,
+                                                              std::string&                error) override;
+
+        [[nodiscard]] std::optional<debug::DebugProcessDtbs> processDtbs(std::uint32_t pid,
+                                                                         std::string&  error) override;
+        [[nodiscard]] std::optional<debug::DebugModuleHit>
+        moduleForAddress(std::uint32_t pid, std::uint64_t address, std::string& error) override;
+        [[nodiscard]] debug::DebugExportHit
+        nearestExport(std::uint32_t pid, const std::string& module, std::uint64_t address, std::string& error) override;
+        [[nodiscard]] std::optional<debug::DebugPdbHit>
+        pdbSymbol(std::uint32_t pid, const std::string& module, std::uint64_t offset, std::string& error) override;
 
     private:
         VMM_HANDLE             _handle;

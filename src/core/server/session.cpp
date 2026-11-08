@@ -7,9 +7,11 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <utility>
 #include <vector>
 
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace mpfshost
@@ -230,6 +232,9 @@ namespace mpfshost
         case MessageType::DebugRegistersRequest:
             handleDebugRegisters(requestId, payload);
             return;
+        case MessageType::DebugWatchRequest:
+            handleDebugWatch(requestId, payload);
+            return;
         case MessageType::ConfigSetRequest:
             handleConfigSet(requestId, payload);
             return;
@@ -382,6 +387,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugStateRequest),
             static_cast<std::uint16_t>(MessageType::DebugControlRequest),
             static_cast<std::uint16_t>(MessageType::DebugRegistersRequest),
+            static_cast<std::uint16_t>(MessageType::DebugWatchRequest),
             static_cast<std::uint16_t>(MessageType::VirtualQueryRequest),
             static_cast<std::uint16_t>(MessageType::MemorySearchRequest),
             static_cast<std::uint16_t>(MessageType::PageReadRequest),
@@ -505,6 +511,21 @@ namespace mpfshost
         if (_deadline.expired())
         {
             code = ErrorCode::Timeout;
+            return true;
+        }
+        return false;
+    }
+
+    bool Session::peerGone()
+    {
+        std::byte  probe {};
+        const auto result = ::recv(_fd, &probe, sizeof(probe), MSG_PEEK | MSG_DONTWAIT);
+        if (result == 0)
+        {
+            return true;
+        }
+        if (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        {
             return true;
         }
         return false;

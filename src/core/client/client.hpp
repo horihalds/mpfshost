@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -73,6 +74,24 @@ namespace mpfshost
 
     [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
     debugRegisters(const std::filesystem::path& socketPath, const DebugRegistersQuery& query, std::string& error);
+
+    struct DebugWatchQuery
+    {
+        std::string      targetName;
+        std::uint32_t    pid {};
+        std::uint64_t    address {};
+        std::uint32_t    width {4};
+        DebugWatchAccess access {DebugWatchAccess::Write};
+        std::uint32_t    maxHits {1};
+        std::uint32_t    timeoutMs {30000};
+    };
+
+    // Streams one hit at a time through `onHit` and returns the end record. A dedicated connection is used
+    // for each watch, so cancellation means closing that connection.
+    [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                      socketPath,
+                                                          const DebugWatchQuery&                            query,
+                                                          const std::function<void(const DebugWatchData&)>& onHit,
+                                                          std::string&                                      error);
 
     struct VirtualQueryQuery
     {

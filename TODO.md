@@ -13,42 +13,7 @@ The tasks below implement the design in `RESEARCH.md` as vertical slices. Later 
 The live checks are run by the user, as required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so`
 and root.
 
-Before starting the watchpoint slice, validate whether `Z2` must be armed per vCPU and whether a debug-stop pause
-interacts badly with snapshots, reset or migration, and record the answers under "Checks still owed to a live guest"
-in `docs/DEBUGGING.md`.
-
-### 1. Add process-scoped write watchpoints
-
-Implement the experiment from `RESEARCH.md`: catch a write to a linear address, verify it belongs to the requested
-process, and resolve the trap PC.
-
-- Add `DebugWatchRequest` (`0x003E`) and the streamed `DebugWatchData` (`0x8061`) / `DebugWatchEnd` (`0x8062`).
-  The request carries pid, address, width (1/2/4/8), access (write only in this task), max hits, and a timeout. The
-  data frame carries vCPU/thread, `rip`, `rsp`, `cr3`, old and new values, 16 bytes before `rip`, and module/offset,
-  nearest-export and optional already-loaded-PDB symbolization. The end frame carries status, hit count, skipped-hit
-  count and an error string.
-- Add the streamed handler and provider path. Stop the VM, ensure the stub, read `proc-info` for `dtb` and `dtbUser`,
-  arm `Z2`, continue, and wait with short polls so `Session::requestAborted`, the request deadline and peer EOF are
-  all observed. Add `Session::peerGone()` if the existing check cannot detect a dead client.
-- On every stop reply, capture registers before resuming. Mask the low twelve `cr3` bits and compare against both
-  process DTBs. Resume and keep watching on a mismatch, counting it as skipped.
-- On a match, read the new value, resolve `rip` with the existing module-by-address lookup, and find the nearest
-  export. Do not start a PDB download; `PdbSymbolName` may be used only against symbols already loaded.
-- Tear down with RAII on success, timeout, cancellation, error and connection death: remove the watchpoint, stop the
-  stub if the host owns it, resume the VM if this request paused it, and verify with `query-status`. Refuse a
-  concurrent debug operation with `Busy`; enforce the four-watchpoint hardware limit.
-- Add the client streaming function, `--client debug-watch` with `--pid`, `--address`, `--width`, `--access`,
-  `--max-hits` and `--timeout`, and an MCP tool. The CLI uses one dedicated connection per watch.
-- Tests: arm/continue/hit/resolve/teardown with fake QMP, RSP and memory; CR3 mismatch skip; cancellation before and
-  after the first data frame; timeout; error-path teardown; peer death; concurrent `Busy`; capability gating.
-- Document the manual live procedure in `docs/DEBUGGING.md`: stop, arm, trigger a write, assert the hit, resume and
-  verify `query-status`. Record the teardown rule for snapshots, reset and migration.
-
-Acceptance: the user can watch a write in a live Windows process, receive a `DebugWatchData` frame with the trap PC,
-CR3, module and nearest export, and afterwards find the VM running, the watch removed and the stub stopped. No guest
-memory contents are logged.
-
-### 2. Add address resolution and watch-hit ergonomics
+### 1. Add address resolution and watch-hit ergonomics
 
 Make a hit directly usable without several client round trips.
 
@@ -66,7 +31,7 @@ Make a hit directly usable without several client round trips.
 Acceptance: one command or tool call turns an absolute RIP into module, offset, nearest export and optional PDB
 symbol, and the watch output identifies the store when the decoder is available.
 
-### 3. Add breakpoints and single-step
+### 2. Add breakpoints and single-step
 
 Only start this after the write-watch path is solid on a live guest.
 

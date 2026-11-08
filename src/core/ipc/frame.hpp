@@ -132,6 +132,7 @@ namespace mpfshost
         DebugStateRequest          = 0x003B,
         DebugControlRequest        = 0x003C,
         DebugRegistersRequest      = 0x003D,
+        DebugWatchRequest          = 0x003E, // streamed: DebugWatchData* then DebugWatchEnd
         ListTargetsResponse        = 0x8001,
         BindResponse               = 0x8002,
         ProcessListResponse        = 0x8003,
@@ -222,6 +223,8 @@ namespace mpfshost
         DebugStateResponse         = 0x805E,
         DebugControlResponse       = 0x805F,
         DebugRegistersResponse     = 0x8060,
+        DebugWatchData             = 0x8061,
+        DebugWatchEnd              = 0x8062,
         ErrorResponse              = 0x8FFF,
     };
 

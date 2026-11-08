@@ -132,6 +132,7 @@ range.
  `DebugStateRequest` | `0x003B` | `DebugStateResponse` `0x805E` | single | `debug-status` |
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
  `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
+ `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
 
 ## Address lookups
 
@@ -185,6 +186,50 @@ The host reads QEMU's `target.xml` (following `xi:include`), uses its register n
 `g` packet, and falls back to a fixed x86-64 layout only for a register that the XML omits. If the stub cannot be
 started it tries loopback TCP before failing; it never uses the all-interfaces default and never stops a stub it did
 not start.
+
+## Debug watch
+
+`DebugWatchRequest` is streamed: zero or more `DebugWatchData` frames followed by exactly one `DebugWatchEnd`, or one
+`ErrorResponse` instead. A dedicated connection per watch is expected, so closing it is the cancellation signal.
+
+ Field | Type | Meaning |
+ -------|------|---------|
+ `pid` | `u32` | Process whose address is watched; zero is `MalformedPayload` |
+ `address` | `u64` | Watched linear address; zero is `MalformedPayload` |
+ `width` | `u32` | Watch width in bytes: 1, 2, 4 or 8 |
+ `access` | `u8` | `0` write; other values are `MalformedPayload` in this slice |
+ `maxHits` | `u32` | Stop after this many matching hits, 1–`kMaxDebugWatchHits` (64) |
+ `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
+
+The host pauses the guest if it is running, starts a stub it owns, reads the process DTBs (`paDTB` and
+`paDTB_UserOpt`), arms a `Z2` watchpoint on every vCPU thread, resumes execution through the stub and polls with short
+timeouts so cancellation, the request deadline and peer loss are observed. Every stop reply is matched by masking the
+low twelve bits of `cr3` and comparing it with both process DTBs; a mismatch resumes the guest, counts one skipped hit
+and keeps watching. On a match the host captures `rip`, `rsp` and `cr3` before reading the watched value from the
+requested process and resolving `rip` against the module list, the nearest export and any already-loaded PDB (no
+download is started).
+
+`DebugWatchData` fields:
+
+ Field | Type | Meaning |
+ -------|------|---------|
+ `hitIndex` | `u32` | 0-based matching-hit index |
+ `vcpu` | `u32` | 0-based position in the stub's thread list |
+ `threadId` | string | GDB remote-protocol thread id |
+ `rip`, `rsp`, `cr3` | `u64` | Registers captured at the stop |
+ `address` | `u64` | Watched linear address |
+ `oldValue`, `newValue` | `u64` | Previous and current watch value, little-endian |
+ `bytesBefore` | bytes | Up to 16 bytes ending at `rip` |
+ `module` | string | Module containing `rip`, empty when none |
+ `moduleOffset` | `u64` | `rip - module base` |
+ `exportFound`, `exportAddress`, `exportOffset`, `exportName` | `u8`, `u64`, `u64`, string | Nearest export at or below `rip` |
+ `pdbFound`, `pdbSymbol`, `pdbDisplacement` | `u8`, string, `u32` | Symbol from an already-loaded PDB, when present |
+
+`DebugWatchEnd` carries a `u8` status (`0` completed, `1` timeout, `2` cancelled, `3` error), the `u32` hit count, the
+`u32` skipped-hit count and an error string. Teardown removes the watchpoints, stops a stub the host started, resumes
+the guest if this request paused it (an already-paused guest is left paused) and verifies the result with
+`query-status`. `Busy` (`19`) means another debug operation holds the target; `InvalidState` means another owner holds
+the GDB stub.
 
 ## Physical memory variants
 

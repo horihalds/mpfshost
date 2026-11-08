@@ -456,6 +456,12 @@ namespace mpfshost
             return "DebugControlRequest";
         case MessageType::DebugRegistersRequest:
             return "DebugRegistersRequest";
+        case MessageType::DebugWatchRequest:
+            return "DebugWatchRequest";
+        case MessageType::DebugWatchData:
+            return "DebugWatchData";
+        case MessageType::DebugWatchEnd:
+            return "DebugWatchEnd";
         case MessageType::ProcessInfoRequest:
             return "ProcessInfoRequest";
         case MessageType::SymbolLookupRequest:
