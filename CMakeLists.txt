@@ -3,7 +3,20 @@ project(mpfshost VERSION 0.1.0 LANGUAGES C CXX)
 
 find_package(Threads REQUIRED)
 
+include(FetchContent)
 include(GNUInstallDirs)
+
+# The MCP mode speaks JSON-RPC, so it needs a JSON implementation. This is the only third-party dependency: it is
+# header-only, pinned by release tag and checksum, and marked SYSTEM so its own headers do not trip -Werror.
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(nlohmann_json
+    SYSTEM
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
+    DOWNLOAD_EXTRACT_TIMESTAMP ON
+)
+FetchContent_MakeAvailable(nlohmann_json)
 
 option(MPFSHOST_BUILD_EXAMPLES "Build the client API examples" ON)
 
@@ -81,7 +94,7 @@ add_library(mpfshost_core STATIC
 mpfshost_set_common_flags(mpfshost_core)
 target_compile_definitions(mpfshost_core PRIVATE MPFSHOST_VERSION="${PROJECT_VERSION}")
 target_include_directories(mpfshost_core PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(mpfshost_core PUBLIC Threads::Threads)
+target_link_libraries(mpfshost_core PUBLIC Threads::Threads PRIVATE nlohmann_json::nlohmann_json)
 
 add_library(mpfshost_host STATIC
     src/host/device_string.cpp
