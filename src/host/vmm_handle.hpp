@@ -4,6 +4,7 @@
 
 #include "core/server/backend.hpp"
 #include "core/server/config_provider.hpp"
+#include "core/server/debug_provider.hpp"
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
@@ -34,9 +35,11 @@
 #include "core/server/vfs_provider.hpp"
 #include "core/server/virtual_query_provider.hpp"
 #include "core/server/vm_provider.hpp"
+#include "host/vmm_debug.hpp"
 #include "host/vmm_lookup_cache.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -80,11 +83,13 @@ namespace mpfshost
                       public VfsProvider,
                       public VirtualQueryProvider,
                       public MemorySearchProvider,
-                      public ConfigProvider
+                      public ConfigProvider,
+                      public DebugProvider
     {
     public:
-        VmmHandle(VMM_HANDLE handle, std::string targetName)
-            : _handle {handle}, _targetName {std::move(targetName)}, _lookupCache {handle}
+        VmmHandle(VMM_HANDLE handle, std::string targetName, std::filesystem::path qmpSocket)
+            : _handle {handle}, _targetName {std::move(targetName)}, _lookupCache {handle},
+              _debug {std::move(qmpSocket)}
         {
         }
 
@@ -245,10 +250,14 @@ namespace mpfshost
 
         [[nodiscard]] bool setConfig(const ConfigSetRequest& request, std::string& error) override;
 
+        [[nodiscard]] std::optional<DebugStatus> debugState(std::string& error) override;
+        [[nodiscard]] std::optional<DebugStatus> debugControl(DebugControlAction action, std::string& error) override;
+
     private:
-        VMM_HANDLE  _handle;
-        std::string _targetName;
-        LookupCache _lookupCache;
+        VMM_HANDLE      _handle;
+        std::string     _targetName;
+        LookupCache     _lookupCache;
+        DebugController _debug;
     };
 } // namespace mpfshost
 

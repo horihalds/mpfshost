@@ -13,40 +13,11 @@ The tasks below implement the design in `RESEARCH.md` as vertical slices. Later 
 The live checks are run by the user, as required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so`
 and root.
 
-Before starting task 1, validate the QEMU control details on a non-critical guest and record them in
-`docs/DEBUGGING.md`: whether HMP accepts `gdbserver unix:<path>`, how to detect an already-active stub, whether `Z2`
-must be armed per vCPU, and whether `target.xml` exposes `cr3`.
+Before starting the GDB stub slice, validate the QEMU control details on a non-critical guest and record them under
+"Checks still owed to a live guest" in `docs/DEBUGGING.md`: whether HMP accepts `gdbserver unix:<path>`, how to
+detect an already-active stub, whether `Z2` must be armed per vCPU, and whether `target.xml` exposes `cr3`.
 
-### 1. Add gated QMP debug state and stop/continue
-
-Add the first debug capability without touching debug registers: the host can report QEMU's run state and pause or
-resume the guest.
-
-- Add `--allow-debug` to the server options, `ServerOptions`, and `Session`, mirroring `--allow-vfs-write`: a startup
-  warning, `AccessDenied` for every debug request when off, and no debug types in `CapabilitiesResponse`.
-- Append `DebugStateRequest`/`DebugStateResponse` (`0x003B`/`0x805E`) and
-  `DebugControlRequest`/`DebugControlResponse` (`0x003C`/`0x805F`). The control action is stop or continue; the
-  response reports a wire run state, whether a stub is active, whether the host paused the VM, the vCPU count, and
-  the active watch count.
-- Add `src/core/server/debug_provider.hpp` and a minimal `Session::handleDebug*` family. Follow the usual order:
-  bound, decode, validate, flag check, provider cast, call.
-- Add `src/core/debug/qmp_client.{hpp,cpp}`: Unix-socket connect, JSON-line framing, greeting, `qmp_capabilities`,
-  command/response matching, asynchronous-event skipping, and bounded timeouts. Put the socket behind an injectable
-  transport so tests use a fake.
-- Implement the provider in `src/host/vmm_debug.{hpp,cpp}`. Pass `VmTarget.qmpSocket` through `VmmHandleFactory` into
-  `VmmHandle` and keep one mutex-protected debug controller per VM. Do not add per-session state to `VmmHandle`.
-- Add `debugState`/`debugControl` to `client.hpp` and a new `src/core/client/client_debug.cpp`.
-- Add `--client debug-status`, `--client debug-stop` and `--client debug-continue`, plus MCP tools. Stop/continue are
-  destructive and must be annotated as such.
-- Tests: QMP greeting and handshake, event interleaving, error responses, malformed lines, timeouts, session gating
-  (`AccessDenied`, capability list), client round trip through `FakeHandle`, and `BareHandle` for
-  `CapabilityUnavailable`.
-- Update `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, `README.md` and `src/cli/usage.cpp`.
-
-Acceptance: with `--allow-debug`, the user can query the state of a running VM, stop it, and continue it; without the
-flag every debug request is denied. A VM paused by `debug-stop` stays paused until `debug-continue`.
-
-### 2. Add GDB stub lifecycle and register reads
+### 1. Add GDB stub lifecycle and register reads
 
 Read CPU registers while the guest is stopped, without shelling out to `gdb`.
 
@@ -70,7 +41,7 @@ Read CPU registers while the guest is stopped, without shelling out to `gdb`.
 Acceptance: the user can stop a VM, read all vCPU register sets, and see the same `rip`/`cr3` values as QEMU; the
 stub is gone afterwards and the VM remains in the state it was in before the request.
 
-### 3. Add process-scoped write watchpoints
+### 2. Add process-scoped write watchpoints
 
 Implement the experiment from `RESEARCH.md`: catch a write to a linear address, verify it belongs to the requested
 process, and resolve the trap PC.
@@ -101,7 +72,7 @@ Acceptance: the user can watch a write in a live Windows process, receive a `Deb
 CR3, module and nearest export, and afterwards find the VM running, the watch removed and the stub stopped. No guest
 memory contents are logged.
 
-### 4. Add address resolution and watch-hit ergonomics
+### 3. Add address resolution and watch-hit ergonomics
 
 Make a hit directly usable without several client round trips.
 
@@ -119,7 +90,7 @@ Make a hit directly usable without several client round trips.
 Acceptance: one command or tool call turns an absolute RIP into module, offset, nearest export and optional PDB
 symbol, and the watch output identifies the store when the decoder is available.
 
-### 5. Add breakpoints and single-step
+### 4. Add breakpoints and single-step
 
 Only start this after the write-watch path is solid on a live guest.
 

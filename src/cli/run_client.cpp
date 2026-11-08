@@ -1536,6 +1536,34 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-status" || options.command == "debug-stop" || options.command == "debug-continue")
+        {
+            std::optional<mpfshost::DebugStatus> status;
+            if (options.command == "debug-status")
+            {
+                status = mpfshost::debugState(options.socketPath, {options.target}, error);
+            }
+            else
+            {
+                const auto action = options.command == "debug-stop" ? mpfshost::DebugControlAction::Stop
+                                                                    : mpfshost::DebugControlAction::Continue;
+                status            = mpfshost::debugControl(options.socketPath, {options.target}, action, error);
+            }
+            if (!status)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+
+            std::printf("run-state=%s  stub-active=%s  host-paused=%s  vcpus=%u  watches=%u\n",
+                        std::string {mpfshost::debugRunStateName(status->runState)}.c_str(),
+                        status->stubActive ? "yes" : "no",
+                        status->hostPaused ? "yes" : "no",
+                        static_cast<unsigned>(status->vcpuCount),
+                        static_cast<unsigned>(status->watchCount));
+            return 0;
+        }
+
         if (options.command == "search")
         {
             mpfshost::SearchTerm term;

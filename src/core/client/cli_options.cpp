@@ -60,7 +60,8 @@ namespace mpfshost
                 || command == "pool-tags" || command == "pfn" || command == "vadex" || command == "pdb-load"
                 || command == "pdb-symbol" || command == "pdb-address" || command == "pdb-type-size"
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
-                || command == "process-for-dtb";
+                || command == "process-for-dtb" || command == "debug-status" || command == "debug-stop"
+                || command == "debug-continue";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.

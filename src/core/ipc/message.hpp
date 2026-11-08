@@ -538,6 +538,49 @@ namespace mpfshost
         bool              matchedUser {}; // true when the request matched the user DTB
     };
 
+    // The wire form of QEMU's run state. States that have no dedicated value are reported as Other, so the
+    // enum stays stable when QEMU adds one.
+    enum class DebugRunState : std::uint8_t
+    {
+        Unknown = 0,
+        Running,
+        Paused,
+        Shutdown,
+        Suspended,
+        GuestPanicked,
+        Other,
+    };
+
+    [[nodiscard]] std::string_view debugRunStateName(DebugRunState state) noexcept;
+
+    enum class DebugControlAction : std::uint8_t
+    {
+        Stop     = 0,
+        Continue = 1,
+    };
+
+    struct DebugStateRequest
+    {
+        // Empty payload; the target comes from the binding.
+    };
+
+    struct DebugControlRequest
+    {
+        DebugControlAction action {DebugControlAction::Stop};
+    };
+
+    struct DebugStatus
+    {
+        DebugRunState runState {DebugRunState::Unknown};
+        bool          stubActive {};
+        bool          hostPaused {}; // the host pressed stop and has not continued it
+        std::uint32_t vcpuCount {};
+        std::uint32_t watchCount {};
+    };
+
+    using DebugStateResponse   = DebugStatus;
+    using DebugControlResponse = DebugStatus;
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -1742,6 +1785,15 @@ namespace mpfshost
 
     [[nodiscard]] std::vector<std::byte>           encodeConfigSetResponse(const ConfigSetResponse& message);
     [[nodiscard]] std::optional<ConfigSetResponse> decodeConfigSetResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>             encodeDebugControlRequest(const DebugControlRequest& message);
+    [[nodiscard]] std::optional<DebugControlRequest> decodeDebugControlRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>            encodeDebugStateResponse(const DebugStateResponse& message);
+    [[nodiscard]] std::optional<DebugStateResponse> decodeDebugStateResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeDebugControlResponse(const DebugControlResponse& message);
+    [[nodiscard]] std::optional<DebugControlResponse> decodeDebugControlResponse(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

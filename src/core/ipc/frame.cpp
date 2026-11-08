@@ -450,6 +450,10 @@ namespace mpfshost
             return "ModuleByAddressRequest";
         case MessageType::ProcessByDtbRequest:
             return "ProcessByDtbRequest";
+        case MessageType::DebugStateRequest:
+            return "DebugStateRequest";
+        case MessageType::DebugControlRequest:
+            return "DebugControlRequest";
         case MessageType::ProcessInfoRequest:
             return "ProcessInfoRequest";
         case MessageType::SymbolLookupRequest:
@@ -586,6 +590,10 @@ namespace mpfshost
             return "ModuleByAddressResponse";
         case MessageType::ProcessByDtbResponse:
             return "ProcessByDtbResponse";
+        case MessageType::DebugStateResponse:
+            return "DebugStateResponse";
+        case MessageType::DebugControlResponse:
+            return "DebugControlResponse";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:

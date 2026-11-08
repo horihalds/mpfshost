@@ -65,7 +65,7 @@ verifies the `*End` status and that the number of delivered entries equals the c
 
 ## Message types
 
-Requests are `0x0001`–`0x003A`; responses are `0x8001`–`0x805D` plus `ErrorResponse` = `0x8FFF`. Values
+Requests are `0x0001`–`0x003C`; responses are `0x8001`–`0x805F` plus `ErrorResponse` = `0x8FFF`. Values
 `0x8030`–`0x8035` are unused; do not reuse them silently, and always take the next free value at the end of each
 range.
 
@@ -129,6 +129,8 @@ range.
  `VfsWriteRequest` | `0x0038` | `VfsWriteResponse` `0x805B` | single | `vfs-write` |
  `ModuleByAddressRequest` | `0x0039` | `ModuleByAddressResponse` `0x805C` | single | `module-at` |
  `ProcessByDtbRequest` | `0x003A` | `ProcessByDtbResponse` `0x805D` | single | `process-for-dtb` |
+ `DebugStateRequest` | `0x003B` | `DebugStateResponse` `0x805E` | single | `debug-status` |
+ `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
 
 ## Address lookups
 
@@ -138,6 +140,27 @@ contains the address, plus the module-relative offset; an address outside every 
 comparison, and both `paDTB` and `paDTB_UserOpt` are candidates, so a KPTI user DTB resolves to the same process;
 `matchedUser` says which one matched. The host caches module lists per pid and one process/DTB snapshot for one second;
 a miss from a snapshot older than 250 ms is retried once before it is reported as `NotFound`.
+
+## Debug control
+
+`DebugStateRequest` has no payload and asks the host for the guest's current control state. `DebugControlRequest`
+carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPayload`. Both are answered by the same
+`DebugStatus` record:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `runState` | `u8` | `0` unknown, `1` running, `2` paused, `3` shutdown, `4` suspended, `5` guest-panicked, `6` other QMP state |
+ `stubActive` | `u8` | `1` when the host currently owns a GDB stub |
+ `hostPaused` | `u8` | `1` when this host pressed stop and has not continued the VM |
+ `vcpuCount` | `u32` | vCPU count from QMP `query-cpus-fast` |
+ `watchCount` | `u32` | watchpoints armed by the host |
+
+The host reaches the target's QEMU control plane through the QMP Unix socket that the target scan pairs with the QEMU
+pid (`list-targets` reports it). No new host flag gates these types; the connection's access policy is the gate, as
+for memory writes. Stop and continue are **destructive**: a paused guest stops executing until it is continued. The
+host only reports `hostPaused = 1` when its own `debug-stop` performed the pause; it still honours `debug-continue`
+for a guest paused by another client. `CapabilityUnavailable` means the bound handle does not implement debug
+control; `Internal` means the QMP exchange failed.
 
 ## Physical memory variants
 

@@ -4,6 +4,7 @@
 
 #include "core/server/backend.hpp"
 #include "core/server/config_provider.hpp"
+#include "core/server/debug_provider.hpp"
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
@@ -409,6 +410,16 @@ namespace mpfshost::testing
         std::optional<VfsWriteRequest>                          lastWriteRequest;
     };
 
+    struct FakeDebugState
+    {
+        DebugStatus                       status;
+        std::string                       stateFailure;
+        std::string                       controlFailure;
+        std::optional<DebugControlAction> lastAction;
+        std::uint32_t                     stateCalls {};
+        std::uint32_t                     controlCalls {};
+    };
+
     class FakeScatterHandle : public ScatterHandle
     {
     public:
@@ -540,7 +551,8 @@ namespace mpfshost::testing
                        public PteProvider,
                        public PoolProvider,
                        public PfnProvider,
-                       public ConfigProvider
+                       public ConfigProvider,
+                       public DebugProvider
     {
     public:
         FakeHandle(std::string                              name,
@@ -574,7 +586,8 @@ namespace mpfshost::testing
                    std::shared_ptr<FakePteState>            pteState,
                    std::shared_ptr<FakePoolState>           poolState,
                    std::shared_ptr<FakePfnState>            pfnState,
-                   std::shared_ptr<FakeConfigState>         configState)
+                   std::shared_ptr<FakeConfigState>         configState,
+                   std::shared_ptr<FakeDebugState>          debugState)
             : _name {std::move(name)}, _processState {std::move(processState)},
               _processInfoState {std::move(processInfoState)}, _moduleLookupState {std::move(moduleLookupState)},
               _pdbState {std::move(pdbState)}, _memoryState {std::move(memoryState)},
@@ -590,7 +603,7 @@ namespace mpfshost::testing
               _heapAllocState {std::move(heapAllocState)}, _kernelDriverState {std::move(kernelDriverState)},
               _kernelDeviceState {std::move(kernelDeviceState)}, _kernelObjectState {std::move(kernelObjectState)},
               _pteState {std::move(pteState)}, _poolState {std::move(poolState)}, _pfnState {std::move(pfnState)},
-              _configState {std::move(configState)}
+              _configState {std::move(configState)}, _debugState {std::move(debugState)}
         {
         }
 
@@ -1549,6 +1562,29 @@ namespace mpfshost::testing
             return true;
         }
 
+        [[nodiscard]] std::optional<DebugStatus> debugState(std::string& error) override
+        {
+            ++_debugState->stateCalls;
+            if (!_debugState->stateFailure.empty())
+            {
+                error = _debugState->stateFailure;
+                return std::nullopt;
+            }
+            return _debugState->status;
+        }
+
+        [[nodiscard]] std::optional<DebugStatus> debugControl(DebugControlAction action, std::string& error) override
+        {
+            ++_debugState->controlCalls;
+            _debugState->lastAction = action;
+            if (!_debugState->controlFailure.empty())
+            {
+                error = _debugState->controlFailure;
+                return std::nullopt;
+            }
+            return _debugState->status;
+        }
+
     private:
         std::string                              _name;
         std::shared_ptr<FakeProcessState>        _processState;
@@ -1582,6 +1618,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePoolState>           _poolState;
         std::shared_ptr<FakePfnState>            _pfnState;
         std::shared_ptr<FakeConfigState>         _configState;
+        std::shared_ptr<FakeDebugState>          _debugState;
     };
 
     class BareHandle : public VmHandle
@@ -2050,6 +2087,26 @@ namespace mpfshost::testing
             return _configState;
         }
 
+        void setDebugStatus(DebugStatus status)
+        {
+            _debugState->status = status;
+        }
+
+        void failDebugStateWith(std::string message)
+        {
+            _debugState->stateFailure = std::move(message);
+        }
+
+        void failDebugControlWith(std::string message)
+        {
+            _debugState->controlFailure = std::move(message);
+        }
+
+        [[nodiscard]] std::shared_ptr<FakeDebugState> debugState() const
+        {
+            return _debugState;
+        }
+
         void setHandlesBare(bool bare)
         {
             std::lock_guard lock {_mutex};
@@ -2113,7 +2170,8 @@ namespace mpfshost::testing
                                                       _pteState,
                                                       _poolState,
                                                       _pfnState,
-                                                      _configState);
+                                                      _configState,
+                                                      _debugState);
             }
             _handles.push_back(handle);
             return handle;
@@ -2176,6 +2234,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePoolState>           _poolState {std::make_shared<FakePoolState>()};
         std::shared_ptr<FakePfnState>            _pfnState {std::make_shared<FakePfnState>()};
         std::shared_ptr<FakeConfigState>         _configState {std::make_shared<FakeConfigState>()};
+        std::shared_ptr<FakeDebugState>          _debugState {std::make_shared<FakeDebugState>()};
     };
 
     // Minimal inner backend for the handle cache: counts acquisitions, can hold them inside acquire() and can be

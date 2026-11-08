@@ -276,12 +276,15 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "read_pages",
         "prefetch_pages",
         "search_memory",
+        "debug_status",
     };
     const std::vector<std::string> writeCapabilities = {
         "config_set",
         "write_memory",
         "write_vfs",
         "write_physical_memory",
+        "debug_stop",
+        "debug_continue",
     };
 
     const auto infos = mpfshost::mcp::toolInfos();

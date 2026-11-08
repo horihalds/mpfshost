@@ -76,6 +76,9 @@ namespace
         "config-set",
         "module-at",
         "process-for-dtb",
+        "debug-status",
+        "debug-stop",
+        "debug-continue",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)

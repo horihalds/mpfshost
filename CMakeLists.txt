@@ -44,6 +44,8 @@ add_library(mpfshost_core STATIC
     src/core/ipc/message_system.cpp
     src/core/ipc/message_kernel.cpp
     src/core/ipc/message_vfs.cpp
+    src/core/ipc/message_debug.cpp
+    src/core/debug/qmp_client.cpp
     src/core/target/scanner.cpp
     src/core/server/session.cpp
     src/core/server/session_memory.cpp
@@ -53,6 +55,7 @@ add_library(mpfshost_core STATIC
     src/core/server/session_kernel.cpp
     src/core/server/session_vfs.cpp
     src/core/server/session_scatter.cpp
+    src/core/server/session_debug.cpp
     src/core/server/access_policy.cpp
     src/core/server/handle_cache.cpp
     src/core/server/memory_provider.cpp
@@ -81,6 +84,7 @@ add_library(mpfshost_core STATIC
     src/core/client/client_maps.cpp
     src/core/client/client_memory.cpp
     src/core/client/client_process.cpp
+    src/core/client/client_debug.cpp
     src/core/client/client_system.cpp
     src/core/client/client_transport.cpp
     src/core/client/client_vfs.cpp
@@ -129,6 +133,7 @@ add_library(mpfshost_host STATIC
     src/host/vmm_vfs.cpp
     src/host/vmm_physical.cpp
     src/host/vmm_search.cpp
+    src/host/vmm_debug.cpp
     src/host/vmm_vm.cpp
 )
 mpfshost_set_common_flags(mpfshost_host)

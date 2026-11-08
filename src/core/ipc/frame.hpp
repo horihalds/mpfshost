@@ -129,6 +129,8 @@ namespace mpfshost
         VfsWriteRequest            = 0x0038,
         ModuleByAddressRequest     = 0x0039,
         ProcessByDtbRequest        = 0x003A,
+        DebugStateRequest          = 0x003B,
+        DebugControlRequest        = 0x003C,
         ListTargetsResponse        = 0x8001,
         BindResponse               = 0x8002,
         ProcessListResponse        = 0x8003,
@@ -216,6 +218,8 @@ namespace mpfshost
         VfsWriteResponse           = 0x805B,
         ModuleByAddressResponse    = 0x805C,
         ProcessByDtbResponse       = 0x805D,
+        DebugStateResponse         = 0x805E,
+        DebugControlResponse       = 0x805F,
         ErrorResponse              = 0x8FFF,
     };
 

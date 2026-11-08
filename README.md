@@ -182,6 +182,9 @@ to it automatically.
  `--client pool-tags <vm>` | Kernel pool allocations summarized per tag; `--tag`, `--big`. |
  `--client pfn <vm>` | Page frames; `--pfn-from`, `--pfn-count` (≤ 32768). |
  `--client config-set <vm>` | Set an allow-listed MemProcFS cache/tick, refresh or process-DTB option; `--option`, `--value`, `--pid` where the option is process-scoped. |
+ `--client debug-status <vm>` | Report QEMU's run state, vCPU count and the host's debug bookkeeping. |
+ `--client debug-stop <vm>` | Pause the guest through QEMU's QMP socket (destructive). |
+ `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
  `--client scatter <vm>` | Several process ranges in one batch; repeat `--range`; `--repeat <n>` re-reads the prepared ranges, `--clear` clears the handle before closing. |
  `--client vquery <vm>` | Region, protection and type of a virtual address. |
@@ -250,6 +253,10 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
+- `debug-status`, `debug-stop` and `debug-continue` use the QMP socket that the target scan already pairs with each
+  QEMU process. `debug-stop` pauses the guest and `debug-continue` resumes it; the host remembers whether **it** paused
+  the VM. These commands are destructive: a paused guest stops executing until it is resumed. See
+  [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
 
 ### Using MCP mode
 
@@ -292,9 +299,9 @@ Results are shaped for a model: 64-bit values are `0x`-prefixed hex strings, rea
 preview, and list tools accept `limit` (1-1000, default 100) and `offset` plus return a `truncated` flag. Memory,
 physical-memory and VFS reads default to a small size (256 bytes, 4096 for VFS) and are capped at 1 MiB per call.
 
-Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`) are exposed alongside the read
-tools and annotated `destructiveHint: true`. They can modify the guest; use them deliberately. The host's own
-`--allow-vfs-write` check still applies to `write_vfs`.
+Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`, `debug_stop`, `debug_continue`) are
+exposed alongside the read tools and annotated `destructiveHint: true`. They can modify or pause the guest; use them
+deliberately. The host's own `--allow-vfs-write` check still applies to `write_vfs`.
 
  Tool | Description |
 ------|-------------|
@@ -335,6 +342,9 @@ tools and annotated `destructiveHint: true`. They can modify the guest; use them
  `read_pages` / `prefetch_pages` | Read whole pages or warm the page cache. |
  `search_memory` | Search process or physical memory for text or a hex pattern. |
  `config_set` | **Write:** set an allow-listed MemProcFS option. |
+ `debug_status` | QEMU run state, vCPU count and host debug bookkeeping. |
+ `debug_stop` | **Write:** pause the guest. |
+ `debug_continue` | **Write:** resume a paused guest. |
  `write_memory` | **Write:** write process virtual memory. |
  `write_vfs` | **Write:** write a virtual file (host `--allow-vfs-write` also required). |
  `write_physical_memory` | **Write:** write guest physical memory. |

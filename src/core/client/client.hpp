@@ -50,6 +50,21 @@ namespace mpfshost
     [[nodiscard]] std::optional<ProcessByDtbResponse>
     processByDtb(const std::filesystem::path& socketPath, const ProcessByDtbQuery& query, std::string& error);
 
+    struct DebugQuery
+    {
+        std::string targetName;
+    };
+
+    // Reports QEMU's run state and the host's own debug bookkeeping without changing anything.
+    [[nodiscard]] std::optional<DebugStatus>
+    debugState(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
+
+    // Stops or continues the guest and answers the resulting debug status.
+    [[nodiscard]] std::optional<DebugStatus> debugControl(const std::filesystem::path& socketPath,
+                                                          const DebugQuery&            query,
+                                                          DebugControlAction           action,
+                                                          std::string&                 error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;

@@ -12,7 +12,7 @@ unprivileged clients over a Unix socket. Clients never load `vmm.so` and never n
 
  Target | Sources | Links | May use |
 --------|---------|-------|---------|
- `mpfshost_core` (static) | `src/core/**` | `Threads::Threads`, `nlohmann_json::nlohmann_json` (private) | standard library, `nlohmann/json` in `src/core/mcp/` only |
+ `mpfshost_core` (static) | `src/core/**` | `Threads::Threads`, `nlohmann_json::nlohmann_json` (private) | standard library, `nlohmann/json` in `src/core/mcp/` and `src/core/debug/` only |
  `mpfshost_host` (static) | `src/host/**` | `vmm.so`, `leechcore.so`, `mpfshost_core` | `vmmdll.h`, root-only paths |
  `mpfshost` (exe) | `src/main.cpp`, `src/cli/**` | `mpfshost_host` | both |
  `mpfshost_tests` (exe) | `tests/**` | `mpfshost_core`, `Catch2::Catch2` | never `mpfshost_host` |
@@ -110,6 +110,21 @@ workers and drains the queue.
 time. `VmmHandle` has no mutex and relies on MemProcFS being thread-safe per handle. Do not add per-session mutable
 state to `VmmHandle`; keep per-request state on the stack or in `Session`.
 
+## Debug control
+
+`src/core/debug/qmp_client.{hpp,cpp}` speaks QEMU's QMP control channel over the target's Unix socket. It owns the
+JSON line framing, the greeting and `qmp_capabilities` handshake, command/reply matching, skipping of asynchronous
+events, and bounded waits. `QmpTransport` is injectable, so tests script replies without a VM.
+
+The host side is `src/host/vmm_debug.{hpp,cpp}`: `VmmHandle` owns one `DebugController`, constructed from
+`VmTarget.qmpSocket`, and the controller serialises requests with its own mutex because sessions share the handle.
+No per-session debug state goes on `VmmHandle`. Each request opens a fresh QMP connection, so a lost socket does not
+poison the handle. Stop/continue set `hostPaused` only when this host performed the pause; `stubActive` and
+`watchCount` are reserved for later debug slices.
+
+QMP socket access is root-equivalent over the guest. There is no extra host flag; the connection's access policy is
+the only gate, and stop/continue are logged.
+
 ## Request deadlines
 
 `src/core/server/request_deadline.{hpp,cpp}`:
@@ -146,7 +161,7 @@ VM is a target only when both exist. `src/core/target/scanner.*` holds the pairi
 `vmm_memory`, `vmm_scatter`, `vmm_physical`, `vmm_vm`, `vmm_processes`, `vmm_modules`, `vmm_module_tables`,
 `vmm_unloaded_modules`, `vmm_maps`, `vmm_threads`, `vmm_handles`, `vmm_services`, `vmm_users`, `vmm_network`,
 `vmm_heaps`, `vmm_kernel_drivers`, `vmm_kernel_devices`, `vmm_kernel_objects`, `vmm_pte`, `vmm_pool`, `vmm_pfn`,
-`vmm_vfs`, `vmm_search`. Shared helpers: `vmm_text.hpp` (`copyMapText`, `formatStatus`), `vmm_process_probe.hpp`
+`vmm_vfs`, `vmm_search`, `vmm_debug`. Shared helpers: `vmm_text.hpp` (`copyMapText`, `formatStatus`), `vmm_process_probe.hpp`
 (`processPresent`).
 
 MemProcFS rules the backends follow (copy them in new code):
@@ -188,7 +203,7 @@ output with `log::setSink()`. Never log guest memory contents.
 
 - `src/core/client/client.hpp` plus `client_<area>.cpp`: one free function per capability, each taking
   `(socketPath, <Area>Query, error)` and returning `std::optional<T>`. The split mirrors the server families:
-  `client_{memory,process,maps,system,kernel,vfs}.cpp`. `client_transport.{hpp,cpp}` (internal, not installed) holds
+  `client_{memory,process,maps,system,kernel,vfs,debug}.cpp`. `client_transport.{hpp,cpp}` (internal, not installed) holds
   the shared connection helpers. Each call opens its own connection (`connectToServer`), binds if needed
   (`connectAndBind`), and uses `exchange` or `exchangeStreamed`.
 - `ScatterSession` is an RAII wrapper over one connection plus one scatter id (create → prepare → execute → close).
@@ -211,9 +226,9 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   JSON-RPC errors and `isError` tool results. It takes `std::istream&` and `std::ostream&` so tests drive it
   in-process. stdout carries only JSON-RPC; logs go through `mpfshost::log` to stderr.
 - `src/core/mcp/mcp_tools.{hpp,cpp}` holds the tool catalogue and the argument/result mapping. One tool exists per
-  read capability in `client.hpp`; the four write capabilities (`config_set`, `write_memory`, `write_vfs`,
-  `write_physical_memory`) are exposed and annotated destructive. The host's `--allow-vfs-write` check is still the
-  final authority for `write_vfs`.
+  read capability in `client.hpp`; the write capabilities (`config_set`, `write_memory`, `write_vfs`,
+  `write_physical_memory`, `debug_stop`, `debug_continue`) are exposed and annotated destructive. The host's
+  `--allow-vfs-write` check is still the final authority for `write_vfs`.
 - Argument names and limits follow the CLI flags and `docs/PROTOCOL.md`. Results convert 64-bit values to hex
   strings, render bytes as hex plus ASCII, and apply `limit`/`offset`/`truncated` to list tools. Guest-derived data
   is never logged.
@@ -231,7 +246,7 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   - `BareHandle` — implements no provider; use it to test `CapabilityUnavailable`.
   - `CountingBackend` — counts and blocks `acquire`; used by the handle-cache tests.
 - `FakeHandle` does **not** implement `PteProvider`, `PoolProvider` or `PfnProvider`; those session paths have no test
-  yet (see `TODO.md`).
+  yet (see `TODO.md`). It implements `DebugProvider` through `FakeDebugState`.
 - Server and client tests start a real `Server` on a socket under `MPFSHOST_TEST_TMP_DIR` (`./tmp`) and call the
   real client functions against it. No test touches MemProcFS, `/run` or `/var`.
 - `tests/mcp_protocol_test.cpp` drives `mcp::McpServer` over in-memory streams for version negotiation, ordering,
