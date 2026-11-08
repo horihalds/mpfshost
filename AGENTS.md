@@ -28,7 +28,7 @@ clients over a Unix socket with a length-prefixed binary protocol. One binary is
   `MemProcFS/` headers are marked `SYSTEM` so their own warnings are not attributed to us. Never add a new `-Wno-*`,
   `#pragma` or cast just to silence a warning; ask first if a suppression seems unavoidable.
 - Never run tests or the test binary as root. `tests/main.cpp` refuses to, by design; do not remove that guard.
-- Commit when the task is complete (see "Done checklist"). Never leave the tree dirty.
+- Commit when the task is complete, then push (see "Done checklist"). Never leave the tree dirty.
 
 ## Git commits
 
@@ -51,6 +51,8 @@ Published commits are authored as `horihalds`; never expose a local account or a
   GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519_horihalds -o IdentitiesOnly=yes' git push origin master
   ```
 - Commit only after the "Done checklist" passes; never leave the tree dirty.
+- Always push when the task is done: a finished task ends with `master` level with `origin/master`, not just a local
+  commit. Push fast-forward only; if the push is rejected, stop and report instead of forcing.
 
 ## Commands (all verified)
 
@@ -94,6 +96,8 @@ Do all of these before you finish, in order:
 3. `clang-format -i` on every C++ file you changed, then `clang-format --dry-run --Werror` on them passes.
 4. Update docs touched by the change (`docs/PROTOCOL.md` message table, `README.md` command table, `TODO.md`).
 5. `git status` shows only your intended changes; then commit as `horihalds` following "Git commits".
+6. Push the commits to `origin master` as `horihalds`, then confirm `git status` no longer reports `master` as ahead
+   or `git log origin/master..HEAD` is empty.
 
 ## Directory layout
 
