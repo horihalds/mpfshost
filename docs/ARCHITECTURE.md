@@ -12,7 +12,7 @@ unprivileged clients over a Unix socket. Clients never load `vmm.so` and never n
 
  Target | Sources | Links | May use |
 --------|---------|-------|---------|
- `mpfshost_core` (static) | `src/core/**` | `Threads::Threads` | standard library only |
+ `mpfshost_core` (static) | `src/core/**` | `Threads::Threads`, `nlohmann_json::nlohmann_json` (private) | standard library, `nlohmann/json` in `src/core/mcp/` only |
  `mpfshost_host` (static) | `src/host/**` | `vmm.so`, `leechcore.so`, `mpfshost_core` | `vmmdll.h`, root-only paths |
  `mpfshost` (exe) | `src/main.cpp`, `src/cli/**` | `mpfshost_host` | both |
  `mpfshost_tests` (exe) | `tests/**` | `mpfshost_core`, `Catch2::Catch2` | never `mpfshost_host` |
@@ -26,6 +26,8 @@ Rules:
 - `src/cli/` is part of the executable only. `mpfshost_core` never sees it, and `src/core/` never includes it.
 - `mpfshost_core` is also the installed client library (`libmpfshost_core.a` plus `client.hpp`, `message.hpp`,
   `frame.hpp`, `version.hpp`). Treat those four headers as public API.
+- `nlohmann/json` is a private, header-only dependency of `mpfshost_core`, used only by `src/core/mcp/`. It must not
+  appear in an installed public header; the MCP headers expose plain strings and structs.
 
 ## Runtime object graph
 
@@ -197,6 +199,28 @@ output with `log::setSink()`. Never log guest memory contents.
   `printf`. `src/cli/options.cpp` parses only the server flags and hands the remaining tokens to
   `parseClientOptions`.
 
+## MCP mode
+
+`mpfshost --mcp` is a second, unprivileged front end in the same binary. It speaks the Model Context Protocol as
+JSON-RPC 2.0, one object per line, over stdin/stdout. It is a **client of the root host**, not a host: every tool
+call goes through `src/core/client/client.hpp` to the Unix socket, so the host's access policy, request deadlines and
+MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never needs root.
+
+- `src/core/mcp/mcp_server.{hpp,cpp}` owns the stream state machine: JSON parsing, protocol-version negotiation
+  (2025-06-18, 2025-03-26, 2024-11-05), the initialize/notification ordering, `ping`, `tools/list`, `tools/call`,
+  JSON-RPC errors and `isError` tool results. It takes `std::istream&` and `std::ostream&` so tests drive it
+  in-process. stdout carries only JSON-RPC; logs go through `mpfshost::log` to stderr.
+- `src/core/mcp/mcp_tools.{hpp,cpp}` holds the tool catalogue and the argument/result mapping. One tool exists per
+  read capability in `client.hpp`; the four write capabilities (`config_set`, `write_memory`, `write_vfs`,
+  `write_physical_memory`) are hidden from `tools/list` and rejected unless `--mcp-allow-write` is given, and are
+  annotated destructive. The host's `--allow-vfs-write` check is still the final authority for `write_vfs`.
+- Argument names and limits follow the CLI flags and `docs/PROTOCOL.md`. Results convert 64-bit values to hex
+  strings, render bytes as hex plus ASCII, and apply `limit`/`offset`/`truncated` to list tools. Guest-derived data
+  is never logged.
+- `src/cli/options.cpp` only recognises `--mcp`/`--mcp-allow-write` and rejects them alongside `--client` or
+  server-only flags; `main()` dispatches to the MCP server before the root check and access-group lookup. The
+  implementation stays out of `src/host/` and `src/cli/`, and the wire protocol is unchanged.
+
 ## Testing architecture
 
 - `tests/support/fake_backend.hpp` (namespace `mpfshost::testing`):
@@ -210,6 +234,10 @@ output with `log::setSink()`. Never log guest memory contents.
   yet (see `TODO.md`).
 - Server and client tests start a real `Server` on a socket under `MPFSHOST_TEST_TMP_DIR` (`./tmp`) and call the
   real client functions against it. No test touches MemProcFS, `/run` or `/var`.
+- `tests/mcp_protocol_test.cpp` drives `mcp::McpServer` over in-memory streams for version negotiation, ordering,
+  JSON-RPC errors, EOF and tool-list gating. `tests/mcp_tools_test.cpp` runs the same server against a real `Server`
+  with `FakeBackend` for representative tools, host errors, an unreachable socket, `CapabilityUnavailable` and the
+  write-tool switch. The tool catalogue test asserts that every read capability in `client.hpp` has a tool.
 - `tests/main.cpp` refuses to run as root.
 - Live behaviour (anything in `src/host/`) is verified only by the user against an installed host.
 

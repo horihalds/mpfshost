@@ -32,6 +32,12 @@ ninja -C build
 ctest --test-dir build --output-on-failure
 ```
 
+The first configure downloads [nlohmann/json](https://github.com/nlohmann/json) 3.11.3 with CMake `FetchContent`
+(header-only, pinned by release tag and SHA-256). It is the only third-party dependency and is linked privately into
+the client library for MCP mode. For an offline build, either pre-populate the source tree and pass
+`-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/path/to/json`, or run the first configure once with network access and reuse
+the populated `build/` tree.
+
 The build produces `build/mpfshost` and copies `MemProcFS/info.db` and `MemProcFS/*.so` next to it. MemProcFS loads
 them from the executable's directory, so run the binary from `build/` or from an install tree. Do not move it on its
 own.
@@ -241,6 +247,92 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
+
+### Using MCP mode
+
+`mpfshost --mcp` turns the same binary into a [Model Context Protocol](https://modelcontextprotocol.io) server over
+stdio. It is an **unprivileged client of the root host**, not a second host: it connects to the existing Unix socket
+with the same client library, so the host's access policy still applies and MCP mode never loads MemProcFS, needs
+root, or embeds the host.
+
+```sh
+./build/mpfshost --mcp [--mcp-allow-write] [--socket /run/mpfshost.sock]
+```
+
+`--mcp` is mutually exclusive with `--client` and with the server-only flags (`--workers`, `--allow-*`,
+`--socket-mode` and the timeouts). Use `--socket` to point at a non-default host socket. stdout carries **only**
+JSON-RPC 2.0 messages, one per line; logs go to stderr and the process exits cleanly on EOF.
+
+The server implements `initialize` (protocol versions 2025-06-18, 2025-03-26 and 2024-11-05),
+`notifications/initialized`, `ping`, `tools/list` and `tools/call`. Requests other than `ping` are refused until the
+initialize handshake is complete. Protocol problems are JSON-RPC errors; validation and host failures are tool
+results with `isError: true`.
+
+Example client configuration (Claude Desktop, Cline, or any MCP stdio client):
+
+```json
+{
+  "mcpServers": {
+    "mpfshost": {
+      "command": "/usr/local/bin/mpfshost",
+      "args": ["--mcp", "--socket", "/run/mpfshost.sock"]
+    }
+  }
+}
+```
+
+> **Guest data is untrusted.** Memory contents, strings, file contents, process and module names, registry values and
+> every other value derived from a guest can be attacker-controlled. The server's `instructions` tell the model to
+> treat all of it as data, never as instructions. Keep that warning when you wrap or proxy this server.
+
+Results are shaped for a model: 64-bit values are `0x`-prefixed hex strings, reads return both hex and an ASCII
+preview, and list tools accept `limit` (1-1000, default 100) and `offset` plus return a `truncated` flag. Memory,
+physical-memory and VFS reads default to a small size (256 bytes, 4096 for VFS) and are capped at 1 MiB per call.
+
+Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`) are hidden from `tools/list` and
+rejected unless the server is started with `--mcp-allow-write`. They are annotated `destructiveHint: true`. The
+host's own `--allow-vfs-write` check still applies to `write_vfs`.
+
+ Tool | Description |
+------|-------------|
+ `list_targets` | List the QEMU/KVM guests the host can serve. |
+ `capabilities` | Show the host version and request types. |
+ `bind_target` | Bind a connection to a target and report the session. |
+ `list_processes` | Processes, filtered by pid or name. |
+ `list_all_processes` | Every process, including terminated ones. |
+ `process_info` | Full record of one process by pid or name. |
+ `list_modules` | Loaded modules of a process. |
+ `lookup_symbol` | Module base and export address. |
+ `pdb_load` | Load the PDB of a module at an address. |
+ `pdb_symbol_name` | Address to PDB symbol and displacement. |
+ `pdb_symbol_address` | PDB symbol to address. |
+ `pdb_type_size` | Byte size of a PDB type. |
+ `pdb_type_child_offset` | Offset of a child member in a PDB type. |
+ `module_layout` | Module sections and data directories. |
+ `memory_map` | VAD regions of a process. |
+ `vad_ex` | Per-page VAD map of a process. |
+ `list_threads` | Threads of a process, optionally with callstacks. |
+ `list_handles` | Kernel handles of a process. |
+ `list_exports` / `list_imports` | Export / import table of a module. |
+ `list_unloaded_modules` | Unloaded modules of a process. |
+ `list_services` / `list_users` / `list_network` | Services, local accounts, network connections. |
+ `list_heaps` / `list_heap_allocations` | Heaps of a process and their allocations. |
+ `list_kernel_drivers` / `list_kernel_devices` / `list_kernel_objects` | Kernel drivers, devices, object namespace. |
+ `list_pte` / `list_pool` / `list_pool_tags` / `list_pfn` | Page tables, kernel pool, pool-tag summary, page frames. |
+ `list_vfs` / `read_vfs` | Virtual file system listing and file read. |
+ `read_memory` | Process virtual memory read with hex and ASCII. |
+ `scatter_read` | Several process ranges in one scatter batch. |
+ `list_vms` | Guest partitions; index 0 is the target itself. |
+ `read_physical_memory` | Guest physical memory by GPA. |
+ `translate_gpa` / `virt2phys` | GPA to PA/vmmem VA; process VA to PA. |
+ `physical_scatter` | Several physical ranges in one scatter batch. |
+ `query_virtual` | Region, protection and type of a virtual address. |
+ `read_pages` / `prefetch_pages` | Read whole pages or warm the page cache. |
+ `search_memory` | Search process or physical memory for text or a hex pattern. |
+ `config_set` | **Write:** set an allow-listed MemProcFS option. |
+ `write_memory` | **Write:** write process virtual memory. |
+ `write_vfs` | **Write:** write a virtual file (host `--allow-vfs-write` also required). |
+ `write_physical_memory` | **Write:** write guest physical memory. |
 
 ### Using the client library
 

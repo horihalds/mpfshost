@@ -55,7 +55,7 @@ Published commits are authored as `horihalds`; never expose a local account or a
 ## Commands (all verified)
 
 ```sh
-cmake -S . -B build -G Ninja                  # configure once (Catch2 2.13 must be installed)
+cmake -S . -B build -G Ninja                  # configure once (Catch2 2.13 must be installed; first run fetches nlohmann/json)
 ninja -C build                                # build everything; must print no warnings
 ctest --test-dir build --output-on-failure    # full suite, ~8 s
 ctest --test-dir build --output-on-failure -j8   # full suite, ~1-2 s
@@ -104,6 +104,7 @@ Do all of these before you finish, in order:
  `src/core/ipc/` | `frame.{hpp,cpp}`: header, `MessageType`, `ErrorCode`, limits, `ByteWriter`/`ByteReader`, `readFrame`/`writeFrame`. `message.hpp` + `message_<area>.cpp`: payload structs and codecs; `message_codec.hpp` holds the internal descriptor helpers. |
  `src/core/server/` | `session.*` per-connection dispatcher, `server.*` socket + worker pool, `handle_cache.*`, `access_policy.*`, `request_deadline.*`, `map_batching.hpp`, `backend.hpp`, one `*_provider.hpp` interface per capability. |
  `src/core/client/` | `client.*` one function per capability, `cli_options.*` (`ClientOptions`, `parseClientOptions`), `connect_diagnostics.*`. |
+ `src/core/mcp/` | MCP stdio front end: `mcp_server.*` (JSON-RPC state machine) and `mcp_tools.*` (tool catalogue and mapping over `client.hpp`). |
  `src/core/target/` | QEMU target discovery logic (`<vm>.pid` + `<vm>.sock` pairing). |
  `src/core/log/` | Levelled thread-safe logger, `mpfshost::log`. |
  `src/core/util/` | Hex parsing/dumps, decimal/range-size parsing (`number.*`), page-range expansion, substring matcher, identity lookups. |
