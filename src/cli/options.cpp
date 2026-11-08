@@ -89,6 +89,16 @@ namespace mpfshost::cli
                 printUsage();
                 return ParseOutcome::ExitSuccess;
             }
+            if (argument == "--mcp")
+            {
+                commandLine.mcp = true;
+                continue;
+            }
+            if (argument == "--mcp-allow-write")
+            {
+                commandLine.mcpAllowWrite = true;
+                continue;
+            }
             if (argument == "--socket")
             {
                 if (index + 1 >= argc)
@@ -131,6 +141,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.handleIdleSeconds = *parsed;
+                commandLine.server.serverOnlySet     = true;
                 continue;
             }
             if (argument == "--workers")
@@ -146,7 +157,8 @@ namespace mpfshost::cli
                     mpfshost::log::error("client", "--workers needs a positive integer");
                     return ParseOutcome::ExitFailure;
                 }
-                commandLine.server.workers = *parsed;
+                commandLine.server.workers       = *parsed;
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--pending-connections")
@@ -163,6 +175,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.pendingConnections = *parsed;
+                commandLine.server.serverOnlySet      = true;
                 continue;
             }
             if (argument == "--request-timeout")
@@ -179,6 +192,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.requestTimeoutSeconds = *parsed;
+                commandLine.server.serverOnlySet         = true;
                 continue;
             }
             if (argument == "--idle-timeout")
@@ -195,16 +209,19 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.idleTimeoutSeconds = *parsed;
+                commandLine.server.serverOnlySet      = true;
                 continue;
             }
             if (argument == "--allow-all")
             {
-                commandLine.server.allowAll = true;
+                commandLine.server.allowAll      = true;
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--allow-vfs-write")
             {
                 commandLine.server.allowVfsWrite = true;
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--allow-uid")
@@ -221,6 +238,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.access.allowUid(*uid);
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--allow-user")
@@ -238,6 +256,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.access.allowUid(*uid);
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--allow-gid")
@@ -254,6 +273,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.access.allowGid(*gid);
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--allow-group")
@@ -271,6 +291,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.access.allowGid(*gid);
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--socket-group")
@@ -287,7 +308,8 @@ namespace mpfshost::cli
                     mpfshost::log::error("client", "unknown group '", name, "'");
                     return ParseOutcome::ExitFailure;
                 }
-                commandLine.server.socketGid = *gid;
+                commandLine.server.socketGid     = *gid;
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
             if (argument == "--socket-mode")
@@ -303,6 +325,7 @@ namespace mpfshost::cli
                     return ParseOutcome::ExitFailure;
                 }
                 commandLine.server.socketModeSet = true;
+                commandLine.server.serverOnlySet = true;
                 continue;
             }
 
@@ -311,6 +334,30 @@ namespace mpfshost::cli
             // that happens to look like a server flag is still stolen by this loop; that only affects nonsense
             // command lines and is cheaper than keeping a second copy of the arity table down here.
             clientArgs.push_back(argument);
+        }
+
+        if (commandLine.mcp)
+        {
+            if (commandLine.client)
+            {
+                mpfshost::log::error("mcp", "--mcp and --client are mutually exclusive");
+                return ParseOutcome::ExitFailure;
+            }
+            if (commandLine.server.serverOnlySet)
+            {
+                mpfshost::log::error("mcp", "--mcp cannot be combined with server-only flags");
+                return ParseOutcome::ExitFailure;
+            }
+            if (!clientArgs.empty())
+            {
+                mpfshost::log::error("mcp", "unexpected argument '", clientArgs.front(), "' for --mcp");
+                return ParseOutcome::ExitFailure;
+            }
+        }
+        if (commandLine.mcpAllowWrite && !commandLine.mcp)
+        {
+            mpfshost::log::error("mcp", "--mcp-allow-write requires --mcp");
+            return ParseOutcome::ExitFailure;
         }
 
         if (clientArgs.empty())

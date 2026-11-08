@@ -84,6 +84,8 @@ add_library(mpfshost_core STATIC
     src/core/client/client_transport.cpp
     src/core/client/client_vfs.cpp
     src/core/client/connect_diagnostics.cpp
+    src/core/mcp/mcp_server.cpp
+    src/core/mcp/mcp_tools.cpp
     src/core/util/display.cpp
     src/core/util/hex.cpp
     src/core/util/number.cpp

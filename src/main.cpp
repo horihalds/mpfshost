@@ -3,6 +3,7 @@
 #include "cli/options.hpp"
 #include "cli/run_client.hpp"
 #include "core/log/log.hpp"
+#include "core/mcp/mcp_server.hpp"
 #include "core/server/handle_cache.hpp"
 #include "core/server/server.hpp"
 #include "core/version.hpp"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <iostream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -186,6 +188,18 @@ int main(int argc, char* argv[])
         return 1;
     case mpfshost::cli::ParseOutcome::Continue:
         break;
+    }
+
+    if (commandLine.mcp)
+    {
+        mpfshost::mcp::ServerOptions mcpOptions;
+        mcpOptions.socketPath = commandLine.server.socketPath;
+        mcpOptions.allowWrite = commandLine.mcpAllowWrite;
+        mpfshost::log::info("mcp",
+                            "serving MCP over stdio; host socket ",
+                            mcpOptions.socketPath.string(),
+                            mcpOptions.allowWrite ? "; write tools enabled" : "");
+        return mpfshost::mcp::McpServer {std::cin, std::cout, std::move(mcpOptions)}.run();
     }
 
     if (commandLine.client)
