@@ -5,10 +5,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace
@@ -94,6 +96,40 @@ namespace
         int _readFd {-1};
     };
 
+    class EnvironmentGuard
+    {
+    public:
+        explicit EnvironmentGuard(const char* name) : _name {name}
+        {
+            const char* value = std::getenv(name);
+            if (value != nullptr)
+            {
+                _previous = value;
+                _wasSet   = true;
+            }
+        }
+
+        ~EnvironmentGuard()
+        {
+            if (_wasSet)
+            {
+                ::setenv(_name.c_str(), _previous.c_str(), 1);
+            }
+            else
+            {
+                ::unsetenv(_name.c_str());
+            }
+        }
+
+        EnvironmentGuard(const EnvironmentGuard&)            = delete;
+        EnvironmentGuard& operator=(const EnvironmentGuard&) = delete;
+
+    private:
+        std::string _name;
+        std::string _previous;
+        bool        _wasSet {false};
+    };
+
     using mpfshost::log::Level;
 } // namespace
 
@@ -168,6 +204,18 @@ TEST_CASE("a formatted record follows the documented layout", "[log]")
     CHECK(mpfshost::log::format(record) == "1970-01-01T00:00:00.123Z warn  session: error response code=InvalidRange");
 }
 
+TEST_CASE("a formatted record can omit the timestamp for journald", "[log]")
+{
+    mpfshost::log::Record record;
+    record.level    = Level::Warn;
+    record.category = "session";
+    record.message  = "error response code=InvalidRange";
+    record.time     = std::chrono::system_clock::time_point {std::chrono::milliseconds {123}};
+
+    CHECK(mpfshost::log::format(record, mpfshost::log::Timestamp::Omit)
+          == "warn  session: error response code=InvalidRange");
+}
+
 TEST_CASE("the level field is padded to five characters", "[log]")
 {
     mpfshost::log::Record record;
@@ -232,6 +280,24 @@ TEST_CASE("the default sink writes one complete line to stderr", "[log]")
     CHECK(text.ends_with("\n"));
     CHECK(text.find(" info  sink: hello\n") != std::string::npos);
     CHECK(text.find('\n') == text.size() - 1);
+}
+
+TEST_CASE("the default sink omits the timestamp when journald owns stderr", "[log]")
+{
+    const LogGuard   guard {Level::Info};
+    EnvironmentGuard environment {"JOURNAL_STREAM"};
+    StderrRedirect   redirect;
+
+    struct stat info {};
+    REQUIRE(::fstat(STDERR_FILENO, &info) == 0);
+    const auto stream = std::to_string(info.st_dev) + ":" + std::to_string(info.st_ino);
+    REQUIRE(::setenv("JOURNAL_STREAM", stream.c_str(), 1) == 0);
+
+    mpfshost::log::setStderrSink();
+    mpfshost::log::info("sink", "hello");
+    redirect.restore();
+
+    CHECK(redirect.readAll() == "info  sink: hello\n");
 }
 
 TEST_CASE("concurrent records never interleave within a message", "[log]")

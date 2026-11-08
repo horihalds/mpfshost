@@ -3,9 +3,13 @@
 #include <atomic>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <mutex>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace mpfshost::log
 {
@@ -14,9 +18,41 @@ namespace mpfshost::log
         std::atomic<Level> g_level {Level::Info};
         std::mutex         g_sinkMutex;
 
+        // systemd sets JOURNAL_STREAM to "<device>:<inode>" when it captures stderr, and journald adds its own
+        // timestamp to every entry. Compare it with the real stderr to leave the timestamp out only in that case.
+        bool journalOwnsStderr()
+        {
+            const char* stream = std::getenv("JOURNAL_STREAM");
+            if (stream == nullptr)
+            {
+                return false;
+            }
+
+            char*                    end    = nullptr;
+            const unsigned long long device = std::strtoull(stream, &end, 10);
+            if (end == stream || *end != ':')
+            {
+                return false;
+            }
+            const char*              inodeText = end + 1;
+            const unsigned long long inode     = std::strtoull(inodeText, &end, 10);
+            if (end == inodeText || *end != '\0')
+            {
+                return false;
+            }
+
+            struct stat info {};
+            if (::fstat(STDERR_FILENO, &info) != 0)
+            {
+                return false;
+            }
+            return static_cast<unsigned long long>(info.st_dev) == device
+                && static_cast<unsigned long long>(info.st_ino) == inode;
+        }
+
         void writeStderr(const Record& record)
         {
-            const auto line = format(record);
+            const auto line = format(record, journalOwnsStderr() ? Timestamp::Omit : Timestamp::Include);
             std::fwrite(line.data(), 1, line.size(), stderr);
             std::fputc('\n', stderr);
             std::fflush(stderr);
@@ -82,6 +118,11 @@ namespace mpfshost::log
 
     std::string format(const Record& record)
     {
+        return format(record, Timestamp::Include);
+    }
+
+    std::string format(const Record& record, Timestamp timestamp)
+    {
         const auto seconds = std::chrono::system_clock::to_time_t(record.time);
         std::tm    utc {};
         gmtime_r(&seconds, &utc);
@@ -105,8 +146,11 @@ namespace mpfshost::log
 
         std::string line;
         line.reserve(std::strlen(stamp) + 1 + 5 + 1 + record.category.size() + 2 + record.message.size());
-        line.append(stamp);
-        line.push_back(' ');
+        if (timestamp == Timestamp::Include)
+        {
+            line.append(stamp);
+            line.push_back(' ');
+        }
         line.append(name);
         line.append(5 - name.size(), ' ');
         line.push_back(' ');

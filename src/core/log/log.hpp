@@ -32,9 +32,16 @@ namespace mpfshost::log
 
     using Sink = std::function<void(const Record&)>;
 
+    enum class Timestamp
+    {
+        Include,
+        Omit
+    };
+
     [[nodiscard]] std::optional<Level> parseLevel(std::string_view text);
     [[nodiscard]] std::string_view     levelName(Level level) noexcept;
     [[nodiscard]] std::string          format(const Record& record); // one line, no trailing newline
+    [[nodiscard]] std::string          format(const Record& record, Timestamp timestamp);
 
     void                setLevel(Level level) noexcept;
     [[nodiscard]] Level level() noexcept;

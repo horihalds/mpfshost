@@ -122,8 +122,9 @@ same VM pay this only once per idle window. A single MemProcFS call cannot be in
 of budget is reported only when that call returns. For a large guest, raise `--request-timeout` for `pool` and
 `search`.
 
-Logs go to `stderr`, one line per record: ISO-8601 UTC timestamp, level, `category: message`. `debug` adds a trace
-of every request. Guest memory contents are never logged.
+Logs go to `stderr`, one line per record: ISO-8601 UTC timestamp, level, `category: message`. When systemd captures
+`stderr`, the timestamp is omitted because journald already prefixes one. `debug` adds a trace of every request.
+Guest memory contents are never logged.
 
 ### Access control
 

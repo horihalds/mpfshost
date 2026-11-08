@@ -205,8 +205,9 @@ MemProcFS behaviours observed on a live Windows 11 24H2 guest, which the code de
 ## Logging
 
 `src/core/log/` (`mpfshost::log::error/warn/info/debug`) writes one line per record to `stderr`: ISO-8601 UTC
-timestamp, level, `category: message`. Level from `--log-level` or `MPFSHOST_LOG_LEVEL` (flag wins). Tests capture
-output with `log::setSink()`. Never log guest memory contents.
+timestamp, level, `category: message`. When systemd captures `stderr` (`JOURNAL_STREAM` matches the real descriptor),
+the timestamp is left out because journald adds its own. Level from `--log-level` or `MPFSHOST_LOG_LEVEL` (flag
+wins). Tests capture output with `log::setSink()`. Never log guest memory contents.
 
 ## Client side
 
