@@ -65,6 +65,15 @@ namespace mpfshost
                                                           DebugControlAction           action,
                                                           std::string&                 error);
 
+    struct DebugRegistersQuery
+    {
+        std::string   targetName;
+        std::uint32_t vcpu {kDebugAllVcpus}; // kDebugAllVcpus selects every vCPU
+    };
+
+    [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
+    debugRegisters(const std::filesystem::path& socketPath, const DebugRegistersQuery& query, std::string& error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;

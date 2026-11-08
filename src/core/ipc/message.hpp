@@ -581,6 +581,47 @@ namespace mpfshost
     using DebugStateResponse   = DebugStatus;
     using DebugControlResponse = DebugStatus;
 
+    inline constexpr std::uint32_t kDebugAllVcpus       = 0xFFFFFFFFu;
+    inline constexpr std::size_t   kMaxDebugVcpuRecords = 256;
+
+    struct DebugRegisterRecord
+    {
+        std::uint32_t vcpu {};  // 0-based order of the stub's thread list
+        std::string   threadId; // GDB remote-protocol thread id
+        std::uint64_t rip {};
+        std::uint64_t rsp {};
+        std::uint64_t rbp {};
+        std::uint64_t eflags {};
+        std::uint64_t cr0 {};
+        std::uint64_t cr3 {};
+        std::uint64_t cr4 {};
+        std::uint64_t cr8 {};
+        std::uint64_t rax {};
+        std::uint64_t rbx {};
+        std::uint64_t rcx {};
+        std::uint64_t rdx {};
+        std::uint64_t rsi {};
+        std::uint64_t rdi {};
+        std::uint64_t r8 {};
+        std::uint64_t r9 {};
+        std::uint64_t r10 {};
+        std::uint64_t r11 {};
+        std::uint64_t r12 {};
+        std::uint64_t r13 {};
+        std::uint64_t r14 {};
+        std::uint64_t r15 {};
+    };
+
+    struct DebugRegistersRequest
+    {
+        std::uint32_t vcpu {kDebugAllVcpus}; // kDebugAllVcpus selects every thread
+    };
+
+    struct DebugRegistersResponse
+    {
+        std::vector<DebugRegisterRecord> records;
+    };
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -1794,6 +1835,13 @@ namespace mpfshost
 
     [[nodiscard]] std::vector<std::byte>              encodeDebugControlResponse(const DebugControlResponse& message);
     [[nodiscard]] std::optional<DebugControlResponse> decodeDebugControlResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugRegistersRequest(const DebugRegistersRequest& message);
+    [[nodiscard]] std::optional<DebugRegistersRequest> decodeDebugRegistersRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugRegistersResponse(const DebugRegistersResponse& message);
+    [[nodiscard]] std::optional<DebugRegistersResponse>
+    decodeDebugRegistersResponse(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

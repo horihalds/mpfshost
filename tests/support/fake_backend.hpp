@@ -418,6 +418,12 @@ namespace mpfshost::testing
         std::optional<DebugControlAction> lastAction;
         std::uint32_t                     stateCalls {};
         std::uint32_t                     controlCalls {};
+
+        std::vector<DebugRegisterRecord>     registers;
+        std::string                          registersFailure;
+        bool                                 registersInvalidState {};
+        std::optional<DebugRegistersRequest> lastRegistersRequest;
+        std::uint32_t                        registersCalls {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1585,6 +1591,20 @@ namespace mpfshost::testing
             return _debugState->status;
         }
 
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
+        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, std::string& error) override
+        {
+            ++_debugState->registersCalls;
+            _debugState->lastRegistersRequest = request;
+            if (!_debugState->registersFailure.empty())
+            {
+                invalidState = _debugState->registersInvalidState;
+                error        = _debugState->registersFailure;
+                return std::nullopt;
+            }
+            return _debugState->registers;
+        }
+
     private:
         std::string                              _name;
         std::shared_ptr<FakeProcessState>        _processState;
@@ -2105,6 +2125,17 @@ namespace mpfshost::testing
         [[nodiscard]] std::shared_ptr<FakeDebugState> debugState() const
         {
             return _debugState;
+        }
+
+        void setDebugRegisters(std::vector<DebugRegisterRecord> records)
+        {
+            _debugState->registers = std::move(records);
+        }
+
+        void failDebugRegistersWith(std::string message, bool invalidState = false)
+        {
+            _debugState->registersFailure      = std::move(message);
+            _debugState->registersInvalidState = invalidState;
         }
 
         void setHandlesBare(bool bare)

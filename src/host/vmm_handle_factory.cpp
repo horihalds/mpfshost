@@ -41,7 +41,9 @@ namespace mpfshost
 
             // MemProcFS needs a moment after plugin initialization before the handle is usable.
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            return std::make_shared<VmmHandle>(handle, target.name, target.qmpSocket);
+            const auto stubSocket =
+                std::filesystem::temp_directory_path() / ("mpfshost-gdb-" + std::to_string(target.qemuPid) + ".sock");
+            return std::make_shared<VmmHandle>(handle, target.name, target.qmpSocket, stubSocket);
         }
     } // namespace
 

@@ -98,17 +98,39 @@ On 2026-11-09 against the target `windows` (12 vCPUs):
 - `capabilities` listed `DebugStateRequest` (`0x003B`) and `DebugControlRequest` (`0x003C`).
 - A request for a missing target failed with `target 'does-not-exist' is not available`.
 
+## Stub endpoint and ownership
+
+`debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry.
+It asks HMP for `gdbserver unix:/tmp/mpfshost-gdb-<qemu-pid>.sock,server=on,wait=off`. If QEMU cannot create that
+chardev, the host retries with `gdbserver tcp:127.0.0.1:<ephemeral-port>`. It never uses the default `tcp::<port>`
+form, which listens on every interface.
+
+The host records whether it started the stub. It stops a stub with `gdbserver none` on every exit path (success,
+read error, timeout, cancellation and teardown) and removes the Unix socket file. It never stops a stub it did not
+start; if `info chardev` already shows a `gdb:` device, `debug-registers` answers `InvalidState` instead. After
+teardown it re-checks `query-status` and reapplies `stop` if the guest somehow resumed, so a request that began with
+a paused guest leaves it paused.
+
+## Stub probe record
+
+Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs):
+
+- HMP accepted `gdbserver unix:/tmp/mpfshost-gdb-probe.sock,server=on,wait=off` and answered `Waiting for gdb
+  connection on device ...`.
+- An active stub is visible in HMP `info chardev` as a line starting `gdb: filename=...`. QMP `query-status` stayed
+  `paused` while the stub was active and attached, and HMP `info gdbstub` does not exist. A second `gdbserver` while
+  one was active failed with `duplicate yank instance` / `gdbstub: couldn't create chardev`.
+- `target.xml` is a wrapper with `<xi:include href="i386-64bit.xml"/>`. The include exposes the general registers and
+  `cr0`, `cr2`, `cr3`, `cr4`, `cr8` and `efer`. `cr3` has `regnum="29"`.
+- The `g` packet is 608 bytes of hex. The relevant offsets are `rip` 128, `cr0` 188, `cr3` 204, `cr4` 212 and
+  `cr8` 220. The 8 vCPUs appeared as threads `p01.01` to `p01.08`.
+
 ## Checks still owed to a live guest
 
-These were listed as prerequisites for the later debug slices and have not yet been verified on this machine:
-
-- Whether HMP accepts `gdbserver unix:<path>` as a chardev target, and how to detect an already-active stub.
-- Whether `Z2` watchpoints must be armed per vCPU.
-- Whether `target.xml` exposes `cr3`.
+- Whether `Z2` watchpoints must be armed per vCPU. Verify in the watchpoint slice.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration.
 
-Record the answers here before starting the GDB stub slice. Until then, treat the stub-related host state as
-reserved.
+Record the answers here when the watchpoint slice reaches them.
 
 ## Teardown rules for later slices
 

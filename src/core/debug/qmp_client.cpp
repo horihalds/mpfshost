@@ -349,22 +349,91 @@ namespace mpfshost::debug
                             std::chrono::milliseconds timeout,
                             std::string&              error)
     {
+        const auto message = Json {
+            {"execute",
+             std::string {
+                 command}}
+        }.dump();
+        return executeMessage(message, resultJson, timeout, error);
+    }
+
+    bool QmpClient::execute(std::string_view          command,
+                            std::string_view          argumentsJson,
+                            std::string&              resultJson,
+                            std::chrono::milliseconds timeout,
+                            std::string&              error)
+    {
+        Json message {
+            {"execute", std::string {command}}
+        };
+        if (!argumentsJson.empty())
+        {
+            try
+            {
+                message["arguments"] = Json::parse(argumentsJson);
+            }
+            catch (const Json::exception&)
+            {
+                error = "the QMP arguments are not valid JSON";
+                return false;
+            }
+        }
+        return executeMessage(message.dump(), resultJson, timeout, error);
+    }
+
+    bool QmpClient::executeMessage(std::string_view          messageJson,
+                                   std::string&              resultJson,
+                                   std::chrono::milliseconds timeout,
+                                   std::string&              error)
+    {
         if (!_open)
         {
             error = "the QMP channel is not open";
             return false;
         }
 
-        const auto line = Json {
-            {"execute",
-             std::string {
-                 command}}
-        }.dump();
-        if (!_transport->writeLine(line, timeout, error))
+        if (!_transport->writeLine(messageJson, timeout, error))
         {
             return false;
         }
         return waitForReply(resultJson, timeout, error);
+    }
+
+    bool QmpClient::humanMonitor(std::string_view          commandLine,
+                                 std::string&              output,
+                                 std::chrono::milliseconds timeout,
+                                 std::string&              error)
+    {
+        const auto message =
+            Json {
+                {  "execute",                       "human-monitor-command"},
+                {"arguments", {{"command-line", std::string {commandLine}}}}
+        }
+                .dump();
+
+        std::string resultJson;
+        if (!executeMessage(message, resultJson, timeout, error))
+        {
+            return false;
+        }
+
+        Json result;
+        try
+        {
+            result = Json::parse(resultJson);
+        }
+        catch (const Json::exception&)
+        {
+            error = "the HMP reply is not valid JSON";
+            return false;
+        }
+        if (!result.is_string())
+        {
+            error = "the HMP reply is not a string";
+            return false;
+        }
+        output = result.get<std::string>();
+        return true;
     }
 
     bool QmpClient::waitForReply(std::string& resultJson, std::chrono::milliseconds timeout, std::string& error)

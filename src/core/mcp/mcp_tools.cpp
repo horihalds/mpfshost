@@ -452,6 +452,36 @@ namespace mpfshost::mcp
             };
         }
 
+        Json debugRecordJson(const DebugRegisterRecord& record)
+        {
+            return Json {
+                {     "vcpu",              record.vcpu},
+                {"thread_id",          record.threadId},
+                {      "rip",    hexString(record.rip)},
+                {      "rsp",    hexString(record.rsp)},
+                {      "rbp",    hexString(record.rbp)},
+                {   "eflags", hexString(record.eflags)},
+                {      "cr0",    hexString(record.cr0)},
+                {      "cr3",    hexString(record.cr3)},
+                {      "cr4",    hexString(record.cr4)},
+                {      "cr8",    hexString(record.cr8)},
+                {      "rax",    hexString(record.rax)},
+                {      "rbx",    hexString(record.rbx)},
+                {      "rcx",    hexString(record.rcx)},
+                {      "rdx",    hexString(record.rdx)},
+                {      "rsi",    hexString(record.rsi)},
+                {      "rdi",    hexString(record.rdi)},
+                {       "r8",     hexString(record.r8)},
+                {       "r9",     hexString(record.r9)},
+                {      "r10",    hexString(record.r10)},
+                {      "r11",    hexString(record.r11)},
+                {      "r12",    hexString(record.r12)},
+                {      "r13",    hexString(record.r13)},
+                {      "r14",    hexString(record.r14)},
+                {      "r15",    hexString(record.r15)}
+            };
+        }
+
         ToolOutcome success(Json structured)
         {
             ToolOutcome outcome;
@@ -716,6 +746,9 @@ namespace mpfshost::mcp
                  "Guest run state",                                                         "Report QEMU's run state, whether a stub is active, whether the host paused the guest, the vCPU count "
                                                          "and the active watch count.", true,
                  {target}                                                                                                    },
+                {      "debug_registers",
+                 "Read vCPU registers",                        "Read the x86-64 register set of a paused guest through a temporary GDB stub.",
+                 true,          {target, {"vcpu", "integer", "vCPU index from a previous read; omit for every vCPU", false}} },
                 {           "debug_stop",
                  "Pause the guest",     "Stop the guest through QEMU's QMP socket. Destructive: the guest stays paused until a continue.",
                  false,                                                                                              {target}},
@@ -2209,6 +2242,25 @@ namespace mpfshost::mcp
                     return failure(error);
                 }
                 return success(debugStatusJson(*response));
+            }
+
+            if (name == "debug_registers")
+            {
+                const auto vcpu =
+                    hasArg(args, "vcpu") ? static_cast<std::uint32_t>(numberValue(args, "vcpu", true)) : kDebugAllVcpus;
+                const auto records = debugRegisters(socket, {requireString(args, "target"), vcpu}, error);
+                if (!records)
+                {
+                    return failure(error);
+                }
+                Json vcpus = Json::array();
+                for (const auto& record : *records)
+                {
+                    vcpus.push_back(debugRecordJson(record));
+                }
+                return success(Json {
+                    {"vcpus", std::move(vcpus)}
+                });
             }
 
             if (name == "debug_stop" || name == "debug_continue")

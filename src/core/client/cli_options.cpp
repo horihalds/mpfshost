@@ -61,7 +61,7 @@ namespace mpfshost
                 || command == "pdb-symbol" || command == "pdb-address" || command == "pdb-type-size"
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
                 || command == "process-for-dtb" || command == "debug-status" || command == "debug-stop"
-                || command == "debug-continue";
+                || command == "debug-continue" || command == "debug-registers";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -80,6 +80,16 @@ namespace mpfshost
             if (command != "scatter" && (options.repeat != 1 || options.clear))
             {
                 error = "--repeat and --clear are only valid for --client scatter";
+                return false;
+            }
+            if (command != "debug-registers" && options.vcpuSet)
+            {
+                error = "--vcpu is only valid for --client debug-registers";
+                return false;
+            }
+            if (command == "debug-registers" && options.vcpuSet && options.vcpu >= kMaxDebugVcpuRecords)
+            {
+                error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
             if (options.pid == kPhysicalPid && !commandSupportsPhysicalMemory(command))
@@ -403,6 +413,23 @@ namespace mpfshost
                     return std::nullopt;
                 }
                 options.vmIndex = *parsed;
+                continue;
+            }
+            if (argument == "--vcpu")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--vcpu needs a vCPU index";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--vcpu needs a non-negative integer";
+                    return std::nullopt;
+                }
+                options.vcpu    = *parsed;
+                options.vcpuSet = true;
                 continue;
             }
             if (argument == "--address")

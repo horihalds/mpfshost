@@ -13,35 +13,11 @@ The tasks below implement the design in `RESEARCH.md` as vertical slices. Later 
 The live checks are run by the user, as required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so`
 and root.
 
-Before starting the GDB stub slice, validate the QEMU control details on a non-critical guest and record them under
-"Checks still owed to a live guest" in `docs/DEBUGGING.md`: whether HMP accepts `gdbserver unix:<path>`, how to
-detect an already-active stub, whether `Z2` must be armed per vCPU, and whether `target.xml` exposes `cr3`.
+Before starting the watchpoint slice, validate whether `Z2` must be armed per vCPU and whether a debug-stop pause
+interacts badly with snapshots, reset or migration, and record the answers under "Checks still owed to a live guest"
+in `docs/DEBUGGING.md`.
 
-### 1. Add GDB stub lifecycle and register reads
-
-Read CPU registers while the guest is stopped, without shelling out to `gdb`.
-
-- Add `src/core/debug/rsp_client.{hpp,cpp}`: GDB remote serial protocol packet framing, checksums, ack and no-ack
-  modes, `qSupported`, `qfThreadInfo`, `qXfer:features:read:target.xml`, thread selection, and `g`/`p` register
-  reads, all over a fakeable transport.
-- Add `DebugRegistersRequest`/`DebugRegistersResponse` (`0x003D`/`0x8060`). The request selects one vCPU or all; the
-  response is a fixed x86-64 record per vCPU with `rip`, `rsp`, `rbp`, `eflags`, `cr0`, `cr3`, `cr4`, `cr8`, general
-  registers, and thread/vCPU ids. Use the target XML for register numbering; fall back to a fixed layout only where
-  the XML omits a register.
-- Extend the debug controller to start the GDB stub over HMP only after the VM is stopped, track whether the host
-  owns it, and stop it again on every exit path. Prefer a Unix chardev; use loopback TCP only as a fallback. Never
-  use the all-interfaces default form, and never stop a stub the host did not start.
-- `debug-registers` requires a paused VM and must leave the run state unchanged. Return `InvalidState` (new error code
-  `20`) when the guest is running or another stub is active.
-- Add the client function, CLI command and MCP tool. Render registers in hex and label the vCPU.
-- Tests: RSP framing and checksums, no-ack fallback, target-XML parsing, stop-thread selection, register slicing,
-  stub start/stop on success and error paths, and `InvalidState` while running.
-- Document the stub endpoint and ownership rules in `docs/DEBUGGING.md`.
-
-Acceptance: the user can stop a VM, read all vCPU register sets, and see the same `rip`/`cr3` values as QEMU; the
-stub is gone afterwards and the VM remains in the state it was in before the request.
-
-### 2. Add process-scoped write watchpoints
+### 1. Add process-scoped write watchpoints
 
 Implement the experiment from `RESEARCH.md`: catch a write to a linear address, verify it belongs to the requested
 process, and resolve the trap PC.
@@ -72,7 +48,7 @@ Acceptance: the user can watch a write in a live Windows process, receive a `Deb
 CR3, module and nearest export, and afterwards find the VM running, the watch removed and the stub stopped. No guest
 memory contents are logged.
 
-### 3. Add address resolution and watch-hit ergonomics
+### 2. Add address resolution and watch-hit ergonomics
 
 Make a hit directly usable without several client round trips.
 
@@ -90,7 +66,7 @@ Make a hit directly usable without several client round trips.
 Acceptance: one command or tool call turns an absolute RIP into module, offset, nearest export and optional PDB
 symbol, and the watch output identifies the store when the decoder is available.
 
-### 4. Add breakpoints and single-step
+### 3. Add breakpoints and single-step
 
 Only start this after the write-watch path is solid on a live guest.
 

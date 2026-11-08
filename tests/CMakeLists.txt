@@ -6,6 +6,7 @@ add_executable(mpfshost_tests
     address_lookup_test.cpp
     cli_options_test.cpp
     connect_diagnostics_test.cpp
+    debug_controller_test.cpp
     debug_test.cpp
     display_test.cpp
     encoded_size_test.cpp
@@ -39,6 +40,7 @@ add_executable(mpfshost_tests
     pool_pte_pfn_roundtrip.cpp
     pool_pte_pfn_session_test.cpp
     qmp_client_test.cpp
+    rsp_client_test.cpp
     ipc_end_to_end_test.cpp
     physical_test.cpp
     vfs_test.cpp

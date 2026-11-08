@@ -131,6 +131,7 @@ namespace mpfshost
         ProcessByDtbRequest        = 0x003A,
         DebugStateRequest          = 0x003B,
         DebugControlRequest        = 0x003C,
+        DebugRegistersRequest      = 0x003D,
         ListTargetsResponse        = 0x8001,
         BindResponse               = 0x8002,
         ProcessListResponse        = 0x8003,
@@ -220,6 +221,7 @@ namespace mpfshost
         ProcessByDtbResponse       = 0x805D,
         DebugStateResponse         = 0x805E,
         DebugControlResponse       = 0x805F,
+        DebugRegistersResponse     = 0x8060,
         ErrorResponse              = 0x8FFF,
     };
 
@@ -244,6 +246,7 @@ namespace mpfshost
         Cancelled             = 17,
         Timeout               = 18,
         Busy                  = 19,
+        InvalidState          = 20,
     };
 
     [[nodiscard]] std::string_view messageTypeName(MessageType type) noexcept;

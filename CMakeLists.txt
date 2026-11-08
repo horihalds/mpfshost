@@ -46,6 +46,8 @@ add_library(mpfshost_core STATIC
     src/core/ipc/message_vfs.cpp
     src/core/ipc/message_debug.cpp
     src/core/debug/qmp_client.cpp
+    src/core/debug/rsp_client.cpp
+    src/core/debug/debug_controller.cpp
     src/core/target/scanner.cpp
     src/core/server/session.cpp
     src/core/server/session_memory.cpp

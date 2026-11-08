@@ -67,4 +67,50 @@ namespace mpfshost
         }
         sendPayload(requestId, MessageType::DebugControlResponse, encodeDebugControlResponse(*status));
     }
+
+    void Session::handleDebugRegisters(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugRegistersRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug registers request");
+            return;
+        }
+        if (request->vcpu != kDebugAllVcpus && request->vcpu >= kMaxDebugVcpuRecords)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the vCPU index is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot read debug registers");
+            return;
+        }
+
+        bool        invalidState = false;
+        std::string error;
+        auto        records = provider->debugRegisters(*request, invalidState, error);
+        if (!records.has_value())
+        {
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug register read failed" : error);
+            return;
+        }
+
+        sendPayload(requestId, MessageType::DebugRegistersResponse, encodeDebugRegistersResponse({*records}));
+    }
 } // namespace mpfshost

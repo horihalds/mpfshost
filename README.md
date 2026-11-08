@@ -185,6 +185,7 @@ to it automatically.
  `--client debug-status <vm>` | Report QEMU's run state, vCPU count and the host's debug bookkeeping. |
  `--client debug-stop <vm>` | Pause the guest through QEMU's QMP socket (destructive). |
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
+ `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
  `--client scatter <vm>` | Several process ranges in one batch; repeat `--range`; `--repeat <n>` re-reads the prepared ranges, `--clear` clears the handle before closing. |
  `--client vquery <vm>` | Region, protection and type of a virtual address. |
@@ -253,10 +254,11 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
-- `debug-status`, `debug-stop` and `debug-continue` use the QMP socket that the target scan already pairs with each
-  QEMU process. `debug-stop` pauses the guest and `debug-continue` resumes it; the host remembers whether **it** paused
-  the VM. These commands are destructive: a paused guest stops executing until it is resumed. See
-  [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
+- `debug-status`, `debug-stop`, `debug-continue` and `debug-registers` use the QMP socket that the target scan already
+  pairs with each QEMU process. `debug-stop` pauses the guest and `debug-continue` resumes it; the host remembers
+  whether **it** paused the VM. `debug-registers` only works on a paused guest: it starts a temporary GDB stub on a
+  Unix socket under `/tmp`, reads the registers, stops the stub and leaves the guest paused. These commands are
+  destructive: a paused guest stops executing until it is resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
 
 ### Using MCP mode
 
@@ -343,6 +345,7 @@ deliberately. The host's own `--allow-vfs-write` check still applies to `write_v
  `search_memory` | Search process or physical memory for text or a hex pattern. |
  `config_set` | **Write:** set an allow-listed MemProcFS option. |
  `debug_status` | QEMU run state, vCPU count and host debug bookkeeping. |
+ `debug_registers` | Read the x86-64 registers of a paused guest; optional `vcpu`. |
  `debug_stop` | **Write:** pause the guest. |
  `debug_continue` | **Write:** resume a paused guest. |
  `write_memory` | **Write:** write process virtual memory. |

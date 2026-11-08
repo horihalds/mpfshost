@@ -1564,6 +1564,56 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-registers")
+        {
+            const auto records = mpfshost::debugRegisters(
+                options.socketPath, {options.target, options.vcpuSet ? options.vcpu : mpfshost::kDebugAllVcpus}, error);
+            if (!records)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            if (records->empty())
+            {
+                std::printf("no vCPU registers were returned\n");
+                return 0;
+            }
+
+            for (const auto& record : *records)
+            {
+                std::printf("vcpu %u  thread %s\n", static_cast<unsigned>(record.vcpu), record.threadId.c_str());
+                std::printf("  rip=0x%016llx  rsp=0x%016llx  rbp=0x%016llx  eflags=0x%08llx\n",
+                            static_cast<unsigned long long>(record.rip),
+                            static_cast<unsigned long long>(record.rsp),
+                            static_cast<unsigned long long>(record.rbp),
+                            static_cast<unsigned long long>(record.eflags));
+                std::printf("  cr0=0x%016llx  cr3=0x%016llx  cr4=0x%016llx  cr8=0x%016llx\n",
+                            static_cast<unsigned long long>(record.cr0),
+                            static_cast<unsigned long long>(record.cr3),
+                            static_cast<unsigned long long>(record.cr4),
+                            static_cast<unsigned long long>(record.cr8));
+                std::printf("  rax=0x%016llx  rbx=0x%016llx  rcx=0x%016llx  rdx=0x%016llx\n",
+                            static_cast<unsigned long long>(record.rax),
+                            static_cast<unsigned long long>(record.rbx),
+                            static_cast<unsigned long long>(record.rcx),
+                            static_cast<unsigned long long>(record.rdx));
+                std::printf("  rsi=0x%016llx  rdi=0x%016llx  r8 =0x%016llx  r9 =0x%016llx\n",
+                            static_cast<unsigned long long>(record.rsi),
+                            static_cast<unsigned long long>(record.rdi),
+                            static_cast<unsigned long long>(record.r8),
+                            static_cast<unsigned long long>(record.r9));
+                std::printf("  r10=0x%016llx  r11=0x%016llx  r12=0x%016llx  r13=0x%016llx\n",
+                            static_cast<unsigned long long>(record.r10),
+                            static_cast<unsigned long long>(record.r11),
+                            static_cast<unsigned long long>(record.r12),
+                            static_cast<unsigned long long>(record.r13));
+                std::printf("  r14=0x%016llx  r15=0x%016llx\n",
+                            static_cast<unsigned long long>(record.r14),
+                            static_cast<unsigned long long>(record.r15));
+            }
+            return 0;
+        }
+
         if (options.command == "search")
         {
             mpfshost::SearchTerm term;

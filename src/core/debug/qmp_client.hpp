@@ -59,11 +59,26 @@ namespace mpfshost::debug
                                    std::string&              resultJson,
                                    std::chrono::milliseconds timeout,
                                    std::string&              error);
+        // Sends `command` with an already encoded JSON object in `argumentsJson`.
+        [[nodiscard]] bool execute(std::string_view          command,
+                                   std::string_view          argumentsJson,
+                                   std::string&              resultJson,
+                                   std::chrono::milliseconds timeout,
+                                   std::string&              error);
+        // Runs an HMP command through QMP and returns its plain-text answer.
+        [[nodiscard]] bool humanMonitor(std::string_view          commandLine,
+                                        std::string&              output,
+                                        std::chrono::milliseconds timeout,
+                                        std::string&              error);
         [[nodiscard]] bool queryStatus(QmpStatusInfo& info, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool queryVcpuCount(std::uint32_t& count, std::chrono::milliseconds timeout, std::string& error);
 
     private:
         [[nodiscard]] bool waitForReply(std::string& resultJson, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool executeMessage(std::string_view          messageJson,
+                                          std::string&              resultJson,
+                                          std::chrono::milliseconds timeout,
+                                          std::string&              error);
 
         std::unique_ptr<QmpTransport> _transport;
         bool                          _open {false};

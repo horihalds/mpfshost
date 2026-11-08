@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mpfshost
 {
@@ -20,6 +21,10 @@ namespace mpfshost
         [[nodiscard]] virtual std::optional<DebugStatus> debugState(std::string& error)         = 0;
         [[nodiscard]] virtual std::optional<DebugStatus> debugControl(DebugControlAction action,
                                                                       std::string&       error) = 0;
+        // `invalidState` reports a running guest or another owner's stub, which the session maps to
+        // ErrorCode::InvalidState instead of Internal.
+        [[nodiscard]] virtual std::optional<std::vector<DebugRegisterRecord>>
+        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, std::string& error) = 0;
     };
 } // namespace mpfshost
 

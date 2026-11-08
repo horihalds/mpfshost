@@ -65,7 +65,7 @@ verifies the `*End` status and that the number of delivered entries equals the c
 
 ## Message types
 
-Requests are `0x0001`–`0x003C`; responses are `0x8001`–`0x805F` plus `ErrorResponse` = `0x8FFF`. Values
+Requests are `0x0001`–`0x003D`; responses are `0x8001`–`0x8060` plus `ErrorResponse` = `0x8FFF`. Values
 `0x8030`–`0x8035` are unused; do not reuse them silently, and always take the next free value at the end of each
 range.
 
@@ -131,6 +131,7 @@ range.
  `ProcessByDtbRequest` | `0x003A` | `ProcessByDtbResponse` `0x805D` | single | `process-for-dtb` |
  `DebugStateRequest` | `0x003B` | `DebugStateResponse` `0x805E` | single | `debug-status` |
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
+ `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
 
 ## Address lookups
 
@@ -150,7 +151,7 @@ carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPa
  Field | Type | Meaning |
 -------|------|---------|
  `runState` | `u8` | `0` unknown, `1` running, `2` paused, `3` shutdown, `4` suspended, `5` guest-panicked, `6` other QMP state |
- `stubActive` | `u8` | `1` when the host currently owns a GDB stub |
+ `stubActive` | `u8` | `1` when a GDB stub is active |
  `hostPaused` | `u8` | `1` when this host pressed stop and has not continued the VM |
  `vcpuCount` | `u32` | vCPU count from QMP `query-cpus-fast` |
  `watchCount` | `u32` | watchpoints armed by the host |
@@ -161,6 +162,29 @@ for memory writes. Stop and continue are **destructive**: a paused guest stops e
 host only reports `hostPaused = 1` when its own `debug-stop` performed the pause; it still honours `debug-continue`
 for a guest paused by another client. `CapabilityUnavailable` means the bound handle does not implement debug
 control; `Internal` means the QMP exchange failed.
+
+## Debug registers
+
+`DebugRegistersRequest` carries one `u32` vCPU index, or `0xFFFFFFFF` for every vCPU. An index at or above
+`kMaxDebugVcpuRecords` (256) is `MalformedPayload`. The request is only valid while the guest is paused and no other
+stub owns the debug channel; otherwise the host answers `InvalidState` (`20`). The host leaves the run state
+unchanged: it starts a stub on a Unix chardev under `/tmp`, reads the registers, stops the stub, and re-checks that
+the guest is still paused.
+
+`DebugRegistersResponse` is a `u32` record count followed by fixed x86-64 records:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `vcpu` | `u32` | 0-based position in the stub's thread list |
+ `threadId` | string | GDB remote-protocol thread id |
+ `rip`, `rsp`, `rbp`, `eflags` | `u64` | Instruction and stack pointers and flags |
+ `cr0`, `cr3`, `cr4`, `cr8` | `u64` | Control registers |
+ `rax` … `r15`, except `rsp`/`rbp` | `u64` | General registers (`rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`, `r8`–`r15`) |
+
+The host reads QEMU's `target.xml` (following `xi:include`), uses its register numbering and byte layout for the
+`g` packet, and falls back to a fixed x86-64 layout only for a register that the XML omits. If the stub cannot be
+started it tries loopback TCP before failing; it never uses the all-interfaces default and never stops a stub it did
+not start.
 
 ## Physical memory variants
 
@@ -210,6 +234,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
+ 20 | `InvalidState` | `DebugRegistersRequest` while the guest is running or another stub owns the debug channel |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.
@@ -232,7 +257,8 @@ All in `src/core/ipc/frame.hpp` unless noted. Validate against them in the sessi
   `0x1000`, objects `0x8000` (children per object `0x40`), PTE `0x20000`, pool `0x20000`, pool tags `0x20000`,
   PFN `0x8000`.
 - Pages: `kMaxPageCount` 4096, `kMaxPrefetchPages` `0x10000`. Search: pattern ≤ 32 bytes, hits ≤ `0x10000`,
-  alignment a power of two ≤ 4096. Vad-ex: `pageCount` 1–`kMaxPageCount`.
+  alignment a power of two ≤ 4096. Vad-ex: `pageCount` 1–`kMaxPageCount`. Debug registers: at most
+  `kMaxDebugVcpuRecords` 256 records.
 - In `message.hpp`: `kMaxModuleSections` 96, `kMaxCallstackFrames` 64, `kModuleDataDirectoryCount` 16.
 
 A cap that cuts a stream short is reported through the `*End` frame's `truncated` flag, not as an error.

@@ -116,14 +116,23 @@ state to `VmmHandle`; keep per-request state on the stack or in `Session`.
 JSON line framing, the greeting and `qmp_capabilities` handshake, command/reply matching, skipping of asynchronous
 events, and bounded waits. `QmpTransport` is injectable, so tests script replies without a VM.
 
-The host side is `src/host/vmm_debug.{hpp,cpp}`: `VmmHandle` owns one `DebugController`, constructed from
-`VmTarget.qmpSocket`, and the controller serialises requests with its own mutex because sessions share the handle.
-No per-session debug state goes on `VmmHandle`. Each request opens a fresh QMP connection, so a lost socket does not
-poison the handle. Stop/continue set `hostPaused` only when this host performed the pause; `stubActive` and
-`watchCount` are reserved for later debug slices.
+`src/core/debug/rsp_client.{hpp,cpp}` speaks the GDB remote serial protocol: packet framing and checksums, ack and
+no-ack modes, `qSupported`, thread enumeration and selection, `qXfer` feature reads (following `xi:include`),
+`target.xml` register numbering, and `g`/`p` register reads. `RspTransport` is injectable too.
+
+`src/core/debug/debug_controller.{hpp,cpp}` owns the per-VM debug bookkeeping and the stub lifecycle. It starts a
+`gdbserver` over HMP only after the guest is paused, prefers a Unix chardev under `/tmp`, falls back to
+`tcp:127.0.0.1:<port>`, and tracks whether this host owns the stub. It never stops a stub it did not start, and it
+tears its stub down on every exit path. The guest stays paused across `debug-registers`.
+
+The host side is `src/host/vmm_debug.cpp`: `VmmHandle` owns one `debug::DebugController`, constructed from
+`VmTarget.qmpSocket` and a stub socket path derived from the QEMU pid. The controller serialises requests with its
+own mutex because sessions share the handle. No per-session debug state goes on `VmmHandle`. Each request opens a
+fresh QMP connection, so a lost socket does not poison the handle. Stop/continue set `hostPaused` only when this host
+performed the pause.
 
 QMP socket access is root-equivalent over the guest. There is no extra host flag; the connection's access policy is
-the only gate, and stop/continue are logged.
+the only gate, and stop/continue and stub start/stop are logged.
 
 ## Request deadlines
 
@@ -246,7 +255,7 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   - `BareHandle` — implements no provider; use it to test `CapabilityUnavailable`.
   - `CountingBackend` — counts and blocks `acquire`; used by the handle-cache tests.
 - `FakeHandle` does **not** implement `PteProvider`, `PoolProvider` or `PfnProvider`; those session paths have no test
-  yet (see `TODO.md`). It implements `DebugProvider` through `FakeDebugState`.
+  yet (see `TODO.md`). It implements `DebugProvider` through `FakeDebugState`, including fake register records.
 - Server and client tests start a real `Server` on a socket under `MPFSHOST_TEST_TMP_DIR` (`./tmp`) and call the
   real client functions against it. No test touches MemProcFS, `/run` or `/var`.
 - `tests/mcp_protocol_test.cpp` drives `mcp::McpServer` over in-memory streams for version negotiation, ordering,

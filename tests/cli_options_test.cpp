@@ -79,6 +79,7 @@ namespace
         "debug-status",
         "debug-stop",
         "debug-continue",
+        "debug-registers",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)

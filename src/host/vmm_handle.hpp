@@ -2,6 +2,7 @@
 #define MPFSHOST_HOST_VMM_HANDLE_HPP
 #pragma once
 
+#include "core/debug/debug_controller.hpp"
 #include "core/server/backend.hpp"
 #include "core/server/config_provider.hpp"
 #include "core/server/debug_provider.hpp"
@@ -35,7 +36,6 @@
 #include "core/server/vfs_provider.hpp"
 #include "core/server/virtual_query_provider.hpp"
 #include "core/server/vm_provider.hpp"
-#include "host/vmm_debug.hpp"
 #include "host/vmm_lookup_cache.hpp"
 
 #include <cstdint>
@@ -87,9 +87,12 @@ namespace mpfshost
                       public DebugProvider
     {
     public:
-        VmmHandle(VMM_HANDLE handle, std::string targetName, std::filesystem::path qmpSocket)
+        VmmHandle(VMM_HANDLE            handle,
+                  std::string           targetName,
+                  std::filesystem::path qmpSocket,
+                  std::filesystem::path stubSocket)
             : _handle {handle}, _targetName {std::move(targetName)}, _lookupCache {handle},
-              _debug {std::move(qmpSocket)}
+              _debug {std::move(qmpSocket), std::move(stubSocket)}
         {
         }
 
@@ -252,12 +255,14 @@ namespace mpfshost
 
         [[nodiscard]] std::optional<DebugStatus> debugState(std::string& error) override;
         [[nodiscard]] std::optional<DebugStatus> debugControl(DebugControlAction action, std::string& error) override;
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
+        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, std::string& error) override;
 
     private:
-        VMM_HANDLE      _handle;
-        std::string     _targetName;
-        LookupCache     _lookupCache;
-        DebugController _debug;
+        VMM_HANDLE             _handle;
+        std::string            _targetName;
+        LookupCache            _lookupCache;
+        debug::DebugController _debug;
     };
 } // namespace mpfshost
 

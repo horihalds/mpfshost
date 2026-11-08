@@ -43,6 +43,8 @@ namespace mpfshost
         bool                                sizeSet {};
         bool                                dataSet {};
         std::uint32_t                       vmIndex {};
+        std::uint32_t                       vcpu {};
+        bool                                vcpuSet {};
         std::string                         path {"\\"};
         bool                                pathSet {};
         std::uint64_t                       offset {};

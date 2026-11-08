@@ -109,7 +109,7 @@ Do all of these before you finish, in order:
  `src/core/server/` | `session.*` per-connection dispatcher, `server.*` socket + worker pool, `handle_cache.*`, `access_policy.*`, `request_deadline.*`, `map_batching.hpp`, `backend.hpp`, one `*_provider.hpp` interface per capability. |
  `src/core/client/` | `client.*` one function per capability, `cli_options.*` (`ClientOptions`, `parseClientOptions`), `connect_diagnostics.*`. |
  `src/core/mcp/` | MCP stdio front end: `mcp_server.*` (JSON-RPC state machine) and `mcp_tools.*` (tool catalogue and mapping over `client.hpp`). |
- `src/core/debug/` | QMP client for guest run state and stop/continue (`qmp_client.*`), with an injectable transport. |
+ `src/core/debug/` | QMP client, GDB remote-protocol client and the per-VM debug controller (`qmp_client.*`, `rsp_client.*`, `debug_controller.*`), all with injectable transports. |
  `src/core/target/` | QEMU target discovery logic (`<vm>.pid` + `<vm>.sock` pairing). |
  `src/core/log/` | Levelled thread-safe logger, `mpfshost::log`. |
  `src/core/util/` | Hex parsing/dumps, decimal/range-size parsing (`number.*`), page-range expansion, substring matcher, identity lookups. |

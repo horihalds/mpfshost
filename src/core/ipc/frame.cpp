@@ -454,6 +454,8 @@ namespace mpfshost
             return "DebugStateRequest";
         case MessageType::DebugControlRequest:
             return "DebugControlRequest";
+        case MessageType::DebugRegistersRequest:
+            return "DebugRegistersRequest";
         case MessageType::ProcessInfoRequest:
             return "ProcessInfoRequest";
         case MessageType::SymbolLookupRequest:
@@ -594,6 +596,8 @@ namespace mpfshost
             return "DebugStateResponse";
         case MessageType::DebugControlResponse:
             return "DebugControlResponse";
+        case MessageType::DebugRegistersResponse:
+            return "DebugRegistersResponse";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:
@@ -746,6 +750,8 @@ namespace mpfshost
             return "Timeout";
         case ErrorCode::Busy:
             return "Busy";
+        case ErrorCode::InvalidState:
+            return "InvalidState";
         }
         return "UnknownErrorCode";
     }
