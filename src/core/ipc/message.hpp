@@ -525,6 +525,19 @@ namespace mpfshost
         std::string       cmdline;    // VMMDLL_PROCESS_INFORMATION_OPT_STRING_CMDLINE
     };
 
+    struct ProcessByDtbRequest
+    {
+        std::uint64_t dtb {}; // kernel or user directory table base; low CR3 flag bits are ignored
+    };
+
+    struct ProcessByDtbResponse
+    {
+        ProcessDescriptor process;
+        std::uint64_t     dtb {};         // the process's paDTB
+        std::uint64_t     dtbUser {};     // paDTB_UserOpt, zero when MemProcFS has none
+        bool              matchedUser {}; // true when the request matched the user DTB
+    };
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -628,6 +641,24 @@ namespace mpfshost
         std::uint64_t                    moduleBase {};
         std::vector<ModuleSection>       sections;
         std::vector<ModuleDataDirectory> directories; // always kModuleDataDirectoryCount entries
+    };
+
+    struct ModuleByAddressRequest
+    {
+        std::uint32_t pid {};
+        std::uint64_t address {};
+    };
+
+    struct ModuleByAddressResponse
+    {
+        std::uint64_t base {};
+        std::uint64_t entry {};
+        std::uint64_t imageSize {};
+        std::uint64_t offset {}; // address - base
+        std::uint16_t kind {};
+        bool          wow64 {};
+        std::string   name;
+        std::string   fullName;
     };
 
     struct CancelRequest
@@ -914,6 +945,12 @@ namespace mpfshost
     [[nodiscard]] std::vector<std::byte>             encodeProcessInfoResponse(const ProcessInfoResponse& message);
     [[nodiscard]] std::optional<ProcessInfoResponse> decodeProcessInfoResponse(std::span<const std::byte> payload);
 
+    [[nodiscard]] std::vector<std::byte>             encodeProcessByDtbRequest(const ProcessByDtbRequest& message);
+    [[nodiscard]] std::optional<ProcessByDtbRequest> decodeProcessByDtbRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeProcessByDtbResponse(const ProcessByDtbResponse& message);
+    [[nodiscard]] std::optional<ProcessByDtbResponse> decodeProcessByDtbResponse(std::span<const std::byte> payload);
+
     [[nodiscard]] std::vector<std::byte>             encodeSymbolLookupRequest(const SymbolLookupRequest& message);
     [[nodiscard]] std::optional<SymbolLookupRequest> decodeSymbolLookupRequest(std::span<const std::byte> payload);
 
@@ -959,6 +996,14 @@ namespace mpfshost
 
     [[nodiscard]] std::vector<std::byte>              encodeModuleLayoutResponse(const ModuleLayoutResponse& message);
     [[nodiscard]] std::optional<ModuleLayoutResponse> decodeModuleLayoutResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeModuleByAddressRequest(const ModuleByAddressRequest& message);
+    [[nodiscard]] std::optional<ModuleByAddressRequest>
+    decodeModuleByAddressRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeModuleByAddressResponse(const ModuleByAddressResponse& message);
+    [[nodiscard]] std::optional<ModuleByAddressResponse>
+    decodeModuleByAddressResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>       encodeCancelRequest(const CancelRequest& message);
     [[nodiscard]] std::optional<CancelRequest> decodeCancelRequest(std::span<const std::byte> payload);

@@ -177,6 +177,46 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "process-for-dtb")
+        {
+            const auto response = mpfshost::processByDtb(options.socketPath, {options.target, options.dtb}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+
+            std::printf("pid=%u\n", static_cast<unsigned>(response->process.pid));
+            std::printf("ppid=%u\n", static_cast<unsigned>(response->process.parentPid));
+            std::printf("name=%s\n", response->process.name.c_str());
+            std::printf("wow64=%s\n", response->process.wow64 ? "yes" : "no");
+            std::printf("dtb=%s\n", hexPointer(response->dtb).c_str());
+            std::printf("dtb-user=%s\n", hexPointer(response->dtbUser).c_str());
+            std::printf("matched=%s\n", response->matchedUser ? "dtb-user" : "dtb");
+            return 0;
+        }
+
+        if (options.command == "module-at")
+        {
+            const auto response =
+                mpfshost::moduleByAddress(options.socketPath, {options.target, options.pid, options.address}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+
+            std::printf("name=%s\n", response->name.c_str());
+            std::printf("full-name=%s\n", response->fullName.c_str());
+            std::printf("base=%s\n", hexPointer(response->base).c_str());
+            std::printf("entry=%s\n", hexPointer(response->entry).c_str());
+            std::printf("size=%s\n", hexPointer(response->imageSize).c_str());
+            std::printf("offset=%s\n", hexPointer(response->offset).c_str());
+            std::printf("kind=%u\n", static_cast<unsigned>(response->kind));
+            std::printf("wow64=%s\n", response->wow64 ? "yes" : "no");
+            return 0;
+        }
+
         if (options.command == "symbol")
         {
             const auto response = mpfshost::lookupSymbol(

@@ -157,8 +157,10 @@ to it automatically.
  `--client processes <vm>` | List processes; `--pid` or `--name` filter. |
  `--client processes-all <vm>` | List every process, including terminated ones; `--pid` or `--name` filter. |
  `--client proc-info <vm>` | Full record of one process, by `--pid` or `--name` (resolved by MemProcFS). |
+ `--client process-for-dtb <vm>` | Process that owns a CR3/DTB; `--dtb` (or `--cr3`), low CR3 flag bits ignored. |
  `--client modules <vm>` | Loaded modules of a process; `--counts`, `--debug`, `--version-info`. |
  `--client symbol <vm>` | Module base and, with `--symbol`, an export address. |
+ `--client module-at <vm>` | Module containing a process virtual address; `--address`. |
  `--client pdb-load <vm>` | Load the pdb of the module at `--address` and report its module name. |
  `--client pdb-symbol <vm>` | Resolve `--address` to a pdb symbol name and displacement in `--module`. |
  `--client pdb-address <vm>` | Resolve `--symbol` to its address in `--module`. |
@@ -200,7 +202,8 @@ Common options:
  `--name <text>` | Case-insensitive substring filter (for `proc-info`: the name to resolve). |
  `--module <name>` | Module for `symbol`, `sections`, `eat`, `iat`, `pdb-symbol`, `pdb-address`, `pdb-type-size`, `pdb-type-child`. |
  `--symbol <name>`, `--type <name>`, `--child <name>` | Symbol for `pdb-address`; struct type for `pdb-type-size` / `pdb-type-child`; child member for `pdb-type-child`. |
- `--address <hex>`, `--size <n>`, `--data <hex bytes>` | Address, decimal byte count and bytes for read/write commands; `pdb-load` takes the module base in `--address`. |
+ `--address <hex>`, `--size <n>`, `--data <hex bytes>` | Address, decimal byte count and bytes for read/write commands; `pdb-load` takes the module base in `--address`; `module-at` takes the virtual address. |
+ `--dtb <hex>` | CR3 or directory table base for `process-for-dtb`; `--cr3` is an alias and the low twelve flag bits are ignored. |
  `--range <hex>:<size>` | Repeatable range for `scatter`, `phys-scatter`, `page`, `prefetch`. |
  `--repeat <n>`, `--clear` | Repeat a `scatter` read (`n` rounds) and/or clear the handle before closing. |
  `--vm <index>` | Partition from `vm-list` (default `0`). |
@@ -301,8 +304,10 @@ tools and annotated `destructiveHint: true`. They can modify the guest; use them
  `list_processes` | Processes, filtered by pid or name. |
  `list_all_processes` | Every process, including terminated ones. |
  `process_info` | Full record of one process by pid or name. |
+ `process_for_dtb` | Process that uses a CR3 or directory table base. |
  `list_modules` | Loaded modules of a process. |
  `lookup_symbol` | Module base and export address. |
+ `module_at_address` | Module that contains a process virtual address. |
  `pdb_load` | Load the PDB of a module at an address. |
  `pdb_symbol_name` | Address to PDB symbol and displacement. |
  `pdb_symbol_address` | PDB symbol to address. |

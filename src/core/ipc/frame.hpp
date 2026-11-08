@@ -127,6 +127,8 @@ namespace mpfshost
         PoolTagListRequest         = 0x0036, // streamed: PoolTagListData* then PoolTagListEnd
         ConfigSetRequest           = 0x0037,
         VfsWriteRequest            = 0x0038,
+        ModuleByAddressRequest     = 0x0039,
+        ProcessByDtbRequest        = 0x003A,
         ListTargetsResponse        = 0x8001,
         BindResponse               = 0x8002,
         ProcessListResponse        = 0x8003,
@@ -212,6 +214,8 @@ namespace mpfshost
         PoolTagListEnd             = 0x8059,
         ConfigSetResponse          = 0x805A,
         VfsWriteResponse           = 0x805B,
+        ModuleByAddressResponse    = 0x805C,
+        ProcessByDtbResponse       = 0x805D,
         ErrorResponse              = 0x8FFF,
     };
 

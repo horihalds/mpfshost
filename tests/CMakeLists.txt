@@ -3,6 +3,7 @@ find_package(Catch2 2 REQUIRED)
 add_executable(mpfshost_tests
     main.cpp
     access_policy_test.cpp
+    address_lookup_test.cpp
     cli_options_test.cpp
     connect_diagnostics_test.cpp
     display_test.cpp

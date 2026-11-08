@@ -34,6 +34,7 @@
 #include "core/server/vfs_provider.hpp"
 #include "core/server/virtual_query_provider.hpp"
 #include "core/server/vm_provider.hpp"
+#include "host/vmm_lookup_cache.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -82,7 +83,10 @@ namespace mpfshost
                       public ConfigProvider
     {
     public:
-        VmmHandle(VMM_HANDLE handle, std::string targetName) : _handle {handle}, _targetName {std::move(targetName)} {}
+        VmmHandle(VMM_HANDLE handle, std::string targetName)
+            : _handle {handle}, _targetName {std::move(targetName)}, _lookupCache {handle}
+        {
+        }
 
         ~VmmHandle() override;
 
@@ -97,6 +101,9 @@ namespace mpfshost
 
         [[nodiscard]] std::optional<ProcessInfoResponse>
         processInfo(const ProcessInfoRequest& request, LookupStatus& status, std::string& error) override;
+
+        [[nodiscard]] std::optional<ProcessByDtbResponse>
+        processByDtb(const ProcessByDtbRequest& request, LookupStatus& status, std::string& error) override;
 
         [[nodiscard]] std::optional<std::vector<ModuleDescriptor>> listModules(const ModuleListRequest& request,
                                                                                std::string&             error) override;
@@ -121,6 +128,9 @@ namespace mpfshost
 
         [[nodiscard]] std::optional<ModuleLayoutResponse>
         moduleLayout(const ModuleLayoutRequest& request, LookupStatus& status, std::string& error) override;
+
+        [[nodiscard]] std::optional<ModuleByAddressResponse>
+        moduleByAddress(const ModuleByAddressRequest& request, LookupStatus& status, std::string& error) override;
 
         [[nodiscard]] std::optional<std::vector<MemoryMapRegion>> listMemoryMap(const MemoryMapRequest& request,
                                                                                 std::string&            error) override;
@@ -238,6 +248,7 @@ namespace mpfshost
     private:
         VMM_HANDLE  _handle;
         std::string _targetName;
+        LookupCache _lookupCache;
     };
 } // namespace mpfshost
 

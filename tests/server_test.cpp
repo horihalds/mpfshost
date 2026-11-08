@@ -2629,6 +2629,170 @@ TEST_CASE("server reports Internal when the symbol provider fails", "[server][mo
     REQUIRE(error->message == "the module table is unavailable");
 }
 
+TEST_CASE("server returns the module-by-address response the provider builds", "[server][module]")
+{
+    ServerFixture                       fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend    backend;
+    mpfshost::ModuleByAddressResponse response;
+    response.base      = 0x7ffb10000000ull;
+    response.entry     = 0x7ffb10001000ull;
+    response.imageSize = 0x2000;
+    response.offset    = 0x340;
+    response.kind      = 2;
+    response.wow64     = true;
+    response.name      = "notepad.exe";
+    response.fullName  = "C:\\Windows\\notepad.exe";
+    backend.setModuleByAddressResponse(response);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    ClientSocket client {fixture.socketPath()};
+    bindClient(client, 1, "vm-alpha");
+
+    client.send(mpfshost::MessageType::ModuleByAddressRequest,
+                2,
+                mpfshost::encodeModuleByAddressRequest({4321, 0x7ffb10000340ull}));
+
+    mpfshost::MessageType  type;
+    std::uint64_t          requestId {};
+    std::vector<std::byte> payload;
+    REQUIRE(client.receive(type, requestId, payload));
+    REQUIRE(type == mpfshost::MessageType::ModuleByAddressResponse);
+
+    const auto decoded = mpfshost::decodeModuleByAddressResponse(payload);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->base == 0x7ffb10000000ull);
+    REQUIRE(decoded->imageSize == 0x2000);
+    REQUIRE(decoded->offset == 0x340);
+    REQUIRE(decoded->name == "notepad.exe");
+    REQUIRE(decoded->fullName == "C:\\Windows\\notepad.exe");
+
+    const auto forwarded = backend.moduleLookupState()->lastAddressRequest;
+    REQUIRE(forwarded.has_value());
+    REQUIRE(forwarded->pid == 4321);
+    REQUIRE(forwarded->address == 0x7ffb10000340ull);
+}
+
+TEST_CASE("server maps an address outside every module to NotFound", "[server][module]")
+{
+    ServerFixture                       fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.failModuleByAddressWith("address is not inside any module loaded in process 4",
+                                    mpfshost::LookupStatus::NotFound);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    ClientSocket client {fixture.socketPath()};
+    bindClient(client, 1, "vm-alpha");
+
+    client.send(
+        mpfshost::MessageType::ModuleByAddressRequest, 2, mpfshost::encodeModuleByAddressRequest({4, 0xdeadbeef}));
+
+    mpfshost::MessageType  type;
+    std::uint64_t          requestId {};
+    std::vector<std::byte> payload;
+    REQUIRE(client.receive(type, requestId, payload));
+    REQUIRE(type == mpfshost::MessageType::ErrorResponse);
+    const auto error = mpfshost::decodeErrorResponse(payload);
+    REQUIRE(error.has_value());
+    REQUIRE(error->code == mpfshost::ErrorCode::NotFound);
+}
+
+TEST_CASE("server returns the process-by-dtb response the provider builds", "[server][process]")
+{
+    ServerFixture                       fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.setProcessByDtbResponse({
+        {1234, 4, "notepad.exe", false},
+        0x1aa000, 0x1ab000, true
+    });
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    ClientSocket client {fixture.socketPath()};
+    bindClient(client, 1, "vm-alpha");
+
+    client.send(mpfshost::MessageType::ProcessByDtbRequest, 2, mpfshost::encodeProcessByDtbRequest({0x1aafff}));
+
+    mpfshost::MessageType  type;
+    std::uint64_t          requestId {};
+    std::vector<std::byte> payload;
+    REQUIRE(client.receive(type, requestId, payload));
+    REQUIRE(type == mpfshost::MessageType::ProcessByDtbResponse);
+
+    const auto decoded = mpfshost::decodeProcessByDtbResponse(payload);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->process.pid == 1234);
+    REQUIRE(decoded->process.name == "notepad.exe");
+    REQUIRE(decoded->dtb == 0x1aa000);
+    REQUIRE(decoded->dtbUser == 0x1ab000);
+    REQUIRE(decoded->matchedUser);
+
+    const auto forwarded = backend.processInfoState()->lastDtbRequest;
+    REQUIRE(forwarded.has_value());
+    REQUIRE(forwarded->dtb == 0x1aafff);
+}
+
+TEST_CASE("server rejects a zero process dtb", "[server][process]")
+{
+    ServerFixture                       fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    RunningServer                  server {fixture.socketPath(), targets, backend};
+
+    ClientSocket client {fixture.socketPath()};
+    bindClient(client, 1, "vm-alpha");
+
+    client.send(mpfshost::MessageType::ProcessByDtbRequest, 2, mpfshost::encodeProcessByDtbRequest({0}));
+
+    mpfshost::MessageType  type;
+    std::uint64_t          requestId {};
+    std::vector<std::byte> payload;
+    REQUIRE(client.receive(type, requestId, payload));
+    REQUIRE(type == mpfshost::MessageType::ErrorResponse);
+    const auto error = mpfshost::decodeErrorResponse(payload);
+    REQUIRE(error.has_value());
+    REQUIRE(error->code == mpfshost::ErrorCode::MalformedPayload);
+}
+
+TEST_CASE("server maps an unknown dtb to NotFound", "[server][process]")
+{
+    ServerFixture                       fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.failProcessByDtbWith("no process uses dtb 466944", mpfshost::LookupStatus::NotFound);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    ClientSocket client {fixture.socketPath()};
+    bindClient(client, 1, "vm-alpha");
+
+    client.send(mpfshost::MessageType::ProcessByDtbRequest, 2, mpfshost::encodeProcessByDtbRequest({0x72000}));
+
+    mpfshost::MessageType  type;
+    std::uint64_t          requestId {};
+    std::vector<std::byte> payload;
+    REQUIRE(client.receive(type, requestId, payload));
+    REQUIRE(type == mpfshost::MessageType::ErrorResponse);
+    const auto error = mpfshost::decodeErrorResponse(payload);
+    REQUIRE(error.has_value());
+    REQUIRE(error->code == mpfshost::ErrorCode::NotFound);
+}
+
 TEST_CASE("server returns the pdb responses the provider builds", "[server][module]")
 {
     ServerFixture                       fixture;

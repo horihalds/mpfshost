@@ -91,6 +91,36 @@ namespace mpfshost
         return decoded;
     }
 
+    std::optional<ModuleByAddressResponse>
+    moduleByAddress(const std::filesystem::path& socketPath, const ModuleByAddressQuery& query, std::string& error)
+    {
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto requestPayload = encodeModuleByAddressRequest({query.pid, query.address});
+        const auto request = exchange(connection->fd(), MessageType::ModuleByAddressRequest, requestPayload, error);
+        if (!request)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*request, MessageType::ModuleByAddressResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeModuleByAddressResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed module-by-address response";
+        }
+        return decoded;
+    }
+
     std::optional<std::vector<MemoryMapRegion>>
     listMemoryMap(const std::filesystem::path& socketPath, const MemoryMapQuery& query, std::string& error)
     {

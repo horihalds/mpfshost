@@ -61,6 +61,7 @@ namespace mpfshost
         void               handleProcessList(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleProcessListAll(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleProcessInfo(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleProcessByDtb(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleVirtualQuery(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleMemorySearch(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handlePageRead(std::uint64_t requestId, std::span<const std::byte> payload);
@@ -73,6 +74,7 @@ namespace mpfshost
         void               handlePdbTypeSize(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handlePdbTypeChildOffset(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleModuleLayout(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleModuleByAddress(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleMemoryMap(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleVadExList(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleThreadList(std::uint64_t requestId, std::span<const std::byte> payload);

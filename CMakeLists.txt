@@ -58,6 +58,7 @@ add_library(mpfshost_core STATIC
     src/core/server/memory_provider.cpp
     src/core/server/process_provider.cpp
     src/core/server/module_provider.cpp
+    src/core/server/module_lookup_provider.cpp
     src/core/server/memory_map_provider.cpp
     src/core/server/thread_provider.cpp
     src/core/server/handle_provider.cpp
@@ -103,6 +104,7 @@ add_library(mpfshost_host STATIC
     src/host/vmm_handle_factory.cpp
     src/host/filesystem_target_source.cpp
     src/host/vmm_handle.cpp
+    src/host/vmm_lookup_cache.cpp
     src/host/vmm_config.cpp
     src/host/vmm_handles.cpp
     src/host/vmm_heaps.cpp

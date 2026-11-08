@@ -1158,6 +1158,96 @@ TEST_CASE("malformed symbol lookup payloads are rejected", "[core][message]")
     REQUIRE_FALSE(mpfshost::decodeSymbolLookupRequest(mpfshost::encodeSymbolLookupRequest(oversized)).has_value());
 }
 
+TEST_CASE("module-by-address messages round trip", "[core][message]")
+{
+    const mpfshost::ModuleByAddressRequest request {4321, 0x7ffb10012340ull};
+    const auto decodedRequest = mpfshost::decodeModuleByAddressRequest(mpfshost::encodeModuleByAddressRequest(request));
+    REQUIRE(decodedRequest.has_value());
+    REQUIRE(decodedRequest->pid == 4321);
+    REQUIRE(decodedRequest->address == 0x7ffb10012340ull);
+
+    mpfshost::ModuleByAddressResponse response;
+    response.base      = 0x7ffb10000000ull;
+    response.entry     = 0x7ffb10001000ull;
+    response.imageSize = 0x200000;
+    response.offset    = 0x12340;
+    response.kind      = 2;
+    response.wow64     = true;
+    response.name      = "notepad.exe";
+    response.fullName  = "C:\\Windows\\notepad.exe";
+
+    const auto decodedResponse =
+        mpfshost::decodeModuleByAddressResponse(mpfshost::encodeModuleByAddressResponse(response));
+    REQUIRE(decodedResponse.has_value());
+    REQUIRE(decodedResponse->base == 0x7ffb10000000ull);
+    REQUIRE(decodedResponse->entry == 0x7ffb10001000ull);
+    REQUIRE(decodedResponse->imageSize == 0x200000);
+    REQUIRE(decodedResponse->offset == 0x12340);
+    REQUIRE(decodedResponse->kind == 2);
+    REQUIRE(decodedResponse->wow64);
+    REQUIRE(decodedResponse->name == "notepad.exe");
+    REQUIRE(decodedResponse->fullName == "C:\\Windows\\notepad.exe");
+}
+
+TEST_CASE("malformed module-by-address payloads are rejected", "[core][message]")
+{
+    const std::vector<std::byte> empty;
+    REQUIRE_FALSE(mpfshost::decodeModuleByAddressRequest(empty).has_value());
+    REQUIRE_FALSE(mpfshost::decodeModuleByAddressResponse(empty).has_value());
+
+    auto truncatedRequest = mpfshost::encodeModuleByAddressRequest({7, 0x1000});
+    truncatedRequest.pop_back();
+    REQUIRE_FALSE(mpfshost::decodeModuleByAddressRequest(truncatedRequest).has_value());
+
+    auto trailingResponse = mpfshost::encodeModuleByAddressResponse({});
+    trailingResponse.push_back(std::byte {0});
+    REQUIRE_FALSE(mpfshost::decodeModuleByAddressResponse(trailingResponse).has_value());
+
+    mpfshost::ModuleByAddressResponse oversized;
+    oversized.name = std::string(mpfshost::kMaxMapStringLength + 1, 'm');
+    REQUIRE_FALSE(
+        mpfshost::decodeModuleByAddressResponse(mpfshost::encodeModuleByAddressResponse(oversized)).has_value());
+}
+
+TEST_CASE("process-by-dtb messages round trip", "[core][message]")
+{
+    const mpfshost::ProcessByDtbRequest request {0x1aa000};
+    const auto decodedRequest = mpfshost::decodeProcessByDtbRequest(mpfshost::encodeProcessByDtbRequest(request));
+    REQUIRE(decodedRequest.has_value());
+    REQUIRE(decodedRequest->dtb == 0x1aa000);
+
+    mpfshost::ProcessByDtbResponse response;
+    response.process     = {1234, 4, "notepad.exe", false};
+    response.dtb         = 0x1aa000;
+    response.dtbUser     = 0x1ab000;
+    response.matchedUser = true;
+
+    const auto decodedResponse = mpfshost::decodeProcessByDtbResponse(mpfshost::encodeProcessByDtbResponse(response));
+    REQUIRE(decodedResponse.has_value());
+    REQUIRE(decodedResponse->process.pid == 1234);
+    REQUIRE(decodedResponse->process.parentPid == 4);
+    REQUIRE(decodedResponse->process.name == "notepad.exe");
+    REQUIRE_FALSE(decodedResponse->process.wow64);
+    REQUIRE(decodedResponse->dtb == 0x1aa000);
+    REQUIRE(decodedResponse->dtbUser == 0x1ab000);
+    REQUIRE(decodedResponse->matchedUser);
+}
+
+TEST_CASE("malformed process-by-dtb payloads are rejected", "[core][message]")
+{
+    const std::vector<std::byte> empty;
+    REQUIRE_FALSE(mpfshost::decodeProcessByDtbRequest(empty).has_value());
+    REQUIRE_FALSE(mpfshost::decodeProcessByDtbResponse(empty).has_value());
+
+    auto truncatedRequest = mpfshost::encodeProcessByDtbRequest({0x1000});
+    truncatedRequest.pop_back();
+    REQUIRE_FALSE(mpfshost::decodeProcessByDtbRequest(truncatedRequest).has_value());
+
+    auto trailingResponse = mpfshost::encodeProcessByDtbResponse({});
+    trailingResponse.push_back(std::byte {0});
+    REQUIRE_FALSE(mpfshost::decodeProcessByDtbResponse(trailingResponse).has_value());
+}
+
 TEST_CASE("pdb messages round trip", "[core][message]")
 {
     const mpfshost::PdbLoadRequest loadRequest {1234, 0xfffff80000000000ull};

@@ -89,6 +89,56 @@ namespace mpfshost
         return processes;
     }
 
+    std::optional<std::vector<ProcessDtbRecord>> listVmmProcessDtbs(VMM_HANDLE handle, std::string& error)
+    {
+        if (handle == nullptr)
+        {
+            error = "no MemProcFS handle is available";
+            return std::nullopt;
+        }
+
+        SIZE_T count = 0;
+        if (!VMMDLL_PidList(handle, nullptr, &count))
+        {
+            error = "VMMDLL_PidList failed to report the process count";
+            return std::nullopt;
+        }
+
+        std::vector<DWORD> pids(count);
+        if (count != 0 && !VMMDLL_PidList(handle, pids.data(), &count))
+        {
+            error = "VMMDLL_PidList failed to return the process ids";
+            return std::nullopt;
+        }
+        pids.resize(count);
+
+        // PidList names live processes only; GetInformationAll would also include terminated ones whose stale
+        // DTB must not answer a CR3 lookup.
+        std::vector<ProcessDtbRecord> records;
+        records.reserve(pids.size());
+        for (const DWORD pid : pids)
+        {
+            VMMDLL_PROCESS_INFORMATION info {};
+            info.magic    = VMMDLL_PROCESS_INFORMATION_MAGIC;
+            info.wVersion = VMMDLL_PROCESS_INFORMATION_VERSION;
+            auto size     = sizeof(VMMDLL_PROCESS_INFORMATION);
+            if (!VMMDLL_ProcessGetInformation(handle, pid, &info, &size) || info.paDTB == 0)
+            {
+                continue;
+            }
+
+            ProcessDtbRecord record;
+            record.process.pid       = info.dwPID;
+            record.process.parentPid = info.dwPPID;
+            record.process.wow64     = info.win.fWow64 != 0;
+            record.process.name      = processName(info);
+            record.dtb               = info.paDTB;
+            record.dtbUser           = info.paDTB_UserOpt;
+            records.push_back(std::move(record));
+        }
+        return records;
+    }
+
     std::optional<std::vector<ProcessSummary>> listAllVmmProcesses(VMM_HANDLE handle, std::string& error)
     {
         if (handle == nullptr)

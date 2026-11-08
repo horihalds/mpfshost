@@ -99,6 +99,36 @@ namespace mpfshost
         return decoded;
     }
 
+    std::optional<ProcessByDtbResponse>
+    processByDtb(const std::filesystem::path& socketPath, const ProcessByDtbQuery& query, std::string& error)
+    {
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto requestPayload = encodeProcessByDtbRequest({query.dtb});
+        const auto request        = exchange(connection->fd(), MessageType::ProcessByDtbRequest, requestPayload, error);
+        if (!request)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*request, MessageType::ProcessByDtbResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeProcessByDtbResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed process-by-dtb response";
+        }
+        return decoded;
+    }
+
     std::optional<SymbolLookupResponse>
     lookupSymbol(const std::filesystem::path& socketPath, const SymbolQuery& query, std::string& error)
     {

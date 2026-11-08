@@ -65,7 +65,7 @@ verifies the `*End` status and that the number of delivered entries equals the c
 
 ## Message types
 
-Requests are `0x0001`–`0x0038`; responses are `0x8001`–`0x805B` plus `ErrorResponse` = `0x8FFF`. Values
+Requests are `0x0001`–`0x003A`; responses are `0x8001`–`0x805D` plus `ErrorResponse` = `0x8FFF`. Values
 `0x8030`–`0x8035` are unused; do not reuse them silently, and always take the next free value at the end of each
 range.
 
@@ -127,6 +127,17 @@ range.
  `PoolTagListRequest` | `0x0036` | `PoolTagListData` `0x8058` / `PoolTagListEnd` `0x8059` | stream | `pool-tags` |
  `ConfigSetRequest` | `0x0037` | `ConfigSetResponse` `0x805A` | single | `config-set` |
  `VfsWriteRequest` | `0x0038` | `VfsWriteResponse` `0x805B` | single | `vfs-write` |
+ `ModuleByAddressRequest` | `0x0039` | `ModuleByAddressResponse` `0x805C` | single | `module-at` |
+ `ProcessByDtbRequest` | `0x003A` | `ProcessByDtbResponse` `0x805D` | single | `process-for-dtb` |
+
+## Address lookups
+
+`ModuleByAddressRequest` carries a pid and a virtual address. The host returns the module whose half-open image range
+contains the address, plus the module-relative offset; an address outside every module is `NotFound`.
+`ProcessByDtbRequest` carries a CR3 or directory table base. The low twelve CR3 flag bits are masked off before the
+comparison, and both `paDTB` and `paDTB_UserOpt` are candidates, so a KPTI user DTB resolves to the same process;
+`matchedUser` says which one matched. The host caches module lists per pid and one process/DTB snapshot for one second;
+a miss from a snapshot older than 250 ms is retried once before it is reported as `NotFound`.
 
 ## Physical memory variants
 

@@ -449,6 +449,58 @@ namespace mpfshost
         return message;
     }
 
+    std::vector<std::byte> encodeModuleByAddressRequest(const ModuleByAddressRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        return writer.take();
+    }
+
+    std::optional<ModuleByAddressRequest> decodeModuleByAddressRequest(std::span<const std::byte> payload)
+    {
+        ByteReader             reader {payload};
+        ModuleByAddressRequest message;
+        message.pid     = reader.readU32();
+        message.address = reader.readU64();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeModuleByAddressResponse(const ModuleByAddressResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU64(message.base);
+        writer.writeU64(message.entry);
+        writer.writeU64(message.imageSize);
+        writer.writeU64(message.offset);
+        writer.writeU16(message.kind);
+        writer.writeU8(message.wow64 ? 1 : 0);
+        writer.writeString(message.name);
+        writer.writeString(message.fullName);
+        return writer.take();
+    }
+
+    std::optional<ModuleByAddressResponse> decodeModuleByAddressResponse(std::span<const std::byte> payload)
+    {
+        ByteReader              reader {payload};
+        ModuleByAddressResponse message;
+        message.base      = reader.readU64();
+        message.entry     = reader.readU64();
+        message.imageSize = reader.readU64();
+        message.offset    = reader.readU64();
+        message.kind      = reader.readU16();
+        message.wow64     = reader.readU8() != 0;
+        if (!readCappedString(reader, message.name) || !readCappedString(reader, message.fullName) || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
     std::vector<std::byte> encodeExportListRequest(const ExportListRequest& message)
     {
         ByteWriter writer;

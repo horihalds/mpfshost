@@ -143,6 +143,41 @@ namespace mpfshost
                   error.empty() ? "module layout lookup failed" : error);
     }
 
+    void Session::handleModuleByAddress(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeModuleByAddressRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed module-by-address request");
+            return;
+        }
+
+        auto* provider = dynamic_cast<ModuleLookupProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot resolve module addresses");
+            return;
+        }
+
+        LookupStatus status = LookupStatus::Failed;
+        std::string  error;
+        if (auto response = provider->moduleByAddress(*request, status, error); response.has_value())
+        {
+            sendPayload(requestId, MessageType::ModuleByAddressResponse, encodeModuleByAddressResponse(*response));
+            return;
+        }
+
+        sendError(requestId,
+                  status == LookupStatus::NotFound ? ErrorCode::NotFound : ErrorCode::Internal,
+                  error.empty() ? "module address lookup failed" : error);
+    }
+
     void Session::handleMemoryMap(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

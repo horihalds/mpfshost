@@ -446,6 +446,10 @@ namespace mpfshost
             return "VfsReadRequest";
         case MessageType::VfsWriteRequest:
             return "VfsWriteRequest";
+        case MessageType::ModuleByAddressRequest:
+            return "ModuleByAddressRequest";
+        case MessageType::ProcessByDtbRequest:
+            return "ProcessByDtbRequest";
         case MessageType::ProcessInfoRequest:
             return "ProcessInfoRequest";
         case MessageType::SymbolLookupRequest:
@@ -578,6 +582,10 @@ namespace mpfshost
             return "VfsReadEnd";
         case MessageType::VfsWriteResponse:
             return "VfsWriteResponse";
+        case MessageType::ModuleByAddressResponse:
+            return "ModuleByAddressResponse";
+        case MessageType::ProcessByDtbResponse:
+            return "ProcessByDtbResponse";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:

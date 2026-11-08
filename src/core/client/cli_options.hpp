@@ -28,6 +28,7 @@ namespace mpfshost
         std::string                         typeName;
         std::string                         childName;
         std::uint64_t                       address {};
+        std::uint64_t                       dtb {};
         std::uint32_t                       size {};
         std::vector<std::byte>              data;
         std::vector<mpfshost::ScatterRange> ranges;
@@ -38,6 +39,7 @@ namespace mpfshost
         std::uint32_t                       tid {};
         bool                                callstack {};
         bool                                addressSet {};
+        bool                                dtbSet {};
         bool                                sizeSet {};
         bool                                dataSet {};
         std::uint32_t                       vmIndex {};

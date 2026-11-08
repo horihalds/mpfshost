@@ -1110,6 +1110,62 @@ TEST_CASE("client surfaces an unknown module as an error", "[ipc][client][module
     REQUIRE(error == "module 'ghost.dll' is not loaded in process 4");
 }
 
+TEST_CASE("client resolves a module by address through the host", "[ipc][client][module]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend    backend;
+    mpfshost::ModuleByAddressResponse response;
+    response.base      = 0x7ffb10000000ull;
+    response.entry     = 0x7ffb10001000ull;
+    response.imageSize = 0x2000;
+    response.offset    = 0x340;
+    response.kind      = 2;
+    response.name      = "notepad.exe";
+    response.fullName  = "C:\\Windows\\notepad.exe";
+    backend.setModuleByAddressResponse(response);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    std::string error;
+    const auto  decoded = mpfshost::moduleByAddress(fixture.socketPath(), {"vm-alpha", 4321, 0x7ffb10000340ull}, error);
+
+    REQUIRE(decoded.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(decoded->base == 0x7ffb10000000ull);
+    REQUIRE(decoded->offset == 0x340);
+    REQUIRE(decoded->name == "notepad.exe");
+    REQUIRE(backend.moduleLookupState()->lastAddressRequest->pid == 4321);
+}
+
+TEST_CASE("client finds a process by dtb through the host", "[ipc][client][process]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.setProcessByDtbResponse({
+        {1234, 4, "notepad.exe", false},
+        0x1aa000, 0x1ab000, true
+    });
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    std::string error;
+    const auto  decoded = mpfshost::processByDtb(fixture.socketPath(), {"vm-alpha", 0x1aafff}, error);
+
+    REQUIRE(decoded.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(decoded->process.pid == 1234);
+    REQUIRE(decoded->dtb == 0x1aa000);
+    REQUIRE(decoded->dtbUser == 0x1ab000);
+    REQUIRE(decoded->matchedUser);
+    REQUIRE(backend.processInfoState()->lastDtbRequest->dtb == 0x1aafff);
+}
+
 TEST_CASE("client performs pdb lookups through the host", "[ipc][client][module]")
 {
     EndToEndFixture                     fixture;

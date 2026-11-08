@@ -485,6 +485,9 @@ namespace mpfshost::mcp
                  true,             {target,
              {"pid", "integer", "Process id, or 0 when name is used", false},
              {"name", "string", "Process name to resolve when pid is absent", false}}                 },
+                {      "process_for_dtb",
+                 "Process for a CR3/DTB",                                    "Find the process that uses a CR3 or directory table base.",
+                 true,                                {target, {"dtb", "string", "CR3 or directory table base (hex)", true}}},
                 {         "list_modules",
                  "List modules",                                                        "List the loaded modules of a process.",
                  true,                                                                              {target,
@@ -501,6 +504,9 @@ namespace mpfshost::mcp
      pid,
      {"module", "string", "Module name", true},
      {"symbol", "string", "Export name; omit to return the module base only", false}}                 },
+                {    "module_at_address",
+                 "Module for an address",                                     "Find the module that contains a process virtual address.",
+                 true,                                   {target, pid, {"address", "string", "Virtual address (hex)", true}}},
                 {             "pdb_load",
                  "Load a PDB",                     "Load the PDB of the module at a base address and report its module name.",
                  true,                               {target, pid, {"address", "string", "Module base address (hex)", true}}},
@@ -947,6 +953,21 @@ namespace mpfshost::mcp
                 });
             }
 
+            if (name == "process_for_dtb")
+            {
+                const auto response =
+                    processByDtb(socket, {requireString(args, "target"), hexValue(args, "dtb", true)}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                auto entry            = processJson(response->process);
+                entry["dtb"]          = hexString(response->dtb);
+                entry["dtb_user"]     = hexString(response->dtbUser);
+                entry["matched_user"] = response->matchedUser;
+                return success(entry);
+            }
+
             if (name == "list_modules")
             {
                 const auto    page  = pagination(args);
@@ -1012,6 +1033,28 @@ namespace mpfshost::mcp
                     {    "address",    hexString(response->address)},
                     {     "offset",     hexString(response->offset)},
                     {      "found",                 response->found}
+                });
+            }
+
+            if (name == "module_at_address")
+            {
+                const auto response = moduleByAddress(
+                    socket,
+                    {requireString(args, "target"), u32Value(args, "pid", true), hexValue(args, "address", true)},
+                    error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {      "name",                 response->name},
+                    { "full_name",             response->fullName},
+                    {      "base",      hexString(response->base)},
+                    {     "entry",     hexString(response->entry)},
+                    {"image_size", hexString(response->imageSize)},
+                    {    "offset",    hexString(response->offset)},
+                    {      "kind",                 response->kind},
+                    {     "wow64",                response->wow64}
                 });
             }
 

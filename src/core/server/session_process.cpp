@@ -117,6 +117,46 @@ namespace mpfshost
                   error.empty() ? "process lookup failed" : error);
     }
 
+    void Session::handleProcessByDtb(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeProcessByDtbRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed process-by-dtb request");
+            return;
+        }
+        if (canonicalDtb(request->dtb) == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a process dtb must be a nonzero page-aligned address");
+            return;
+        }
+
+        auto* provider = dynamic_cast<ProcessInfoProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot resolve process dtbs");
+            return;
+        }
+
+        LookupStatus status = LookupStatus::Failed;
+        std::string  error;
+        if (auto response = provider->processByDtb(*request, status, error); response.has_value())
+        {
+            sendPayload(requestId, MessageType::ProcessByDtbResponse, encodeProcessByDtbResponse(*response));
+            return;
+        }
+
+        sendError(requestId,
+                  status == LookupStatus::NotFound ? ErrorCode::NotFound : ErrorCode::Internal,
+                  error.empty() ? "process dtb lookup failed" : error);
+    }
+
     void Session::handleSymbolLookup(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

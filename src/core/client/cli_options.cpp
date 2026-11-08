@@ -59,7 +59,8 @@ namespace mpfshost
                 || command == "kdevice" || command == "kobject" || command == "pte" || command == "pool"
                 || command == "pool-tags" || command == "pfn" || command == "vadex" || command == "pdb-load"
                 || command == "pdb-symbol" || command == "pdb-address" || command == "pdb-type-size"
-                || command == "pdb-type-child" || command == "config-set";
+                || command == "pdb-type-child" || command == "config-set" || command == "module-at"
+                || command == "process-for-dtb";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -98,6 +99,22 @@ namespace mpfshost
                 if (options.pid == 0 || options.moduleName.empty())
                 {
                     error = "--client " + command + " needs --pid and --module";
+                    return false;
+                }
+            }
+            else if (command == "module-at")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client module-at needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "process-for-dtb")
+            {
+                if (!options.dtbSet || options.dtb == 0)
+                {
+                    error = "--client process-for-dtb needs a nonzero --dtb";
                     return false;
                 }
             }
@@ -402,6 +419,23 @@ namespace mpfshost
                 }
                 options.address    = *parsed;
                 options.addressSet = true;
+                continue;
+            }
+            if (argument == "--dtb" || argument == "--cr3")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--" + std::string {argument.substr(2)} + " needs a hex value";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseHexU64(args[++index]);
+                if (!parsed)
+                {
+                    error = "--" + std::string {argument.substr(2)} + " needs a hex value";
+                    return std::nullopt;
+                }
+                options.dtb    = *parsed;
+                options.dtbSet = true;
                 continue;
             }
             if (argument == "--size")

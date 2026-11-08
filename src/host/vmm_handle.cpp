@@ -88,6 +88,12 @@ namespace mpfshost
         return queryVmmProcess(_handle, request, status, error);
     }
 
+    std::optional<ProcessByDtbResponse>
+    VmmHandle::processByDtb(const ProcessByDtbRequest& request, LookupStatus& status, std::string& error)
+    {
+        return _lookupCache.processByDtb(request, status, error);
+    }
+
     std::optional<std::vector<ModuleDescriptor>> VmmHandle::listModules(const ModuleListRequest& request,
                                                                         std::string&             error)
     {
@@ -119,6 +125,12 @@ namespace mpfshost
     VmmHandle::moduleLayout(const ModuleLayoutRequest& request, LookupStatus& status, std::string& error)
     {
         return queryVmmModuleLayout(_handle, request, status, error);
+    }
+
+    std::optional<ModuleByAddressResponse>
+    VmmHandle::moduleByAddress(const ModuleByAddressRequest& request, LookupStatus& status, std::string& error)
+    {
+        return _lookupCache.moduleByAddress(request, status, error);
     }
 
     std::optional<PdbLoadResponse>

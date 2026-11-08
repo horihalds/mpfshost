@@ -219,6 +219,45 @@ TEST_CASE("MCP read tools work against a real host with the fake backend", "[mcp
     CHECK(lines[11].find("\"items\":[\"0x0000000000002000\",\"0x0000000000003000\"]") != std::string::npos);
 }
 
+TEST_CASE("MCP exposes module-by-address and process-by-dtb lookups", "[mcp][tools]")
+{
+    McpFixture                          fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+
+    mpfshost::ModuleByAddressResponse module;
+    module.base      = 0x7ffb10000000ull;
+    module.entry     = 0x7ffb10001000ull;
+    module.imageSize = 0x2000;
+    module.offset    = 0x340;
+    module.kind      = 2;
+    module.name      = "notepad.exe";
+    module.fullName  = "C:\\Windows\\notepad.exe";
+    backend.setModuleByAddressResponse(module);
+    backend.setProcessByDtbResponse({
+        {1234, 4, "notepad.exe", false},
+        0x1aa000, 0x1ab000, true
+    });
+
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    const auto lines =
+        runMcp({kInitialize,
+                kInitialized,
+                toolCall(2, "module_at_address", R"({"target":"vm-alpha","pid":4321,"address":"0x7ffb10000340"})"),
+                toolCall(3, "process_for_dtb", R"({"target":"vm-alpha","dtb":"0x1aafff"})")},
+               fixture.socketPath());
+
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[1].find("\"name\":\"notepad.exe\"") != std::string::npos);
+    CHECK(lines[1].find("\"offset\":\"0x0000000000000340\"") != std::string::npos);
+    CHECK(lines[2].find("\"pid\":1234") != std::string::npos);
+    CHECK(lines[2].find("\"matched_user\":true") != std::string::npos);
+}
+
 TEST_CASE("MCP maps host and transport failures to isError results", "[mcp][tools][errors]")
 {
     SECTION("LookupStatus::NotFound")

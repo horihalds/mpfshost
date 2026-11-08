@@ -41,6 +41,15 @@ namespace mpfshost
     [[nodiscard]] std::optional<ProcessInfoResponse>
     processInfo(const std::filesystem::path& socketPath, const ProcessInfoQuery& query, std::string& error);
 
+    struct ProcessByDtbQuery
+    {
+        std::string   targetName;
+        std::uint64_t dtb {};
+    };
+
+    [[nodiscard]] std::optional<ProcessByDtbResponse>
+    processByDtb(const std::filesystem::path& socketPath, const ProcessByDtbQuery& query, std::string& error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;
@@ -185,6 +194,16 @@ namespace mpfshost
 
     [[nodiscard]] std::optional<ModuleLayoutResponse>
     moduleLayout(const std::filesystem::path& socketPath, const ModuleLayoutQuery& query, std::string& error);
+
+    struct ModuleByAddressQuery
+    {
+        std::string   targetName;
+        std::uint32_t pid {};
+        std::uint64_t address {};
+    };
+
+    [[nodiscard]] std::optional<ModuleByAddressResponse>
+    moduleByAddress(const std::filesystem::path& socketPath, const ModuleByAddressQuery& query, std::string& error);
 
     struct MemoryMapQuery
     {

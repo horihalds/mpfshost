@@ -176,6 +176,53 @@ namespace mpfshost
         return message;
     }
 
+    std::vector<std::byte> encodeProcessByDtbRequest(const ProcessByDtbRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU64(message.dtb);
+        return writer.take();
+    }
+
+    std::optional<ProcessByDtbRequest> decodeProcessByDtbRequest(std::span<const std::byte> payload)
+    {
+        ByteReader          reader {payload};
+        ProcessByDtbRequest message;
+        message.dtb = reader.readU64();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeProcessByDtbResponse(const ProcessByDtbResponse& message)
+    {
+        ByteWriter writer;
+        writeProcess(writer, message.process);
+        writer.writeU64(message.dtb);
+        writer.writeU64(message.dtbUser);
+        writer.writeU8(message.matchedUser ? 1 : 0);
+        return writer.take();
+    }
+
+    std::optional<ProcessByDtbResponse> decodeProcessByDtbResponse(std::span<const std::byte> payload)
+    {
+        ByteReader           reader {payload};
+        ProcessByDtbResponse message;
+        if (!readProcess(reader, message.process))
+        {
+            return std::nullopt;
+        }
+        message.dtb         = reader.readU64();
+        message.dtbUser     = reader.readU64();
+        message.matchedUser = reader.readU8() != 0;
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
     std::vector<std::byte> encodeSymbolLookupRequest(const SymbolLookupRequest& message)
     {
         ByteWriter writer;

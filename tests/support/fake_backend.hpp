@@ -82,6 +82,11 @@ namespace mpfshost::testing
         std::string                       failure;
         LookupStatus                      status {LookupStatus::Ok};
         std::optional<ProcessInfoRequest> lastRequest;
+
+        ProcessByDtbResponse               dtbResponse;
+        std::string                        dtbFailure;
+        LookupStatus                       dtbStatus {LookupStatus::Ok};
+        std::optional<ProcessByDtbRequest> lastDtbRequest;
     };
 
     struct FakeVirtualQueryState
@@ -128,6 +133,11 @@ namespace mpfshost::testing
         std::string                        layoutFailure;
         LookupStatus                       layoutStatus {LookupStatus::Ok};
         std::optional<ModuleLayoutRequest> lastLayoutRequest;
+
+        ModuleByAddressResponse               addressResponse;
+        std::string                           addressFailure;
+        LookupStatus                          addressStatus {LookupStatus::Ok};
+        std::optional<ModuleByAddressRequest> lastAddressRequest;
     };
 
     struct FakePdbState
@@ -823,6 +833,20 @@ namespace mpfshost::testing
             return matches;
         }
 
+        [[nodiscard]] std::optional<ProcessByDtbResponse>
+        processByDtb(const ProcessByDtbRequest& request, LookupStatus& status, std::string& error) override
+        {
+            _processInfoState->lastDtbRequest = request;
+            if (!_processInfoState->dtbFailure.empty())
+            {
+                status = _processInfoState->dtbStatus;
+                error  = _processInfoState->dtbFailure;
+                return std::nullopt;
+            }
+            status = LookupStatus::Ok;
+            return _processInfoState->dtbResponse;
+        }
+
         [[nodiscard]] std::optional<SymbolLookupResponse>
         lookupSymbol(const SymbolLookupRequest& request, LookupStatus& status, std::string& error) override
         {
@@ -849,6 +873,20 @@ namespace mpfshost::testing
             }
             status = LookupStatus::Ok;
             return _moduleLookupState->layoutResponse;
+        }
+
+        [[nodiscard]] std::optional<ModuleByAddressResponse>
+        moduleByAddress(const ModuleByAddressRequest& request, LookupStatus& status, std::string& error) override
+        {
+            _moduleLookupState->lastAddressRequest = request;
+            if (!_moduleLookupState->addressFailure.empty())
+            {
+                status = _moduleLookupState->addressStatus;
+                error  = _moduleLookupState->addressFailure;
+                return std::nullopt;
+            }
+            status = LookupStatus::Ok;
+            return _moduleLookupState->addressResponse;
         }
 
         [[nodiscard]] std::optional<PdbLoadResponse>
@@ -1596,6 +1634,17 @@ namespace mpfshost::testing
             return _processInfoState;
         }
 
+        void setProcessByDtbResponse(ProcessByDtbResponse response)
+        {
+            _processInfoState->dtbResponse = std::move(response);
+        }
+
+        void failProcessByDtbWith(std::string message, LookupStatus status = LookupStatus::Failed)
+        {
+            _processInfoState->dtbFailure = std::move(message);
+            _processInfoState->dtbStatus  = status;
+        }
+
         void setSymbolResponse(SymbolLookupResponse response)
         {
             _moduleLookupState->symbolResponse = std::move(response);
@@ -1681,6 +1730,17 @@ namespace mpfshost::testing
         {
             _moduleLookupState->layoutFailure = std::move(message);
             _moduleLookupState->layoutStatus  = status;
+        }
+
+        void setModuleByAddressResponse(ModuleByAddressResponse response)
+        {
+            _moduleLookupState->addressResponse = std::move(response);
+        }
+
+        void failModuleByAddressWith(std::string message, LookupStatus status = LookupStatus::Failed)
+        {
+            _moduleLookupState->addressFailure = std::move(message);
+            _moduleLookupState->addressStatus  = status;
         }
 
         void setMemoryBytes(std::vector<std::byte> bytes)

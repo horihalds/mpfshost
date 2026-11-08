@@ -26,13 +26,56 @@ namespace
     }
 
     const std::vector<std::string_view> kTargetCommands {
-        "bind",         "processes",    "processes-all", "proc-info",     "symbol",         "sections",   "modules",
-        "maps",         "threads",      "read",          "write",         "scatter",        "vm-list",    "phys-read",
-        "phys-write",   "vm-translate", "virt2phys",     "vquery",        "page",           "prefetch",   "search",
-        "phys-scatter", "vfs-list",     "vfs-read",      "vfs-write",     "handles",        "eat",        "iat",
-        "unloaded",     "services",     "users",         "net",           "heap",           "heap-alloc", "kdriver",
-        "kdevice",      "kobject",      "pte",           "pool",          "pool-tags",      "pfn",        "pdb-load",
-        "vadex",        "pdb-symbol",   "pdb-address",   "pdb-type-size", "pdb-type-child", "config-set",
+        "bind",
+        "processes",
+        "processes-all",
+        "proc-info",
+        "symbol",
+        "sections",
+        "modules",
+        "maps",
+        "threads",
+        "read",
+        "write",
+        "scatter",
+        "vm-list",
+        "phys-read",
+        "phys-write",
+        "vm-translate",
+        "virt2phys",
+        "vquery",
+        "page",
+        "prefetch",
+        "search",
+        "phys-scatter",
+        "vfs-list",
+        "vfs-read",
+        "vfs-write",
+        "handles",
+        "eat",
+        "iat",
+        "unloaded",
+        "services",
+        "users",
+        "net",
+        "heap",
+        "heap-alloc",
+        "kdriver",
+        "kdevice",
+        "kobject",
+        "pte",
+        "pool",
+        "pool-tags",
+        "pfn",
+        "pdb-load",
+        "vadex",
+        "pdb-symbol",
+        "pdb-address",
+        "pdb-type-size",
+        "pdb-type-child",
+        "config-set",
+        "module-at",
+        "process-for-dtb",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)
@@ -264,6 +307,33 @@ TEST_CASE("malformed client flag values keep their documented message", "[cli-op
     }
 }
 
+TEST_CASE("module-at and process-for-dtb options parse", "[cli-options]")
+{
+    const auto moduleAt = parse({"--client", "module-at", "vm1", "--pid", "42", "--address", "0x7ffb10001000"});
+    REQUIRE(moduleAt.options.has_value());
+    CHECK(moduleAt.options->pid == 42u);
+    CHECK(moduleAt.options->addressSet);
+    CHECK(moduleAt.options->address == 0x7ffb10001000ull);
+
+    const auto dtb = parse({"--client", "process-for-dtb", "vm1", "--dtb", "0x1aafff"});
+    REQUIRE(dtb.options.has_value());
+    CHECK(dtb.options->dtbSet);
+    CHECK(dtb.options->dtb == 0x1aafffull);
+
+    const auto cr3 = parse({"--client", "process-for-dtb", "vm1", "--cr3", "0x1aa000"});
+    REQUIRE(cr3.options.has_value());
+    CHECK(cr3.options->dtbSet);
+    CHECK(cr3.options->dtb == 0x1aa000ull);
+
+    const auto zero = parse({"--client", "process-for-dtb", "vm1", "--dtb", "0"});
+    REQUIRE_FALSE(zero.options.has_value());
+    CHECK(zero.error == "--client process-for-dtb needs a nonzero --dtb");
+
+    const auto bad = parse({"--client", "process-for-dtb", "vm1", "--cr3", "zz"});
+    REQUIRE_FALSE(bad.options.has_value());
+    CHECK(bad.error == "--cr3 needs a hex value");
+}
+
 TEST_CASE("the physical pid selects physical memory for the memory commands", "[cli-options]")
 {
     const auto page = parse({"--client", "page", "vm1", "--pid", "-1", "--range", "0x1000:0x1000"});
@@ -402,6 +472,8 @@ TEST_CASE("a missing required option names the command that needs it", "[cli-opt
         {               {"--client", "proc-info", "vm1"},                   "--client proc-info needs --pid or --name"},
         {                  {"--client", "symbol", "vm1"},                   "--client symbol needs --pid and --module"},
         {                {"--client", "sections", "vm1"},                 "--client sections needs --pid and --module"},
+        {               {"--client", "module-at", "vm1"},               "--client module-at needs --pid and --address"},
+        {         {"--client", "process-for-dtb", "vm1"},             "--client process-for-dtb needs a nonzero --dtb"},
         {                 {"--client", "modules", "vm1"},                               "--client modules needs --pid"},
         {                    {"--client", "maps", "vm1"},                                  "--client maps needs --pid"},
         {                 {"--client", "threads", "vm1"},                               "--client threads needs --pid"},
@@ -449,6 +521,9 @@ TEST_CASE("a command line with every required option parses", "[cli-options]")
         {"--client", "proc-info", "vm1", "--name", "lsass"},
         {"--client", "symbol", "vm1", "--pid", "1", "--module", "ntoskrnl.exe"},
         {"--client", "sections", "vm1", "--pid", "1", "--module", "kernel32.dll"},
+        {"--client", "module-at", "vm1", "--pid", "1", "--address", "0x7ffb10001000"},
+        {"--client", "process-for-dtb", "vm1", "--dtb", "0x1aa000"},
+        {"--client", "process-for-dtb", "vm1", "--cr3", "0x1aafff"},
         {"--client", "modules", "vm1", "--pid", "1"},
         {"--client", "maps", "vm1", "--pid", "1"},
         {"--client", "threads", "vm1", "--pid", "1"},

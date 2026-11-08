@@ -134,6 +134,9 @@ namespace mpfshost
         case MessageType::ProcessInfoRequest:
             handleProcessInfo(requestId, payload);
             return;
+        case MessageType::ProcessByDtbRequest:
+            handleProcessByDtb(requestId, payload);
+            return;
         case MessageType::ModuleListRequest:
             handleModuleList(requestId, payload);
             return;
@@ -157,6 +160,9 @@ namespace mpfshost
             return;
         case MessageType::ModuleLayoutRequest:
             handleModuleLayout(requestId, payload);
+            return;
+        case MessageType::ModuleByAddressRequest:
+            handleModuleByAddress(requestId, payload);
             return;
         case MessageType::MemoryMapRequest:
             handleMemoryMap(requestId, payload);
@@ -334,6 +340,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::ProcessListRequest),
             static_cast<std::uint16_t>(MessageType::ProcessListAllRequest),
             static_cast<std::uint16_t>(MessageType::ProcessInfoRequest),
+            static_cast<std::uint16_t>(MessageType::ProcessByDtbRequest),
             static_cast<std::uint16_t>(MessageType::ModuleListRequest),
             static_cast<std::uint16_t>(MessageType::SymbolLookupRequest),
             static_cast<std::uint16_t>(MessageType::PdbLoadRequest),
@@ -342,6 +349,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::PdbTypeSizeRequest),
             static_cast<std::uint16_t>(MessageType::PdbTypeChildOffsetRequest),
             static_cast<std::uint16_t>(MessageType::ModuleLayoutRequest),
+            static_cast<std::uint16_t>(MessageType::ModuleByAddressRequest),
             static_cast<std::uint16_t>(MessageType::MemoryMapRequest),
             static_cast<std::uint16_t>(MessageType::VadExListRequest),
             static_cast<std::uint16_t>(MessageType::ThreadListRequest),

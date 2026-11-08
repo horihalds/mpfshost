@@ -387,6 +387,26 @@ namespace
              {
              return mpfshost::decodeProcessInfoResponse(p).has_value();
              }},
+            {       "decodeProcessByDtbRequest",
+             [](std::span<const std::byte> p)
+             {
+             return mpfshost::decodeProcessByDtbRequest(p).has_value();
+             }},
+            {      "decodeProcessByDtbResponse",
+             [](std::span<const std::byte> p)
+             {
+             return mpfshost::decodeProcessByDtbResponse(p).has_value();
+             }},
+            {    "decodeModuleByAddressRequest",
+             [](std::span<const std::byte> p)
+             {
+             return mpfshost::decodeModuleByAddressRequest(p).has_value();
+             }},
+            {   "decodeModuleByAddressResponse",
+             [](std::span<const std::byte> p)
+             {
+             return mpfshost::decodeModuleByAddressResponse(p).has_value();
+             }},
             {       "decodeSymbolLookupRequest",
              [](std::span<const std::byte> p)
              {
