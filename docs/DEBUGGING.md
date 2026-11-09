@@ -353,6 +353,8 @@ build:
 - Characterize whether a hardware breakpoint on a hot shared user address (such as `ntdll!RtlEnterCriticalSection`)
   can ever be attributed to the target process. It traps in every process that maps the address; a fresh probe
   restart gives the module marker a new ASLR base if a shared base causes a stop storm.
+- The first watch hit immediately after a host restart once reported RIP and CR3 from the previous probe process;
+  a rerun was correct. Check whether a queued stop needs draining when a new stub session starts.
 
 Record the remaining answers here after the next live run.
 
