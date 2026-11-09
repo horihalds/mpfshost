@@ -764,6 +764,9 @@ namespace mpfshost::debug
             description = &localDescription;
         }
 
+        // A guest paused through QMP while the stub is running leaves a stop reply on the RSP stream. Drop it
+        // before the first command, or it is parsed as the answer to that command.
+        rsp.drainPending();
         std::vector<std::string> threads;
         if (!rsp.queryThreads(threads, kRspTimeout, error))
         {
@@ -1098,6 +1101,7 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        _attachedRsp->drainPending();
         std::vector<std::string> threads;
         if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -1714,6 +1718,7 @@ namespace mpfshost::debug
                 }
             }
         }
+        rsp->drainPending();
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -2253,6 +2258,7 @@ namespace mpfshost::debug
                 }
             }
         }
+        rsp->drainPending();
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -2650,6 +2656,7 @@ namespace mpfshost::debug
                 }
             }
         }
+        rsp->drainPending();
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -2878,6 +2885,7 @@ namespace mpfshost::debug
             }
         };
 
+        _attachedRsp->drainPending();
         std::vector<std::string> threads;
         if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -2998,6 +3006,7 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        _attachedRsp->drainPending();
         std::vector<std::string> threads;
         if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
         {
@@ -3337,6 +3346,7 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        _attachedRsp->drainPending();
         std::vector<std::string> threads;
         if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
         {

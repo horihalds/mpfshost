@@ -3092,6 +3092,47 @@ TEST_CASE("an attached stub is reused by a register read", "[core][debug][contro
     REQUIRE_FALSE(qmp->stubActive);
 }
 
+TEST_CASE("an attached arm drains the pending stop left by a QMP pause", "[core][debug][controller]")
+{
+    auto qmp                    = std::make_shared<FakeQmpState>();
+    qmp->running                = false;
+    auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport           = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml  = x86RegisterXml();
+    rspTransport->registerBytes = registerBytes();
+    auto* rsp                   = rspTransport.get();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(controller.continueGuest(7, invalidState, busy, error, unavailable).has_value());
+
+    // The stub is running; a QMP stop produces a stop reply that is still sitting on the RSP stream.
+    rsp->pending += rspPacket(FakeRspTransport::stopPacket({"1.1", 0x1234, 0x2000, 0x3000}));
+    REQUIRE(controller.control(mpfshost::DebugControlAction::Stop, busy, error, unavailable).has_value());
+
+    const auto armed = controller.armWatch(
+        7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable);
+    INFO(error);
+    REQUIRE(armed.has_value());
+    REQUIRE(armed->slot == 0);
+
+    REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}
+
 TEST_CASE("persistent breakpoints share four hardware slots and keep their ids", "[core][debug][controller]")
 {
     auto qmp           = std::make_shared<FakeQmpState>();
