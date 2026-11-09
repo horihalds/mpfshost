@@ -1,8 +1,9 @@
-#ifndef MPFSHOST_CORE_CLIENT_CLIENT_HPP
-#define MPFSHOST_CORE_CLIENT_CLIENT_HPP
+#ifndef MPFSHOST_CORE_CLIENT_CLIENT_LEGACY_HPP
+#define MPFSHOST_CORE_CLIENT_CLIENT_LEGACY_HPP
 #pragma once
 
 #include "core/ipc/message.hpp"
+#include "mpfshost/client.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -293,12 +294,6 @@ namespace mpfshost
         std::uint32_t maxResults {};
     };
 
-    struct SearchResult
-    {
-        std::vector<std::uint64_t> addresses;
-        bool                       truncated {};
-    };
-
     [[nodiscard]] std::optional<SearchResult>
     searchMemory(const std::filesystem::path& socketPath, const MemorySearchQuery& query, std::string& error);
 
@@ -401,29 +396,6 @@ namespace mpfshost
         std::string   targetName;
         std::uint32_t pid {};
         std::uint64_t address {};
-    };
-
-    // One round of symbol work for an absolute process virtual address. `moduleFound` is false when no loaded
-    // module contains the address; the export and PDB lookups are then skipped. Missing exports and missing PDB
-    // symbols are reported by their `found` flags instead of an error.
-    struct AddressResolution
-    {
-        bool          moduleFound {};
-        std::string   module;
-        std::string   moduleFullName;
-        std::uint64_t moduleBase {};
-        std::uint64_t moduleEntry {};
-        std::uint64_t moduleImageSize {};
-        std::uint64_t moduleOffset {};
-        std::uint16_t moduleKind {};
-        bool          moduleWow64 {};
-        bool          exportFound {};
-        std::uint64_t exportAddress {};
-        std::uint64_t exportOffset {};
-        std::string   exportName;
-        bool          pdbFound {};
-        std::string   pdbSymbol;
-        std::uint32_t pdbDisplacement {};
     };
 
     [[nodiscard]] std::optional<AddressResolution>
@@ -738,12 +710,6 @@ namespace mpfshost
         std::vector<std::byte> data;
     };
 
-    struct ScatterRange
-    {
-        std::uint64_t address {};
-        std::uint32_t size {};
-    };
-
     struct ScatterReadQuery
     {
         std::string               targetName;
@@ -751,27 +717,10 @@ namespace mpfshost
         std::vector<ScatterRange> ranges;
     };
 
-    struct ScatterItem
-    {
-        std::uint64_t          address {};
-        std::uint32_t          size {};
-        bool                   write {};
-        std::vector<std::byte> data;
-    };
-
-    struct ScatterReadResult
-    {
-        std::uint64_t          address {};
-        std::uint32_t          requestedSize {};
-        std::uint32_t          bytesRead {};
-        bool                   ok {};
-        std::vector<std::byte> data;
-    };
-
     class ScatterSession
     {
     public:
-        ScatterSession(int fd, std::uint32_t scatterId) noexcept;
+        ScatterSession(int fd, std::uint32_t scatterId, bool ownsFd = true) noexcept;
         ~ScatterSession();
 
         ScatterSession(const ScatterSession&)            = delete;
@@ -790,6 +739,7 @@ namespace mpfshost
     private:
         int           _fd {-1};
         std::uint32_t _scatterId {};
+        bool          _ownsFd {true};
     };
 
     [[nodiscard]] std::optional<ScatterSession> createScatter(const std::filesystem::path& socketPath,
@@ -863,4 +813,4 @@ namespace mpfshost
     physicalScatter(const std::filesystem::path& socketPath, const PhysicalScatterQuery& query, std::string& error);
 } // namespace mpfshost
 
-#endif // MPFSHOST_CORE_CLIENT_CLIENT_HPP
+#endif // MPFSHOST_CORE_CLIENT_CLIENT_LEGACY_HPP

@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include <mpfshost/client.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -7,7 +7,6 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <vector>
 
 int main(int argc, char** argv)
 {
@@ -18,25 +17,30 @@ int main(int argc, char** argv)
     }
 
     const std::filesystem::path socketPath {argv[1]};
-    std::string                 error;
+    mpfshost::Client            client {socketPath};
 
-    mpfshost::MemoryQuery query;
-    query.targetName = argv[2];
-    query.pid        = static_cast<std::uint32_t>(std::stoul(argv[3]));
-    query.address    = std::stoull(argv[4], nullptr, 0);
-    query.size       = static_cast<std::uint32_t>(std::stoul(argv[5], nullptr, 0));
+    auto session = client.bind(argv[2]);
+    if (!session)
+    {
+        std::cerr << "bind: " << session.error().message << '\n';
+        return 1;
+    }
 
-    const auto data = mpfshost::readMemory(socketPath, query, error);
+    const auto pid     = static_cast<std::uint32_t>(std::stoul(argv[3]));
+    const auto address = std::stoull(argv[4], nullptr, 0);
+    const auto size    = static_cast<std::uint32_t>(std::stoul(argv[5], nullptr, 0));
+
+    const auto data = session->readMemory(pid, address, size);
     if (!data)
     {
-        std::cerr << "read-memory: " << error << '\n';
+        std::cerr << "read-memory: " << data.error().message << '\n';
         return 1;
     }
 
     constexpr std::size_t kBytesPerLine = 16;
     for (std::size_t offset = 0; offset < data->size(); offset += kBytesPerLine)
     {
-        std::cout << std::hex << std::setw(16) << std::setfill('0') << query.address + offset << ':';
+        std::cout << std::hex << std::setw(16) << std::setfill('0') << address + offset << ':';
         const std::size_t end = std::min(offset + kBytesPerLine, data->size());
         for (std::size_t index = offset; index < end; ++index)
         {

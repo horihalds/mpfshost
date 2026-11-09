@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 
 #include "core/client/client_transport.hpp"
 
@@ -370,34 +370,41 @@ namespace mpfshost
         return total;
     }
 
-    ScatterSession::ScatterSession(int fd, std::uint32_t scatterId) noexcept : _fd {fd}, _scatterId {scatterId} {}
+    ScatterSession::ScatterSession(int fd, std::uint32_t scatterId, bool ownsFd) noexcept
+        : _fd {fd}, _scatterId {scatterId}, _ownsFd {ownsFd}
+    {
+    }
 
     ScatterSession::~ScatterSession()
     {
-        if (_fd >= 0)
+        if (_fd >= 0 && _ownsFd)
         {
             ::close(_fd);
         }
     }
 
-    ScatterSession::ScatterSession(ScatterSession&& other) noexcept : _fd {other._fd}, _scatterId {other._scatterId}
+    ScatterSession::ScatterSession(ScatterSession&& other) noexcept
+        : _fd {other._fd}, _scatterId {other._scatterId}, _ownsFd {other._ownsFd}
     {
         other._fd        = -1;
         other._scatterId = 0;
+        other._ownsFd    = false;
     }
 
     ScatterSession& ScatterSession::operator=(ScatterSession&& other) noexcept
     {
         if (this != &other)
         {
-            if (_fd >= 0)
+            if (_fd >= 0 && _ownsFd)
             {
                 ::close(_fd);
             }
             _fd              = other._fd;
             _scatterId       = other._scatterId;
+            _ownsFd          = other._ownsFd;
             other._fd        = -1;
             other._scatterId = 0;
+            other._ownsFd    = false;
         }
         return *this;
     }
@@ -533,9 +540,13 @@ namespace mpfshost
             return false;
         }
 
-        ::close(_fd);
+        if (_ownsFd)
+        {
+            ::close(_fd);
+        }
         _fd        = -1;
         _scatterId = 0;
+        _ownsFd    = false;
         return true;
     }
 
@@ -571,7 +582,8 @@ namespace mpfshost
             return std::nullopt;
         }
 
-        return ScatterSession {connection->release(), decoded->scatterId};
+        const bool ownsFd = connection->owns();
+        return ScatterSession {connection->release(), decoded->scatterId, ownsFd};
     }
 
     std::optional<std::vector<ScatterReadResult>>

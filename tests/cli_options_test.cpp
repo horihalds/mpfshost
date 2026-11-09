@@ -1,6 +1,6 @@
 #include <catch2/catch.hpp>
 
-#include "core/client/cli_options.hpp"
+#include "cli/client_options.hpp"
 #include "core/util/number.hpp"
 
 #include <cstddef>

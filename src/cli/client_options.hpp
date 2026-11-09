@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 
 #include <cstdint>
 #include <filesystem>

@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include <mpfshost/client.hpp>
 
 #include <filesystem>
 #include <iostream>
@@ -13,22 +13,28 @@ int main(int argc, char** argv)
     }
 
     const std::filesystem::path socketPath {argv[1]};
-    std::string                 error;
+    mpfshost::Client            client {socketPath};
 
-    mpfshost::ProcessQuery query;
-    query.targetName = argv[2];
-    if (argc > 3)
+    auto session = client.bind(argv[2]);
+    if (!session)
     {
-        query.nameFilter = argv[3];
-    }
-
-    const auto processes = mpfshost::listProcesses(socketPath, query, error);
-    if (!processes)
-    {
-        std::cerr << "list-processes: " << error << '\n';
+        std::cerr << "bind: " << session.error().message << '\n';
         return 1;
     }
-    for (const auto& process : processes->processes)
+
+    mpfshost::ProcessFilter filter;
+    if (argc > 3)
+    {
+        filter.nameFilter = argv[3];
+    }
+
+    const auto processes = session->processes(filter);
+    if (!processes)
+    {
+        std::cerr << "list-processes: " << processes.error().message << '\n';
+        return 1;
+    }
+    for (const auto& process : *processes)
     {
         std::cout << process.pid << '\t' << process.parentPid << '\t' << process.name << '\n';
     }

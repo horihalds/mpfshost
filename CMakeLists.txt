@@ -13,6 +13,7 @@ target_link_libraries(mpfshost_zydis INTERFACE "${ZYDIS_LIBRARY}")
 
 include(FetchContent)
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # The MCP mode speaks JSON-RPC, so it needs a JSON implementation. This is the only third-party dependency: it is
 # header-only, pinned by release tag and checksum, and marked SYSTEM so its own headers do not trip -Werror.
@@ -40,10 +41,16 @@ function(mpfshost_set_common_flags target)
     )
 endfunction()
 
-#Unprivileged : must never depend on vmm, leechcore or root - only state.
-add_library(mpfshost_core STATIC
-    src/core/version.cpp
-    src/core/log/log.cpp
+function(mpfshost_set_client_include target)
+    target_include_directories(${target} PUBLIC
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/mpfshost>
+    )
+endfunction()
+
+# Wire format only: shared by the client library and the server.
+add_library(mpfshost_ipc STATIC
     src/core/ipc/frame.cpp
     src/core/ipc/message_core.cpp
     src/core/ipc/message_memory.cpp
@@ -54,6 +61,46 @@ add_library(mpfshost_core STATIC
     src/core/ipc/message_vfs.cpp
     src/core/ipc/message_debug.cpp
     src/core/ipc/message_disasm.cpp
+)
+mpfshost_set_common_flags(mpfshost_ipc)
+mpfshost_set_client_include(mpfshost_ipc)
+
+# Small helpers used on both sides. Kept separate so the installed client archive does not pull in the
+# server, MCP, Zydis or nlohmann/json.
+add_library(mpfshost_util STATIC
+    src/core/version.cpp
+    src/core/log/log.cpp
+    src/core/util/display.cpp
+    src/core/util/hex.cpp
+    src/core/util/number.cpp
+    src/core/util/identity.cpp
+    src/core/util/page_range.cpp
+    src/core/util/symbol_expression.cpp
+    src/core/util/text.cpp
+)
+mpfshost_set_common_flags(mpfshost_util)
+target_compile_definitions(mpfshost_util PRIVATE MPFSHOST_VERSION="${PROJECT_VERSION}")
+mpfshost_set_client_include(mpfshost_util)
+
+# The installed library. It must never link the server, the host, Zydis or nlohmann/json.
+add_library(mpfshost_client STATIC
+    src/core/client/client_kernel.cpp
+    src/core/client/client_maps.cpp
+    src/core/client/client_session.cpp
+    src/core/client/client_memory.cpp
+    src/core/client/client_process.cpp
+    src/core/client/client_debug.cpp
+    src/core/client/client_disasm.cpp
+    src/core/client/client_system.cpp
+    src/core/client/client_transport.cpp
+    src/core/client/client_vfs.cpp
+    src/core/client/connect_diagnostics.cpp
+)
+mpfshost_set_common_flags(mpfshost_client)
+mpfshost_set_client_include(mpfshost_client)
+target_link_libraries(mpfshost_client PUBLIC Threads::Threads mpfshost_ipc mpfshost_util)
+
+add_library(mpfshost_server STATIC
     src/core/debug/qmp_client.cpp
     src/core/debug/rsp_client.cpp
     src/core/debug/debug_controller.cpp
@@ -93,31 +140,15 @@ add_library(mpfshost_core STATIC
     src/core/server/physical_memory_provider.cpp
     src/core/server/request_deadline.cpp
     src/core/server/server.cpp
-    src/core/client/cli_options.cpp
-    src/core/client/client_kernel.cpp
-    src/core/client/client_maps.cpp
-    src/core/client/client_memory.cpp
-    src/core/client/client_process.cpp
-    src/core/client/client_debug.cpp
-    src/core/client/client_disasm.cpp
-    src/core/client/client_system.cpp
-    src/core/client/client_transport.cpp
-    src/core/client/client_vfs.cpp
-    src/core/client/connect_diagnostics.cpp
     src/core/mcp/mcp_server.cpp
     src/core/mcp/mcp_tools.cpp
-    src/core/util/display.cpp
-    src/core/util/hex.cpp
-    src/core/util/number.cpp
-    src/core/util/identity.cpp
-    src/core/util/page_range.cpp
-    src/core/util/symbol_expression.cpp
-    src/core/util/text.cpp
 )
-mpfshost_set_common_flags(mpfshost_core)
-target_compile_definitions(mpfshost_core PRIVATE MPFSHOST_VERSION="${PROJECT_VERSION}")
-target_include_directories(mpfshost_core PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(mpfshost_core PUBLIC Threads::Threads PRIVATE nlohmann_json::nlohmann_json mpfshost_zydis)
+mpfshost_set_common_flags(mpfshost_server)
+mpfshost_set_client_include(mpfshost_server)
+target_link_libraries(mpfshost_server
+    PUBLIC Threads::Threads mpfshost_ipc mpfshost_util mpfshost_client
+    PRIVATE nlohmann_json::nlohmann_json mpfshost_zydis
+)
 
 add_library(mpfshost_host STATIC
     src/host/device_string.cpp
@@ -162,19 +193,27 @@ target_link_directories(mpfshost_host PUBLIC "${CMAKE_SOURCE_DIR}/MemProcFS")
 target_link_libraries(mpfshost_host PUBLIC
     "-l:vmm.so"
     "-l:leechcore.so"
-    mpfshost_core
+    mpfshost_server
 )
 
-add_executable(${PROJECT_NAME}
-    src/main.cpp
+# The CLI is a consumer of the client library, not part of it.
+add_library(mpfshost_cli STATIC
+    src/cli/client_options.cpp
     src/cli/options.cpp
     src/cli/render.cpp
     src/cli/run_client.cpp
     src/cli/usage.cpp
 )
+mpfshost_set_common_flags(mpfshost_cli)
+mpfshost_set_client_include(mpfshost_cli)
+target_link_libraries(mpfshost_cli PUBLIC mpfshost_client mpfshost_server)
+
+add_executable(${PROJECT_NAME}
+    src/main.cpp
+)
 mpfshost_set_common_flags(${PROJECT_NAME})
 target_precompile_headers(${PROJECT_NAME} PRIVATE "${PROJECT_SOURCE_DIR}/src/pch.hpp")
-target_link_libraries(${PROJECT_NAME} PRIVATE mpfshost_host)
+target_link_libraries(${PROJECT_NAME} PRIVATE mpfshost_host mpfshost_cli)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     BUILD_RPATH "${CMAKE_SOURCE_DIR}/MemProcFS"
@@ -230,8 +269,14 @@ endif()
 # share bindir; the unprivileged client API lives under includedir/libdir.
 file(GLOB MEMPROCFS_RUNTIME_LIBS "${CMAKE_SOURCE_DIR}/MemProcFS/*.so")
 
+set_target_properties(mpfshost_ipc PROPERTIES EXPORT_NAME ipc)
+set_target_properties(mpfshost_util PROPERTIES EXPORT_NAME util)
+set_target_properties(mpfshost_client PROPERTIES EXPORT_NAME client)
+
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
-install(TARGETS mpfshost_core ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+install(TARGETS mpfshost_ipc mpfshost_util mpfshost_client
+        EXPORT mpfshostTargets
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}")
 install(FILES ${MEMPROCFS_RUNTIME_LIBS} "${CMAKE_SOURCE_DIR}/MemProcFS/info.db"
         DESTINATION "${CMAKE_INSTALL_BINDIR}")
 # The two directories ship empty but must exist beside the executable; see the post-build step above.
@@ -244,12 +289,24 @@ install(DIRECTORY "${CMAKE_SOURCE_DIR}/docs/" DESTINATION "${CMAKE_INSTALL_DOCDI
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/examples/" DESTINATION "${CMAKE_INSTALL_DOCDIR}/examples"
         FILES_MATCHING PATTERN "*.md" PATTERN "*.cpp" PATTERN "CMakeLists.txt")
 
-install(FILES "${CMAKE_SOURCE_DIR}/src/core/client/client.hpp"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/mpfshost/core/client")
+install(FILES "${CMAKE_SOURCE_DIR}/src/mpfshost/client.hpp"
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/mpfshost")
 install(FILES "${CMAKE_SOURCE_DIR}/src/core/ipc/message.hpp" "${CMAKE_SOURCE_DIR}/src/core/ipc/frame.hpp"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/mpfshost/core/ipc")
 install(FILES "${CMAKE_SOURCE_DIR}/src/core/version.hpp"
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/mpfshost/core")
+
+install(EXPORT mpfshostTargets NAMESPACE mpfshost::
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/mpfshost")
+configure_package_config_file("${CMAKE_SOURCE_DIR}/packaging/mpfshostConfig.cmake.in"
+                              "${CMAKE_CURRENT_BINARY_DIR}/mpfshostConfig.cmake"
+                              INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/mpfshost")
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/mpfshostConfigVersion.cmake"
+                                 VERSION "${PROJECT_VERSION}"
+                                 COMPATIBILITY SameMajorVersion)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/mpfshostConfig.cmake"
+              "${CMAKE_CURRENT_BINARY_DIR}/mpfshostConfigVersion.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/mpfshost")
 
 configure_file("${CMAKE_SOURCE_DIR}/packaging/mpfshost.pc.in"
                "${CMAKE_CURRENT_BINARY_DIR}/mpfshost.pc" @ONLY)

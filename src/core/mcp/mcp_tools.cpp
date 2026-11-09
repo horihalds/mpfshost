@@ -1,6 +1,6 @@
 #include "core/mcp/mcp_tools.hpp"
 
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 #include "core/disasm/x86_decoder.hpp"
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"

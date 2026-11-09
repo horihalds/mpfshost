@@ -3,7 +3,7 @@
 #include "cli/options.hpp"
 #include "cli/render.hpp"
 #include "cli/run_client.hpp"
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 #include "core/disasm/x86_decoder.hpp"
 #include "core/log/log.hpp"
 #include "core/util/display.hpp"

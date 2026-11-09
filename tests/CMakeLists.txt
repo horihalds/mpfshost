@@ -51,7 +51,8 @@ mpfshost_set_common_flags(mpfshost_tests)
 
 # Only unprivileged code: never link mpfshost_host here.
 target_link_libraries(mpfshost_tests PRIVATE
-    mpfshost_core
+    mpfshost_server
+    mpfshost_cli
     Catch2::Catch2
 )
 

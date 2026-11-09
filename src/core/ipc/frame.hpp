@@ -281,6 +281,10 @@ namespace mpfshost
         Timeout               = 18,
         Busy                  = 19,
         InvalidState          = 20,
+        // Client-side only: these never travel on the wire.
+        ConnectionFailed      = 21,
+        ProtocolError         = 22,
+        InvalidArgument       = 23,
     };
 
     [[nodiscard]] std::string_view messageTypeName(MessageType type) noexcept;

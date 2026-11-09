@@ -6,5 +6,5 @@ includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 Name: mpfshost
 Description: Unprivileged client API for the mpfshost MemProcFS host
 Version: @PROJECT_VERSION@
-Cflags: -I${includedir}/mpfshost
-Libs: -L${libdir} -lmpfshost_core
+Cflags: -I${includedir} -I${includedir}/mpfshost
+Libs: -L${libdir} -lmpfshost_client -lmpfshost_ipc -lmpfshost_util -pthread

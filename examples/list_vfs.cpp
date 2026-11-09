@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include <mpfshost/client.hpp>
 
 #include <filesystem>
 #include <iostream>
@@ -13,19 +13,20 @@ int main(int argc, char** argv)
     }
 
     const std::filesystem::path socketPath {argv[1]};
-    std::string                 error;
+    mpfshost::Client            client {socketPath};
 
-    mpfshost::VfsQuery query;
-    query.targetName = argv[2];
-    if (argc > 3)
+    auto session = client.bind(argv[2]);
+    if (!session)
     {
-        query.path = argv[3];
+        std::cerr << "bind: " << session.error().message << '\n';
+        return 1;
     }
 
-    const auto entries = mpfshost::listVfs(socketPath, query, error);
+    const std::string path    = argc > 3 ? argv[3] : "/";
+    const auto        entries = session->listVfs(path);
     if (!entries)
     {
-        std::cerr << "list-vfs: " << error << '\n';
+        std::cerr << "list-vfs: " << entries.error().message << '\n';
         return 1;
     }
     for (const auto& entry : *entries)

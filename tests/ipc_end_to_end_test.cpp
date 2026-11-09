@@ -1,8 +1,9 @@
 #include <catch2/catch.hpp>
 
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 #include "core/server/server.hpp"
 #include "core/util/hex.hpp"
+#include "mpfshost/client.hpp"
 #include "support/fake_backend.hpp"
 
 #include <algorithm>
@@ -1880,4 +1881,112 @@ TEST_CASE("client reports a missing kernel map provider", "[ipc][client][kerneld
 
     REQUIRE_FALSE(result.has_value());
     REQUIRE(error == "the bound target cannot list kernel devices");
+}
+
+TEST_CASE("client session reuses one bound connection across calls", "[ipc][client][session]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.setProcesses({
+        {  4, 0,       "System", false},
+        {100, 4, "explorer.exe", false},
+    });
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-alpha");
+    REQUIRE(session.has_value());
+    REQUIRE(session->target().name == "vm-alpha");
+    REQUIRE(backend.acquireCount() == 1);
+
+    const auto first = session->processes();
+    REQUIRE(first.has_value());
+    REQUIRE(first->size() == 2);
+
+    const auto second = session->processes({0, "explorer"});
+    REQUIRE(second.has_value());
+    REQUIRE(second->size() == 1);
+    REQUIRE(backend.acquireCount() == 1);
+}
+
+TEST_CASE("client session exposes server error codes", "[ipc][client][session]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    RunningServer                  server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    const auto       missing = client.bind("ghost");
+    REQUIRE_FALSE(missing.has_value());
+    REQUIRE(missing.error().code == mpfshost::ErrorCode::TargetNotFound);
+    REQUIRE_FALSE(missing.error().message.empty());
+
+    const auto unreachable = mpfshost::Client {fixture.root() / "absent.sock"}.targets();
+    REQUIRE_FALSE(unreachable.has_value());
+    REQUIRE(unreachable.error().code == mpfshost::ErrorCode::ConnectionFailed);
+}
+
+TEST_CASE("client session reads memory through its persistent connection", "[ipc][client][session]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.setMemoryBytes({std::byte {0xDE}, std::byte {0xAD}});
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-alpha");
+    REQUIRE(session.has_value());
+
+    const auto data = session->readMemory(4, 0x1000, 2);
+    REQUIRE(data.has_value());
+    REQUIRE(data->size() == 2);
+    REQUIRE((*data)[0] == std::byte {0xDE});
+    REQUIRE(backend.acquireCount() == 1);
+}
+
+TEST_CASE("client session scatters on its bound connection", "[ipc][client][session][scatter]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    RunningServer                  server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-alpha");
+    REQUIRE(session.has_value());
+
+    auto scatter = session->scatter(42);
+    REQUIRE(scatter.has_value());
+    REQUIRE(scatter->id() != 0);
+
+    const auto prepared = scatter->prepare({
+        {0x1000, 4, false, {}}
+    });
+    REQUIRE(prepared.has_value());
+    REQUIRE(*prepared == 1);
+
+    const auto results = scatter->execute();
+    REQUIRE(results.has_value());
+    REQUIRE(results->size() == 1);
+    REQUIRE((*results)[0].ok);
+    REQUIRE((*results)[0].bytesRead == 4);
+
+    REQUIRE(scatter->close().has_value());
+    REQUIRE(backend.scatterState()->creates == 1);
+    REQUIRE(backend.acquireCount() == 1);
 }

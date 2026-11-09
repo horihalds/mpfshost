@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 
 #include "core/client/client_transport.hpp"
 

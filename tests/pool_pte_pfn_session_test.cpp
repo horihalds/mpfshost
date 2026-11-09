@@ -1,6 +1,6 @@
 #include <catch2/catch.hpp>
 
-#include "core/client/client.hpp"
+#include "core/client/client_legacy.hpp"
 #include "core/ipc/frame.hpp"
 #include "core/ipc/message.hpp"
 #include "core/server/server.hpp"

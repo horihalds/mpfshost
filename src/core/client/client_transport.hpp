@@ -17,7 +17,7 @@ namespace mpfshost::detail
     class FileDescriptor
     {
     public:
-        explicit FileDescriptor(int fd);
+        explicit FileDescriptor(int fd, bool owns = true);
 
         ~FileDescriptor();
 
@@ -27,12 +27,41 @@ namespace mpfshost::detail
         FileDescriptor(FileDescriptor&& other) noexcept;
         FileDescriptor& operator=(FileDescriptor&& other) noexcept;
 
-        [[nodiscard]] int fd() const noexcept;
-        [[nodiscard]] int release() noexcept;
+        [[nodiscard]] int  fd() const noexcept;
+        [[nodiscard]] bool owns() const noexcept;
+        [[nodiscard]] int  release() noexcept;
 
     private:
-        int _fd;
+        int  _fd;
+        bool _owns;
     };
+
+    // A bound session makes its connection current on the calling thread, so the shared capability
+    // implementations reuse it instead of opening a second one. Nested use is not supported.
+    struct ActiveConnection
+    {
+        int         fd {};
+        std::string targetName;
+    };
+
+    class ActiveConnectionScope
+    {
+    public:
+        ActiveConnectionScope(int fd, std::string targetName);
+
+        ActiveConnectionScope(const ActiveConnectionScope&)            = delete;
+        ActiveConnectionScope& operator=(const ActiveConnectionScope&) = delete;
+
+        ~ActiveConnectionScope();
+
+    private:
+        ActiveConnection* _previous;
+    };
+
+    [[nodiscard]] ActiveConnection* activeConnection() noexcept;
+
+    [[nodiscard]] ErrorCode lastErrorCode() noexcept;
+    void                    resetLastErrorCode() noexcept;
 
     [[nodiscard]] std::uint64_t nextRequestId();
 

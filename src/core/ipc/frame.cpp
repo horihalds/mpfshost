@@ -820,6 +820,12 @@ namespace mpfshost
             return "Busy";
         case ErrorCode::InvalidState:
             return "InvalidState";
+        case ErrorCode::ConnectionFailed:
+            return "ConnectionFailed";
+        case ErrorCode::ProtocolError:
+            return "ProtocolError";
+        case ErrorCode::InvalidArgument:
+            return "InvalidArgument";
         }
         return "UnknownErrorCode";
     }

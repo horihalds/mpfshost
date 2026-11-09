@@ -1,4 +1,4 @@
-#include "core/client/client.hpp"
+#include <mpfshost/client.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -33,16 +33,22 @@ int main(int argc, char** argv)
     }
 
     const std::filesystem::path socketPath {argv[1]};
-    std::string                 error;
+    mpfshost::Client            client {socketPath};
 
-    mpfshost::ScatterReadQuery query;
-    query.targetName = argv[2];
-    query.pid        = static_cast<std::uint32_t>(std::stoul(argv[3]));
+    auto session = client.bind(argv[2]);
+    if (!session)
+    {
+        std::cerr << "bind: " << session.error().message << '\n';
+        return 1;
+    }
+
+    const auto                          pid = static_cast<std::uint32_t>(std::stoul(argv[3]));
+    std::vector<mpfshost::ScatterRange> ranges;
     try
     {
         for (int index = 4; index < argc; ++index)
         {
-            query.ranges.push_back(parseRange(argv[index]));
+            ranges.push_back(parseRange(argv[index]));
         }
     }
     catch (const std::exception& exception)
@@ -51,10 +57,10 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    const auto results = mpfshost::scatterRead(socketPath, query, error);
+    const auto results = session->scatterRead(pid, ranges);
     if (!results)
     {
-        std::cerr << "scatter-read: " << error << '\n';
+        std::cerr << "scatter-read: " << results.error().message << '\n';
         return 1;
     }
 

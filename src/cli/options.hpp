@@ -2,7 +2,7 @@
 #define MPFSHOST_CLI_OPTIONS_HPP
 #pragma once
 
-#include "core/client/cli_options.hpp"
+#include "cli/client_options.hpp"
 #include "core/server/access_policy.hpp"
 
 #include <cstdint>
@@ -14,7 +14,7 @@
 
 namespace mpfshost::cli
 {
-    inline constexpr std::string_view kDefaultSocketPath  = "/run/mpfshost.sock";
+    inline constexpr std::string_view kDefaultSocketPath  = mpfshost::kDefaultSocketPath;
     inline constexpr std::string_view kDefaultAccessGroup = "mpfshost";
 
     // Owned by core so the parser and its tests can reach it; kept in this namespace for runClient.

@@ -15,31 +15,40 @@
 
 namespace mpfshost::detail
 {
-    FileDescriptor::FileDescriptor(int fd) : _fd {fd} {}
+    namespace
+    {
+        thread_local ActiveConnection* t_activeConnection = nullptr;
+        thread_local ErrorCode         t_lastErrorCode    = ErrorCode::Internal;
+    } // namespace
+
+    FileDescriptor::FileDescriptor(int fd, bool owns) : _fd {fd}, _owns {owns} {}
 
     FileDescriptor::~FileDescriptor()
     {
-        if (_fd >= 0)
+        if (_fd >= 0 && _owns)
         {
             ::close(_fd);
         }
     }
 
-    FileDescriptor::FileDescriptor(FileDescriptor&& other) noexcept : _fd {other._fd}
+    FileDescriptor::FileDescriptor(FileDescriptor&& other) noexcept : _fd {other._fd}, _owns {other._owns}
     {
-        other._fd = -1;
+        other._fd   = -1;
+        other._owns = false;
     }
 
     FileDescriptor& FileDescriptor::operator=(FileDescriptor&& other) noexcept
     {
         if (this != &other)
         {
-            if (_fd >= 0)
+            if (_fd >= 0 && _owns)
             {
                 ::close(_fd);
             }
-            _fd       = other._fd;
-            other._fd = -1;
+            _fd         = other._fd;
+            _owns       = other._owns;
+            other._fd   = -1;
+            other._owns = false;
         }
         return *this;
     }
@@ -49,11 +58,44 @@ namespace mpfshost::detail
         return _fd;
     }
 
+    bool FileDescriptor::owns() const noexcept
+    {
+        return _owns;
+    }
+
     int FileDescriptor::release() noexcept
     {
         const int descriptor = _fd;
         _fd                  = -1;
+        _owns                = false;
         return descriptor;
+    }
+
+    ActiveConnectionScope::ActiveConnectionScope(int fd, std::string targetName) : _previous {t_activeConnection}
+    {
+        static thread_local ActiveConnection current;
+        current            = {fd, std::move(targetName)};
+        t_activeConnection = &current;
+    }
+
+    ActiveConnectionScope::~ActiveConnectionScope()
+    {
+        t_activeConnection = _previous;
+    }
+
+    ActiveConnection* activeConnection() noexcept
+    {
+        return t_activeConnection;
+    }
+
+    ErrorCode lastErrorCode() noexcept
+    {
+        return t_lastErrorCode;
+    }
+
+    void resetLastErrorCode() noexcept
+    {
+        t_lastErrorCode = ErrorCode::Internal;
     }
 
     std::uint64_t nextRequestId()
@@ -64,6 +106,7 @@ namespace mpfshost::detail
 
     int connectToServer(const std::filesystem::path& socketPath, std::string& error)
     {
+        t_lastErrorCode = ErrorCode::ConnectionFailed;
         const auto text = socketPath.string();
         if (text.size() >= sizeof(sockaddr_un::sun_path))
         {
@@ -115,6 +158,7 @@ namespace mpfshost::detail
         const auto requestId = nextRequestId();
         if (!writeFrame(fd, type, requestId, payload, error))
         {
+            t_lastErrorCode = ErrorCode::ConnectionFailed;
             return std::nullopt;
         }
 
@@ -123,6 +167,7 @@ namespace mpfshost::detail
         const auto  status = readFrame(fd, header, response.payload, error);
         if (status != FrameReadStatus::Complete)
         {
+            t_lastErrorCode = ErrorCode::ConnectionFailed;
             if (status == FrameReadStatus::Timeout)
             {
                 error = "the host timed out waiting for this request";
@@ -135,7 +180,8 @@ namespace mpfshost::detail
         }
         if (header.requestId != requestId)
         {
-            error = "server answered a different request id";
+            t_lastErrorCode = ErrorCode::ProtocolError;
+            error           = "server answered a different request id";
             return std::nullopt;
         }
 
@@ -149,6 +195,7 @@ namespace mpfshost::detail
         const auto requestId = nextRequestId();
         if (!writeFrame(fd, type, requestId, payload, error))
         {
+            t_lastErrorCode = ErrorCode::ConnectionFailed;
             return std::nullopt;
         }
 
@@ -160,6 +207,7 @@ namespace mpfshost::detail
             const auto             status = readFrame(fd, header, framePayload, error);
             if (status != FrameReadStatus::Complete)
             {
+                t_lastErrorCode = ErrorCode::ConnectionFailed;
                 if (!result.data.empty())
                 {
                     error = "the host abandoned the response: request deadline exceeded or the request was "
@@ -177,18 +225,21 @@ namespace mpfshost::detail
             }
             if (header.requestId != requestId)
             {
-                error = "server answered a different request id";
+                t_lastErrorCode = ErrorCode::ProtocolError;
+                error           = "server answered a different request id";
                 return std::nullopt;
             }
             if (header.type == MessageType::ErrorResponse)
             {
                 if (const auto decoded = decodeErrorResponse(framePayload); decoded)
                 {
-                    error = decoded->message;
+                    t_lastErrorCode = decoded->code;
+                    error           = decoded->message;
                 }
                 else
                 {
-                    error = "server returned a malformed error";
+                    t_lastErrorCode = ErrorCode::ProtocolError;
+                    error           = "server returned a malformed error";
                 }
                 return std::nullopt;
             }
@@ -212,7 +263,8 @@ namespace mpfshost::detail
         {
             if (const auto decoded = decodeErrorResponse(response.payload); decoded)
             {
-                error = decoded->message;
+                t_lastErrorCode = decoded->code;
+                error           = decoded->message;
                 if (errorCode != nullptr)
                 {
                     *errorCode = decoded->code;
@@ -220,13 +272,15 @@ namespace mpfshost::detail
             }
             else
             {
-                error = "server returned a malformed error";
+                t_lastErrorCode = ErrorCode::ProtocolError;
+                error           = "server returned a malformed error";
             }
             return std::nullopt;
         }
         if (response.type != expected)
         {
-            error = "server returned an unexpected response";
+            t_lastErrorCode = ErrorCode::ProtocolError;
+            error           = "server returned an unexpected response";
             return std::nullopt;
         }
         return response.payload;
@@ -238,6 +292,11 @@ namespace mpfshost::detail
                                     std::string&                 error)
     {
         error.clear();
+        if (const auto* active = activeConnection(); active != nullptr)
+        {
+            return exchange(active->fd, type, payload, error);
+        }
+
         const int fd = connectToServer(socketPath, error);
         if (fd < 0)
         {
@@ -251,6 +310,17 @@ namespace mpfshost::detail
     connectAndBind(const std::filesystem::path& socketPath, const std::string& targetName, std::string& error)
     {
         error.clear();
+        if (const auto* active = activeConnection(); active != nullptr)
+        {
+            if (!active->targetName.empty() && active->targetName != targetName)
+            {
+                t_lastErrorCode = ErrorCode::InvalidArgument;
+                error           = "the active session is bound to a different target";
+                return std::nullopt;
+            }
+            return FileDescriptor {active->fd, false};
+        }
+
         const int fd = connectToServer(socketPath, error);
         if (fd < 0)
         {
@@ -272,7 +342,8 @@ namespace mpfshost::detail
         }
         if (!decodeBindResponse(*boundPayload))
         {
-            error = "server returned a malformed bind response";
+            t_lastErrorCode = ErrorCode::ProtocolError;
+            error           = "server returned a malformed bind response";
             return std::nullopt;
         }
         return connection;
