@@ -49,6 +49,11 @@ namespace mpfshost
         return _debug.step(request, invalidState, busy, error);
     }
 
+    std::optional<DebugDetachResponse> VmmHandle::debugDetach(bool& busy, std::string& error)
+    {
+        return _debug.detach(busy, error);
+    }
+
     std::optional<debug::DebugProcessDtbs> VmmHandle::processDtbs(std::uint32_t pid, std::string& error)
     {
         LookupStatus status = LookupStatus::Failed;

@@ -576,6 +576,8 @@ namespace mpfshost
         bool          hostPaused {}; // the host pressed stop and has not continued it
         std::uint32_t vcpuCount {};
         std::uint32_t watchCount {};
+        bool          stubOwned {};   // this host started the active stub
+        bool          foreignStub {}; // a stub is active but this host does not own it
     };
 
     using DebugStateResponse   = DebugStatus;
@@ -740,6 +742,19 @@ namespace mpfshost
     struct DebugStepResponse
     {
         DebugRegisterRecord record;
+    };
+
+    struct DebugDetachRequest
+    {
+        // Empty payload; the target comes from the binding.
+    };
+
+    struct DebugDetachResponse
+    {
+        DebugStatus status;
+        bool        stubStopped {};  // this request stopped an active stub
+        bool        foreignStub {};  // the stopped stub was not started by this host
+        bool        guestResumed {}; // this request continued the guest
     };
 
     struct SymbolLookupRequest
@@ -1981,6 +1996,11 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugStepRequest>  decodeDebugStepRequest(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>           encodeDebugStepResponse(const DebugStepResponse& message);
     [[nodiscard]] std::optional<DebugStepResponse> decodeDebugStepResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>             encodeDebugDetachRequest(const DebugDetachRequest& message);
+    [[nodiscard]] std::optional<DebugDetachRequest>  decodeDebugDetachRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugDetachResponse(const DebugDetachResponse& message);
+    [[nodiscard]] std::optional<DebugDetachResponse> decodeDebugDetachResponse(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

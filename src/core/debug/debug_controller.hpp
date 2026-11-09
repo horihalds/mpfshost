@@ -63,6 +63,14 @@ namespace mpfshost::debug
         [[nodiscard]] std::optional<DebugStepResponse>
         step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error);
 
+        // Stops an active GDB stub, including one this host did not start, and resumes the guest only when this
+        // host paused it. Used to recover a target left with a stale stub after a host restart.
+        [[nodiscard]] std::optional<DebugDetachResponse> detach(bool& busy, std::string& error);
+
+        // Best-effort teardown for host shutdown: stops a stub this host owns and resumes a guest this host
+        // paused. Never touches a foreign stub, and never throws.
+        void shutdown() noexcept;
+
         void setInspector(DebugInspector* inspector) noexcept
         {
             _inspector = inspector;

@@ -116,6 +116,10 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugStepResponse>
     debugStep(const std::filesystem::path& socketPath, const DebugStepQuery& query, std::string& error);
 
+    // Stops an active GDB stub, including one this host did not start, and reports the resulting status.
+    [[nodiscard]] std::optional<DebugDetachResponse>
+    debugDetach(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;

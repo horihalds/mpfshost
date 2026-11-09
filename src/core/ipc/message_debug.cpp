@@ -14,6 +14,8 @@ namespace mpfshost
             writer.writeU8(status.hostPaused ? 1 : 0);
             writer.writeU32(status.vcpuCount);
             writer.writeU32(status.watchCount);
+            writer.writeU8(status.stubOwned ? 1 : 0);
+            writer.writeU8(status.foreignStub ? 1 : 0);
             return writer.take();
         }
 
@@ -21,11 +23,13 @@ namespace mpfshost
         {
             ByteReader  reader {payload};
             DebugStatus status;
-            status.runState   = static_cast<DebugRunState>(reader.readU8());
-            status.stubActive = reader.readU8() != 0;
-            status.hostPaused = reader.readU8() != 0;
-            status.vcpuCount  = reader.readU32();
-            status.watchCount = reader.readU32();
+            status.runState    = static_cast<DebugRunState>(reader.readU8());
+            status.stubActive  = reader.readU8() != 0;
+            status.hostPaused  = reader.readU8() != 0;
+            status.vcpuCount   = reader.readU32();
+            status.watchCount  = reader.readU32();
+            status.stubOwned   = reader.readU8() != 0;
+            status.foreignStub = reader.readU8() != 0;
             if (!reader.ok() || !reader.atEnd())
             {
                 return std::nullopt;
@@ -486,6 +490,58 @@ namespace mpfshost
         ByteReader        reader {payload};
         DebugStepResponse message;
         message.record = readDebugRecord(reader);
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugDetachRequest(const DebugDetachRequest&)
+    {
+        return {};
+    }
+
+    std::optional<DebugDetachRequest> decodeDebugDetachRequest(std::span<const std::byte> payload)
+    {
+        if (!payload.empty())
+        {
+            return std::nullopt;
+        }
+        return DebugDetachRequest {};
+    }
+
+    std::vector<std::byte> encodeDebugDetachResponse(const DebugDetachResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU8(static_cast<std::uint8_t>(message.status.runState));
+        writer.writeU8(message.status.stubActive ? 1 : 0);
+        writer.writeU8(message.status.hostPaused ? 1 : 0);
+        writer.writeU32(message.status.vcpuCount);
+        writer.writeU32(message.status.watchCount);
+        writer.writeU8(message.status.stubOwned ? 1 : 0);
+        writer.writeU8(message.status.foreignStub ? 1 : 0);
+        writer.writeU8(message.stubStopped ? 1 : 0);
+        writer.writeU8(message.foreignStub ? 1 : 0);
+        writer.writeU8(message.guestResumed ? 1 : 0);
+        return writer.take();
+    }
+
+    std::optional<DebugDetachResponse> decodeDebugDetachResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+
+        DebugDetachResponse message;
+        message.status.runState    = static_cast<DebugRunState>(reader.readU8());
+        message.status.stubActive  = reader.readU8() != 0;
+        message.status.hostPaused  = reader.readU8() != 0;
+        message.status.vcpuCount   = reader.readU32();
+        message.status.watchCount  = reader.readU32();
+        message.status.stubOwned   = reader.readU8() != 0;
+        message.status.foreignStub = reader.readU8() != 0;
+        message.stubStopped        = reader.readU8() != 0;
+        message.foreignStub        = reader.readU8() != 0;
+        message.guestResumed       = reader.readU8() != 0;
         if (!reader.ok() || !reader.atEnd())
         {
             return std::nullopt;

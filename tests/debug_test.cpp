@@ -123,11 +123,13 @@ TEST_CASE("debug control request round trips and rejects unknown actions", "[cor
 TEST_CASE("debug status round trips through both response codecs", "[core][debug][codec]")
 {
     mpfshost::DebugStatus status;
-    status.runState   = mpfshost::DebugRunState::Paused;
-    status.stubActive = true;
-    status.hostPaused = true;
-    status.vcpuCount  = 12;
-    status.watchCount = 2;
+    status.runState    = mpfshost::DebugRunState::Paused;
+    status.stubActive  = true;
+    status.hostPaused  = true;
+    status.vcpuCount   = 12;
+    status.watchCount  = 2;
+    status.stubOwned   = true;
+    status.foreignStub = false;
 
     const auto state   = mpfshost::decodeDebugStateResponse(mpfshost::encodeDebugStateResponse(status));
     const auto control = mpfshost::decodeDebugControlResponse(mpfshost::encodeDebugControlResponse(status));
@@ -138,9 +140,43 @@ TEST_CASE("debug status round trips through both response codecs", "[core][debug
     REQUIRE(state->hostPaused);
     REQUIRE(state->vcpuCount == 12);
     REQUIRE(state->watchCount == 2);
+    REQUIRE(state->stubOwned);
+    REQUIRE_FALSE(state->foreignStub);
     REQUIRE(control->runState == mpfshost::DebugRunState::Paused);
 
+    status.stubOwned   = false;
+    status.foreignStub = true;
+    const auto foreign = mpfshost::decodeDebugStateResponse(mpfshost::encodeDebugStateResponse(status));
+    REQUIRE(foreign.has_value());
+    REQUIRE_FALSE(foreign->stubOwned);
+    REQUIRE(foreign->foreignStub);
+
     REQUIRE_FALSE(mpfshost::decodeDebugStateResponse({}).has_value());
+}
+
+TEST_CASE("debug detach request and response round trip", "[core][debug][codec]")
+{
+    REQUIRE(mpfshost::decodeDebugDetachRequest(mpfshost::encodeDebugDetachRequest({})).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugDetachRequest(std::vector<std::byte> {static_cast<std::byte>(1)}).has_value());
+
+    mpfshost::DebugDetachResponse response;
+    response.status.runState   = mpfshost::DebugRunState::Running;
+    response.status.stubActive = false;
+    response.status.vcpuCount  = 12;
+    response.stubStopped       = true;
+    response.foreignStub       = true;
+    response.guestResumed      = false;
+
+    const auto decoded = mpfshost::decodeDebugDetachResponse(mpfshost::encodeDebugDetachResponse(response));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->status.runState == mpfshost::DebugRunState::Running);
+    REQUIRE_FALSE(decoded->status.stubActive);
+    REQUIRE(decoded->status.vcpuCount == 12);
+    REQUIRE(decoded->stubStopped);
+    REQUIRE(decoded->foreignStub);
+    REQUIRE_FALSE(decoded->guestResumed);
+
+    REQUIRE_FALSE(mpfshost::decodeDebugDetachResponse({}).has_value());
 }
 
 TEST_CASE("debug register requests and responses round trip", "[core][debug][codec]")
@@ -357,6 +393,7 @@ TEST_CASE("debug capabilities are listed", "[core][debug][session]")
     REQUIRE(has(mpfshost::MessageType::DebugWatchRequest));
     REQUIRE(has(mpfshost::MessageType::DebugBreakpointRequest));
     REQUIRE(has(mpfshost::MessageType::DebugStepRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugDetachRequest));
 }
 
 TEST_CASE("a handle without the debug provider reports a capability error", "[core][debug][session]")
@@ -523,6 +560,50 @@ TEST_CASE("debug breakpoints and single steps are delivered through the fake bac
     REQUIRE(fixture.backend().debugState()->stepCalls == 1);
     REQUIRE(fixture.backend().debugState()->lastStepRequest.has_value());
     REQUIRE(fixture.backend().debugState()->lastStepRequest->vcpu == 1);
+}
+
+TEST_CASE("debug detach is delivered through the fake backend", "[core][debug][session]")
+{
+    DebugFixture                  fixture;
+    mpfshost::DebugDetachResponse response;
+    response.status.runState   = mpfshost::DebugRunState::Running;
+    response.status.stubActive = false;
+    response.stubStopped       = true;
+    response.foreignStub       = true;
+    fixture.backend().setDebugDetach(response);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  detached = mpfshost::debugDetach(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->stubStopped);
+    REQUIRE(detached->foreignStub);
+    REQUIRE(detached->status.runState == mpfshost::DebugRunState::Running);
+    REQUIRE(fixture.backend().debugState()->detachCalls == 1);
+}
+
+TEST_CASE("a concurrent debug detach is reported as Busy", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().failDebugDetachWith("another debug operation is in progress", true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  detached = mpfshost::debugDetach(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE_FALSE(detached.has_value());
+    REQUIRE(error.find("another debug operation") != std::string::npos);
+}
+
+TEST_CASE("a handle without the debug provider cannot detach the debugger", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().setHandlesBare(true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  detached = mpfshost::debugDetach(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE_FALSE(detached.has_value());
+    REQUIRE(error.find("cannot detach the debugger") != std::string::npos);
 }
 
 TEST_CASE("a running guest is reported as an invalid state for a single step", "[core][debug][session]")

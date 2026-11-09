@@ -372,4 +372,42 @@ namespace mpfshost
         }
         sendPayload(requestId, MessageType::DebugStepResponse, encodeDebugStepResponse(*response));
     }
+
+    void Session::handleDebugDetach(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugDetachRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "debug-detach takes no payload");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot detach the debugger");
+            return;
+        }
+
+        bool        busy = false;
+        std::string error;
+        const auto  response = provider->debugDetach(busy, error);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug detach failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugDetachResponse, encodeDebugDetachResponse(*response));
+    }
 } // namespace mpfshost

@@ -123,10 +123,13 @@ continue and single step. `RspTransport` is injectable too.
 
 `src/core/debug/debug_controller.{hpp,cpp}` owns the per-VM debug bookkeeping and the stub lifecycle. It starts a
 `gdbserver` over HMP only after the guest is paused, prefers a Unix chardev under `/tmp`, falls back to
-`tcp:127.0.0.1:<port>`, and tracks whether this host owns the stub. It never stops a stub it did not start, and it
-tears its stub down on every exit path. The guest stays paused across `debug-registers` and `debug-step`; a watchpoint
-or breakpoint resumes a guest it paused but leaves an already-paused guest paused. A breakpoint is one-shot: it is
-armed once, reported on its first matching hit, and removed in the same teardown that stops the stub.
+`tcp:127.0.0.1:<port>`, and tracks whether this host owns the stub. It never stops a stub it did not start during a
+normal request; the explicit `debug-detach` request is the only path that stops a foreign or stale stub. It tears its
+own stub down on every exit path. The guest stays paused across `debug-registers` and `debug-step`; a watchpoint or
+breakpoint resumes a guest it paused but leaves an already-paused guest paused. A breakpoint is one-shot: it is
+armed once, reported on its first matching hit, and removed in the same teardown that stops the stub. A graceful host
+shutdown calls `DebugController::shutdown` from `VmmHandle::~VmmHandle`: it stops a stub this host owns, removes its
+socket file, and resumes a guest this host paused, but leaves a foreign stub alone.
 
 The host side is `src/host/vmm_debug.cpp`: `VmmHandle` owns one `debug::DebugController`, constructed from
 `VmTarget.qmpSocket` and a stub socket path derived from the QEMU pid. The controller serialises requests with its

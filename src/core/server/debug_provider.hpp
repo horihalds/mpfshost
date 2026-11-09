@@ -45,7 +45,9 @@ namespace mpfshost
                         bool&                         busy,
                         std::string&                  error) = 0;
         [[nodiscard]] virtual std::optional<DebugStepResponse>
-        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) = 0;
+        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error)       = 0;
+        // Stops an active stub, including a foreign one, and resumes the guest only when this host paused it.
+        [[nodiscard]] virtual std::optional<DebugDetachResponse> debugDetach(bool& busy, std::string& error) = 0;
     };
 } // namespace mpfshost
 

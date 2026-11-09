@@ -462,6 +462,8 @@ namespace mpfshost
             return "DebugBreakpointRequest";
         case MessageType::DebugStepRequest:
             return "DebugStepRequest";
+        case MessageType::DebugDetachRequest:
+            return "DebugDetachRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -470,6 +472,8 @@ namespace mpfshost
             return "DebugBreakpointResponse";
         case MessageType::DebugStepResponse:
             return "DebugStepResponse";
+        case MessageType::DebugDetachResponse:
+            return "DebugDetachResponse";
         case MessageType::ProcessInfoRequest:
             return "ProcessInfoRequest";
         case MessageType::SymbolLookupRequest:

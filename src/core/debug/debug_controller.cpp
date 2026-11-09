@@ -290,11 +290,13 @@ namespace mpfshost::debug
             active = chardevHasGdb(chardev);
         }
 
-        status.runState   = qmpRunState(info.status);
-        status.stubActive = _stubActive || active;
-        status.hostPaused = _hostPaused;
-        status.vcpuCount  = vcpuCount;
-        status.watchCount = _watchCount;
+        status.runState    = qmpRunState(info.status);
+        status.stubActive  = _stubActive || active;
+        status.stubOwned   = _stubActive;
+        status.foreignStub = active && !_stubActive;
+        status.hostPaused  = _hostPaused;
+        status.vcpuCount   = vcpuCount;
+        status.watchCount  = _watchCount;
         return true;
     }
 
@@ -1648,6 +1650,128 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
             return DebugStepResponse {std::move(*record)};
+        }
+    }
+
+    std::optional<DebugDetachResponse> DebugController::detach(bool& busy, std::string& error)
+    {
+        busy = false;
+        std::unique_lock lock {_mutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+
+        auto client = makeQmp();
+        if (!connectQmp(client, error))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!client->queryStatus(current, kQmpTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        bool active = false;
+        if (!hasActiveStub(*client, active, error))
+        {
+            return std::nullopt;
+        }
+
+        DebugDetachResponse response;
+        response.foreignStub = active && !_stubActive;
+        if (active)
+        {
+            std::string reply;
+            if (!client->humanMonitor("gdbserver none", reply, kQmpTimeout, error))
+            {
+                return std::nullopt;
+            }
+            response.stubStopped = true;
+            log::info("host", response.foreignStub ? "stopped a foreign GDB stub" : "stopped the GDB stub");
+        }
+
+        _stubActive = false;
+        _watchCount = 0;
+        std::error_code removeError;
+        std::filesystem::remove(_stubSocket, removeError);
+
+        // A foreign stub may have left the guest stopped; only a pause this host made is ours to undo.
+        if (_hostPaused && current.status != "running")
+        {
+            std::string ignored;
+            if (!client->execute("cont", ignored, kQmpTimeout, error))
+            {
+                return std::nullopt;
+            }
+            response.guestResumed = true;
+            log::info("host", "resumed the guest after detaching the debug stub");
+        }
+        _hostPaused = false;
+
+        DebugStatus status;
+        if (!readStatus(*client, status, error))
+        {
+            return std::nullopt;
+        }
+        response.status = status;
+        return response;
+    }
+
+    void DebugController::shutdown() noexcept
+    {
+        try
+        {
+            std::unique_lock lock {_mutex, std::try_to_lock};
+            if (!lock.owns_lock())
+            {
+                log::warn("host", "a debug operation is still in progress during shutdown");
+                return;
+            }
+
+            std::error_code removeError;
+            if (!_stubActive && !_hostPaused)
+            {
+                std::filesystem::remove(_stubSocket, removeError);
+                return;
+            }
+
+            auto        client = makeQmp();
+            std::string error;
+            if (!connectQmp(client, error))
+            {
+                log::warn("host", "could not reach QMP to tear down debug state: ", error);
+                std::filesystem::remove(_stubSocket, removeError);
+                return;
+            }
+
+            if (_stubActive && !stopStub(*client, error))
+            {
+                log::warn("host", "could not stop the GDB stub during shutdown: ", error);
+            }
+            std::filesystem::remove(_stubSocket, removeError);
+
+            if (_hostPaused)
+            {
+                QmpStatusInfo current;
+                if (client->queryStatus(current, kQmpTimeout, error) && current.status != "running")
+                {
+                    std::string ignored;
+                    if (!client->execute("cont", ignored, kQmpTimeout, error))
+                    {
+                        log::warn("host", "could not resume the guest during shutdown: ", error);
+                    }
+                }
+                _hostPaused = false;
+            }
+        }
+        catch (...)
+        {
+            log::warn("host", "debug teardown during shutdown failed unexpectedly");
         }
     }
 } // namespace mpfshost::debug

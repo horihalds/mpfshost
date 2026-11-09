@@ -609,6 +609,118 @@ TEST_CASE("the debug controller refuses a stub owned by someone else", "[core][d
     REQUIRE(qmp->count("gdbserver unix:") == 0);
 }
 
+TEST_CASE("the debug controller reports a foreign stub as unowned", "[core][debug][controller]")
+{
+    auto qmp        = std::make_shared<FakeQmpState>();
+    qmp->stubActive = true;
+    qmp->running    = false;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy = false;
+    std::string error;
+    const auto  status = controller.state(busy, error);
+    REQUIRE(status.has_value());
+    REQUIRE(status->stubActive);
+    REQUIRE_FALSE(status->stubOwned);
+    REQUIRE(status->foreignStub);
+}
+
+TEST_CASE("the debug controller detaches a foreign stub on request", "[core][debug][controller]")
+{
+    auto qmp        = std::make_shared<FakeQmpState>();
+    qmp->stubActive = true;
+    qmp->running    = false;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy = false;
+    std::string error;
+    const auto  response = controller.detach(busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->stubStopped);
+    REQUIRE(response->foreignStub);
+    REQUIRE_FALSE(response->guestResumed);
+    REQUIRE_FALSE(response->status.stubActive);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("detach resumes a guest the host paused", "[core][debug][controller]")
+{
+    auto qmp     = std::make_shared<FakeQmpState>();
+    qmp->running = true;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy = false;
+    std::string error;
+    const auto  stopped = controller.control(mpfshost::DebugControlAction::Stop, busy, error);
+    REQUIRE(stopped.has_value());
+    REQUIRE_FALSE(qmp->running);
+
+    qmp->incoming.emplace_back(R"({"QMP":{"version":{"qemu":{"major":10,"minor":2,"micro":2}}}})");
+    const auto response = controller.detach(busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->guestResumed);
+    REQUIRE(response->status.runState == mpfshost::DebugRunState::Running);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("shutdown resumes a guest the host paused", "[core][debug][controller]")
+{
+    auto qmp     = std::make_shared<FakeQmpState>();
+    qmp->running = true;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy = false;
+    std::string error;
+    const auto  stopped = controller.control(mpfshost::DebugControlAction::Stop, busy, error);
+    REQUIRE(stopped.has_value());
+    REQUIRE_FALSE(qmp->running);
+
+    qmp->incoming.emplace_back(R"({"QMP":{"version":{"qemu":{"major":10,"minor":2,"micro":2}}}})");
+    controller.shutdown();
+    REQUIRE(qmp->running);
+}
+
 TEST_CASE("the debug controller tears the stub down after a read failure", "[core][debug][controller]")
 {
     auto  qmp          = std::make_shared<FakeQmpState>();

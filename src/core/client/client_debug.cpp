@@ -250,4 +250,35 @@ namespace mpfshost
         }
         return decoded;
     }
+
+    std::optional<DebugDetachResponse>
+    debugDetach(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(), MessageType::DebugDetachRequest, encodeDebugDetachRequest({}), error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugDetachResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugDetachResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug detach response";
+        }
+        return decoded;
+    }
 } // namespace mpfshost

@@ -445,6 +445,11 @@ namespace mpfshost::testing
         bool                            stepInvalidState {};
         bool                            stepBusy {};
         std::uint32_t                   stepCalls {};
+
+        DebugDetachResponse detachResponse;
+        std::string         detachFailure;
+        bool                detachBusy {};
+        std::uint32_t       detachCalls {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1694,6 +1699,19 @@ namespace mpfshost::testing
             return _debugState->stepResponse;
         }
 
+        [[nodiscard]] std::optional<DebugDetachResponse> debugDetach(bool& busy, std::string& error) override
+        {
+            ++_debugState->detachCalls;
+            if (!_debugState->detachFailure.empty())
+            {
+                busy  = _debugState->detachBusy;
+                error = _debugState->detachFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->detachResponse;
+        }
+
     private:
         std::string                              _name;
         std::shared_ptr<FakeProcessState>        _processState;
@@ -2261,6 +2279,17 @@ namespace mpfshost::testing
             _debugState->stepFailure      = std::move(message);
             _debugState->stepInvalidState = invalidState;
             _debugState->stepBusy         = busy;
+        }
+
+        void setDebugDetach(DebugDetachResponse response)
+        {
+            _debugState->detachResponse = std::move(response);
+        }
+
+        void failDebugDetachWith(std::string message, bool busy = false)
+        {
+            _debugState->detachFailure = std::move(message);
+            _debugState->detachBusy    = busy;
         }
 
         void setHandlesBare(bool bare)

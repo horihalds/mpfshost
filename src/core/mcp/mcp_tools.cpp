@@ -445,11 +445,13 @@ namespace mpfshost::mcp
         Json debugStatusJson(const DebugStatus& status)
         {
             return Json {
-                {  "run_state", std::string {debugRunStateName(status.runState)}},
-                {"stub_active",                                status.stubActive},
-                {"host_paused",                                status.hostPaused},
-                { "vcpu_count",                                 status.vcpuCount},
-                {"watch_count",                                status.watchCount}
+                {   "run_state", std::string {debugRunStateName(status.runState)}},
+                { "stub_active",                                status.stubActive},
+                {  "stub_owned",                                 status.stubOwned},
+                {"foreign_stub",                               status.foreignStub},
+                { "host_paused",                                status.hostPaused},
+                {  "vcpu_count",                                 status.vcpuCount},
+                { "watch_count",                                status.watchCount}
             };
         }
 
@@ -833,6 +835,10 @@ namespace mpfshost::mcp
                 {           "debug_step",
                  "Single-step a vCPU",                                    "Single-step one vCPU of a paused guest and return its registers.",
                  false,                   {target, {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false}}},
+                {         "debug_detach",
+                 "Stop the debug stub",              "Stop an active GDB stub, including a stale one left by an earlier host process, and report the "
+              "run state. Destructive: resumes the guest only if this host paused it.", false,
+                 {target}                                                                                                    },
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -2477,6 +2483,20 @@ namespace mpfshost::mcp
                     return failure(error);
                 }
                 return success(debugRecordJson(response->record));
+            }
+
+            if (name == "debug_detach")
+            {
+                const auto response = debugDetach(socket, {requireString(args, "target")}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json result             = debugStatusJson(response->status);
+                result["stub_stopped"]  = response->stubStopped;
+                result["foreign_stub"]  = response->foreignStub;
+                result["guest_resumed"] = response->guestResumed;
+                return success(std::move(result));
             }
 
             if (name == "write_memory")

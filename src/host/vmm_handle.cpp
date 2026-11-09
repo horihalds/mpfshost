@@ -33,6 +33,7 @@ namespace mpfshost
 {
     VmmHandle::~VmmHandle()
     {
+        _debug.shutdown();
         if (_handle != nullptr)
         {
             log::debug("host", "released VMM handle for target ", _targetName);

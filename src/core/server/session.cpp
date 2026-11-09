@@ -241,6 +241,9 @@ namespace mpfshost
         case MessageType::DebugStepRequest:
             handleDebugStep(requestId, payload);
             return;
+        case MessageType::DebugDetachRequest:
+            handleDebugDetach(requestId, payload);
+            return;
         case MessageType::ConfigSetRequest:
             handleConfigSet(requestId, payload);
             return;
@@ -396,6 +399,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugWatchRequest),
             static_cast<std::uint16_t>(MessageType::DebugBreakpointRequest),
             static_cast<std::uint16_t>(MessageType::DebugStepRequest),
+            static_cast<std::uint16_t>(MessageType::DebugDetachRequest),
             static_cast<std::uint16_t>(MessageType::VirtualQueryRequest),
             static_cast<std::uint16_t>(MessageType::MemorySearchRequest),
             static_cast<std::uint16_t>(MessageType::PageReadRequest),

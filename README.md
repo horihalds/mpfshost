@@ -191,6 +191,7 @@ to it automatically.
  `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Prints the trapped store when it can be decoded. Destructive. |
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). Reports the first hit and removes it. Destructive. |
  `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0). Destructive. |
+ `--client debug-detach <vm>` | Stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
  `--client scatter <vm>` | Several process ranges in one batch; repeat `--range`; `--repeat <n>` re-reads the prepared ranges, `--clear` clears the handle before closing. |
  `--client vquery <vm>` | Region, protection and type of a virtual address. |

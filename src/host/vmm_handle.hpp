@@ -272,6 +272,8 @@ namespace mpfshost
         [[nodiscard]] std::optional<DebugStepResponse>
         debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) override;
 
+        [[nodiscard]] std::optional<DebugDetachResponse> debugDetach(bool& busy, std::string& error) override;
+
         [[nodiscard]] std::optional<debug::DebugProcessDtbs> processDtbs(std::uint32_t pid,
                                                                          std::string&  error) override;
         [[nodiscard]] std::optional<debug::DebugModuleHit>

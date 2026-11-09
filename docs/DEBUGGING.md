@@ -61,8 +61,8 @@ into `paused`; QEMU leaves that state on `cont`.
    ./build/mpfshost --client debug-status <vm>
    ```
 
-   Expect `run-state=running`, `host-paused=no`, `stub-active=no`, `vcpus=<n>` matching the QEMU command line, and
-   `watches=0`.
+   Expect `run-state=running`, `stub-active=no`, `stub-owned=no`, `foreign-stub=no`, `host-paused=no`,
+   `vcpus=<n>` matching the QEMU command line, and `watches=0`.
 
 3. Pause it:
 
@@ -92,7 +92,8 @@ annotations and result shape.
 
 On 2026-11-09 against the target `windows` (12 vCPUs):
 
-- `debug-status` reported `running`, `host-paused=no`, `stub-active=no`, `watches=0`.
+- `debug-status` reported `running`, `host-paused=no`, `stub-active=no`, `stub-owned=no`, `foreign-stub=no`,
+  `watches=0`.
 - `debug-stop` reported `paused`/`host-paused=yes`; a second query two seconds later was still `paused` and still
   `host-paused=yes`, so the pause persisted.
 - A second `debug-stop` was a no-op and kept `host-paused=yes`. `debug-continue` while already running was a no-op.
@@ -129,6 +130,26 @@ read error, timeout, cancellation and teardown) and removes the Unix socket file
 start; if `info chardev` already shows a `gdb:` device, `debug-registers` answers `InvalidState` instead. After
 teardown it re-checks `query-status` and reapplies `stop` if the guest somehow resumed, so a request that began with
 a paused guest leaves it paused.
+
+## Host shutdown and stale stubs
+
+A graceful host shutdown runs `DebugController::shutdown` from the `VmmHandle` destructor, after every session has
+ended. It stops a stub this host owns, removes `/tmp/mpfshost-gdb-<pid>.sock`, and resumes the guest when the host
+paused it. It does not touch a stub owned by another process.
+
+A killed host or a crash cannot run that teardown. The guest may stay paused, and QEMU may still expose the old
+`gdb:` chardev. The next host sees the stub as `stub-active=yes  stub-owned=no  foreign-stub=yes` and refuses
+`debug-registers`, `debug-watch`, `debug-break` and `debug-step` with `InvalidState`. Recover explicitly:
+
+```sh
+./build/mpfshost --client debug-status <vm>
+./build/mpfshost --client debug-detach <vm>
+./build/mpfshost --client debug-status <vm>
+```
+
+`debug-detach` stops the foreign stub and reports `stub-stopped=yes  foreign-stub=yes`. It resumes the guest only if
+this host process was the one that paused it, which is never true after a restart; run `debug-continue` when the
+status still reports a stopped guest.
 
 ## Stub probe record
 
@@ -366,6 +387,8 @@ Any future slice that starts a stub or arms a watchpoint must:
 - remove the watchpoint or breakpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its
   gdb stop state and ignore the resume;
 - stop the stub on success, timeout, cancellation, error and client death;
+- stop an owned stub and resume a host-paused guest during host shutdown; use `debug-detach` to stop a stale foreign
+  stub, never the shutdown path;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
 - refuse concurrent debug operations with `Busy`;
 - never log guest memory contents.

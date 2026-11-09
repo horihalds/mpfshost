@@ -67,6 +67,19 @@ namespace mpfshost::cli
                         static_cast<unsigned long long>(record.r14),
                         static_cast<unsigned long long>(record.r15));
         }
+
+        void printDebugStatus(const mpfshost::DebugStatus& status)
+        {
+            std::printf("run-state=%s  stub-active=%s  stub-owned=%s  foreign-stub=%s  host-paused=%s  vcpus=%u  "
+                        "watches=%u\n",
+                        std::string {mpfshost::debugRunStateName(status.runState)}.c_str(),
+                        status.stubActive ? "yes" : "no",
+                        status.stubOwned ? "yes" : "no",
+                        status.foreignStub ? "yes" : "no",
+                        status.hostPaused ? "yes" : "no",
+                        static_cast<unsigned>(status.vcpuCount),
+                        static_cast<unsigned>(status.watchCount));
+        }
     } // namespace
 
     int runClient(const ClientOptions& options)
@@ -1631,12 +1644,23 @@ namespace mpfshost::cli
                 return 1;
             }
 
-            std::printf("run-state=%s  stub-active=%s  host-paused=%s  vcpus=%u  watches=%u\n",
-                        std::string {mpfshost::debugRunStateName(status->runState)}.c_str(),
-                        status->stubActive ? "yes" : "no",
-                        status->hostPaused ? "yes" : "no",
-                        static_cast<unsigned>(status->vcpuCount),
-                        static_cast<unsigned>(status->watchCount));
+            printDebugStatus(*status);
+            return 0;
+        }
+
+        if (options.command == "debug-detach")
+        {
+            const auto response = mpfshost::debugDetach(options.socketPath, {options.target}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            std::printf("stub-stopped=%s  foreign-stub=%s  guest-resumed=%s\n",
+                        response->stubStopped ? "yes" : "no",
+                        response->foreignStub ? "yes" : "no",
+                        response->guestResumed ? "yes" : "no");
+            printDebugStatus(response->status);
             return 0;
         }
 

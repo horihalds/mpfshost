@@ -135,6 +135,7 @@ range.
  `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
+ `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
 
 ## Address lookups
 
@@ -160,6 +161,8 @@ carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPa
  `hostPaused` | `u8` | `1` when this host pressed stop and has not continued the VM |
  `vcpuCount` | `u32` | vCPU count from QMP `query-cpus-fast` |
  `watchCount` | `u32` | watchpoints armed by the host |
+ `stubOwned` | `u8` | `1` when this host process started the active stub |
+ `foreignStub` | `u8` | `1` when a stub is active but this host process does not own it |
 
 The host reaches the target's QEMU control plane through the QMP Unix socket that the target scan pairs with the QEMU
 pid (`list-targets` reports it). No new host flag gates these types; the connection's access policy is the gate, as
@@ -167,6 +170,26 @@ for memory writes. Stop and continue are **destructive**: a paused guest stops e
 host only reports `hostPaused = 1` when its own `debug-stop` performed the pause; it still honours `debug-continue`
 for a guest paused by another client. `CapabilityUnavailable` means the bound handle does not implement debug
 control; `Internal` means the QMP exchange failed.
+
+## Debug detach
+
+`DebugDetachRequest` has no payload. It is the explicit recovery path for a stub left behind by an earlier host
+process, and it also clears this host's debug bookkeeping. The host asks QEMU for `info chardev`, stops any active
+stub with `gdbserver none` (including a stub it did not start), removes its stub socket file, and continues the guest
+only when this host process performed the pause (`hostPaused`). A guest left stopped by a foreign stub stays stopped
+and is reported as such; `debug-continue` resumes it.
+
+`DebugDetachResponse` starts with the same `DebugStatus` record and appends three `u8` flags:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `status` | `DebugStatus` | Run state and bookkeeping after the detach |
+ `stubStopped` | `u8` | `1` when this request stopped an active stub |
+ `foreignStub` | `u8` | `1` when the stopped stub was not started by this host |
+ `guestResumed` | `u8` | `1` when this request continued the guest |
+
+The host performs the same teardown on a normal shutdown: it stops a stub it owns, removes its socket file, and
+resumes a guest it paused. It never stops a foreign stub during shutdown; use `debug-detach` for that.
 
 ## Debug registers
 

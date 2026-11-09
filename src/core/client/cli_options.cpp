@@ -62,7 +62,8 @@ namespace mpfshost
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
                 || command == "resolve" || command == "process-for-dtb" || command == "debug-status"
                 || command == "debug-stop" || command == "debug-continue" || command == "debug-registers"
-                || command == "debug-watch" || command == "debug-break" || command == "debug-step";
+                || command == "debug-watch" || command == "debug-break" || command == "debug-step"
+                || command == "debug-detach";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.

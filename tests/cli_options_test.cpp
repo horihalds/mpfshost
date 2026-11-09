@@ -84,6 +84,7 @@ namespace
         "debug-watch",
         "debug-break",
         "debug-step",
+        "debug-detach",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)

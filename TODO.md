@@ -15,27 +15,7 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 1. Tear down debug state when the host exits
-
-A host exit or crash currently leaves a paused guest, a live GDB stub and armed debug registers behind, while
-`_hostPaused`, `_stubActive` and `_watchCount` vanish with the process.
-
-- Add `DebugController::shutdown()` that best-effort connects to QMP, removes any breakpoint/watchpoint the host
-  armed, stops the stub only when `_stubActive` is set, removes the stub socket file, and resumes the guest only when
-  `_hostPaused` is set. Never stop a stub the host did not start.
-- Call it from `VmmHandle::~VmmHandle` before `VMMDLL_Close`, and keep it idempotent so the per-request teardown paths
-  and the destructor can both run.
-- Make `debug-status` distinguish "the host owns a stub" from "some foreign stub is active" in its text output.
-- Add a `debug-detach <vm>` client command and MCP tool that stops a foreign stub only on explicit request, after
-  confirming with `info chardev` and `query-status`, and never resumes a guest it did not pause.
-- Tests with the fake QMP and RSP transports: shutdown stops an owned stub, removes an armed watchpoint, resumes a
-  host-paused guest, does nothing for a foreign stub, and is safe to call twice.
-- Document the shutdown and stale-stub recovery procedure in `docs/DEBUGGING.md`.
-
-Acceptance: stopping the host while a guest is paused leaves the guest running and the stub gone; a killed host can
-be recovered with `debug-detach` instead of a manual HMP command.
-
-### 2. Keep one QMP connection for the debug controller
+### 1. Keep one QMP connection for the debug controller
 
 QEMU accepts only one QMP client, so a running watch holds the channel for its whole duration and `debug-status` or
 `debug-stop` from another request either returns `Busy` or cannot connect. The host also reconnects for every
@@ -56,7 +36,7 @@ single-frame request.
 Acceptance: during a live watch, `debug-status` reports the real run state and a second client can pause or resume
 the guest.
 
-### 3. Reject guests whose architecture the debugger cannot read
+### 2. Reject guests whose architecture the debugger cannot read
 
 The register layout, `rip`/`cr3` lookups and `x86_decoder` assume x86-64. An aarch64 or 32-bit guest fails late with
 "the GDB stub does not expose rip" or, worse, reads the wrong registers.
@@ -74,7 +54,7 @@ The register layout, `rip`/`cr3` lookups and `x86_decoder` assume x86-64. An aar
 
 Acceptance: an unsupported guest gets one clear error instead of a stub start or a misleading register failure.
 
-### 4. Add an explicit debug attach and detach
+### 3. Add an explicit debug attach and detach
 
 Breakpoints, watchpoints and single-step are usable only as isolated one-shot requests. Introduce the ownership
 model before making breakpoints persistent.
@@ -94,7 +74,7 @@ model before making breakpoints persistent.
 Acceptance: two clients cannot own the debug channel at once, and `debug-detach` always restores the pre-attach run
 state and stub ownership.
 
-### 5. Make breakpoints and watchpoints persistent for a debug session
+### 4. Make breakpoints and watchpoints persistent for a debug session
 
 Once a session exists, a caller should be able to arm several breakpoints/watchpoints, continue, and receive hits
 over multiple requests instead of re-arming for every hit.
@@ -115,7 +95,7 @@ over multiple requests instead of re-arming for every hit.
 Acceptance: a caller can arm several breakpoints and watchpoints, continue the guest, receive hits over repeated
 waits, remove individual resources and detach with nothing left armed.
 
-### 6. Add debug thread discovery
+### 5. Add debug thread discovery
 
 `--vcpu` is the stub's thread-list index, and callers have no way to see which guest thread or process a register
 record belongs to.
@@ -132,7 +112,7 @@ record belongs to.
 Acceptance: a caller can list every vCPU with its current context, resolve the target process threads, and select a
 specific thread for stepping.
 
-### 7. Accept symbolic addresses in breakpoint and watch requests
+### 6. Accept symbolic addresses in breakpoint and watch requests
 
 `debug-break` and `debug-watch` take raw hex only, although the host already resolves modules, exports and PDB
 symbols.
@@ -150,7 +130,7 @@ symbols.
 Acceptance: a user can break or watch `nt!HalProcessorIdle+0xf` or `guest-probe.exe!GuestProbeMarker` without a
 separate address lookup.
 
-### 8. Add disassembly and backtrace output
+### 7. Add disassembly and backtrace output
 
 Watch hits currently render one decoded store instruction; there is no way to inspect code around a stop or walk
 the stack.
@@ -170,7 +150,7 @@ the stack.
 Acceptance: a stopped thread can be disassembled around its PC and its frame-pointer chain printed with module and
 symbol names, with no unbounded reads.
 
-### 9. Harden breakpoint attribution for shared user addresses
+### 8. Harden breakpoint attribution for shared user addresses
 
 A hardware breakpoint on a hot system-DLL address traps in every process that maps it. The host currently accepts a
 hit when the stop PC matches and the CR3 or module map agrees, so a shared address can be attributed to the wrong
@@ -190,7 +170,7 @@ process.
 
 Acceptance: a shared-address breakpoint no longer reports another process's hit as the target's without saying so.
 
-### 10. Allow read/access watchpoints and unbounded runs
+### 9. Allow read/access watchpoints and unbounded runs
 
 `DebugWatchAccess` has only `Write`, and `maxHits` defaults to 1 with a hard cap of 64, which makes a watch a
 bounded probe rather than a usable tool.
