@@ -169,10 +169,11 @@ namespace mpfshost
         return decoded;
     }
 
-    std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                      socketPath,
-                                            const DebugWatchQuery&                            query,
-                                            const std::function<void(const DebugWatchData&)>& onHit,
-                                            std::string&                                      error)
+    std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                           socketPath,
+                                            const DebugWatchQuery&                                 query,
+                                            const std::function<void(const DebugWatchData&)>&      onHit,
+                                            const std::function<void(const DebugWatchHeartbeat&)>& onHeartbeat,
+                                            std::string&                                           error)
     {
         error.clear();
         const auto connection = connectAndBind(socketPath, query.targetName, error);
@@ -243,6 +244,20 @@ namespace mpfshost
                 }
                 continue;
             }
+            if (header.type == MessageType::DebugWatchHeartbeat)
+            {
+                const auto decoded = decodeDebugWatchHeartbeat(payload);
+                if (!decoded)
+                {
+                    error = "server returned a malformed debug watch heartbeat";
+                    return std::nullopt;
+                }
+                if (onHeartbeat)
+                {
+                    onHeartbeat(*decoded);
+                }
+                continue;
+            }
             if (header.type == MessageType::DebugWatchEnd)
             {
                 const auto decoded = decodeDebugWatchEnd(payload);
@@ -256,6 +271,14 @@ namespace mpfshost
             error = "server returned an unexpected response";
             return std::nullopt;
         }
+    }
+
+    std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                      socketPath,
+                                            const DebugWatchQuery&                            query,
+                                            const std::function<void(const DebugWatchData&)>& onHit,
+                                            std::string&                                      error)
+    {
+        return debugWatch(socketPath, query, onHit, {}, error);
     }
 
     std::optional<DebugBreakpointResponse>

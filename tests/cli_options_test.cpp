@@ -609,8 +609,23 @@ TEST_CASE("debug watch options are parsed and validated", "[cli-options]")
     REQUIRE_FALSE(badWidth.options.has_value());
     CHECK(badWidth.error.find("--width") != std::string::npos);
 
-    const auto badAccess =
+    const auto readAccess =
         parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--access", "read"});
+    REQUIRE(readAccess.options.has_value());
+    CHECK(readAccess.options->watchAccess == mpfshost::DebugWatchAccess::Read);
+
+    const auto accessAccess =
+        parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--access", "access"});
+    REQUIRE(accessAccess.options.has_value());
+    CHECK(accessAccess.options->watchAccess == mpfshost::DebugWatchAccess::Access);
+
+    const auto unlimited =
+        parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--max-hits", "0"});
+    REQUIRE(unlimited.options.has_value());
+    CHECK(unlimited.options->maxHits == 0);
+
+    const auto badAccess =
+        parse({"--client", "debug-watch", "vm1", "--pid", "42", "--address", "0x5000", "--access", "execute"});
     REQUIRE_FALSE(badAccess.options.has_value());
     CHECK(badAccess.error.find("--access") != std::string::npos);
 

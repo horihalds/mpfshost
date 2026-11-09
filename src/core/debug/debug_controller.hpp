@@ -21,11 +21,12 @@
 
 namespace mpfshost::debug
 {
-    using QmpTransportFactory  = std::move_only_function<std::unique_ptr<QmpTransport>()>;
-    using RspTransportFactory  = std::move_only_function<std::unique_ptr<RspTransport>()>;
-    using DebugWatchHitSink    = std::function<bool(const DebugWatchData&)>;
-    using DebugWatchAbortCheck = std::function<bool()>;
-    using DebugWaitHitSink     = std::function<bool(const DebugWaitHit&)>;
+    using QmpTransportFactory     = std::move_only_function<std::unique_ptr<QmpTransport>()>;
+    using RspTransportFactory     = std::move_only_function<std::unique_ptr<RspTransport>()>;
+    using DebugWatchHitSink       = std::function<bool(const DebugWatchData&)>;
+    using DebugWatchHeartbeatSink = std::function<bool(const DebugWatchHeartbeat&)>;
+    using DebugWatchAbortCheck    = std::function<bool()>;
+    using DebugWaitHitSink        = std::function<bool(const DebugWaitHit&)>;
 
     // Owns the host-side debug bookkeeping and the QMP/GDB stub lifecycle for one VM. QEMU's QMP socket is
     // the source of truth for the guest's run state. The factory arguments exist so tests can script both
@@ -65,16 +66,29 @@ namespace mpfshost::debug
                                                                       bool&                        busy,
                                                                       std::string&                 error,
                                                                       bool&                        unavailable);
-        // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
+        // Runs one process-scoped watchpoint to completion, a hit limit or a timeout. A start failure
         // returns nullopt; once the watch is armed, an error is reported through the end record instead.
         // `notFound` reports a module or symbol that could not be resolved, which the caller maps to NotFound.
-        [[nodiscard]] std::optional<DebugWatchEnd>          watch(DebugWatchRequest           request,
-                                                                  const DebugWatchHitSink&    onHit,
-                                                                  const DebugWatchAbortCheck& aborted,
-                                                                  bool&                       busy,
-                                                                  std::string&                error,
-                                                                  bool&                       unavailable,
-                                                                  bool&                       notFound);
+        // `onHeartbeat` is called once per kDebugWatchHeartbeatMs while no hit arrives; it may be empty.
+        [[nodiscard]] std::optional<DebugWatchEnd>          watch(DebugWatchRequest              request,
+                                                                  const DebugWatchHitSink&       onHit,
+                                                                  const DebugWatchHeartbeatSink& onHeartbeat,
+                                                                  const DebugWatchAbortCheck&    aborted,
+                                                                  bool&                          busy,
+                                                                  std::string&                   error,
+                                                                  bool&                          unavailable,
+                                                                  bool&                          notFound);
+
+        [[nodiscard]] std::optional<DebugWatchEnd> watch(DebugWatchRequest           request,
+                                                         const DebugWatchHitSink&    onHit,
+                                                         const DebugWatchAbortCheck& aborted,
+                                                         bool&                       busy,
+                                                         std::string&                error,
+                                                         bool&                       unavailable,
+                                                         bool&                       notFound)
+        {
+            return watch(std::move(request), onHit, {}, aborted, busy, error, unavailable, notFound);
+        }
 
         [[nodiscard]] std::optional<DebugWatchEnd> watch(DebugWatchRequest           request,
                                                          const DebugWatchHitSink&    onHit,
@@ -266,32 +280,33 @@ namespace mpfshost::debug
                                                                              bool&          threadFound) noexcept;
 
         // Serializes the exclusive operations (registers, watch, breakpoint, step).
-        std::mutex                 _operationMutex;
+        std::mutex                    _operationMutex;
         // Serializes state() and control() so their bookkeeping cannot interleave.
-        std::mutex                 _stateMutex;
+        std::mutex                    _stateMutex;
         // Serializes QMP commands; held for one command, never for a whole watch or breakpoint run.
-        std::mutex                 _qmpMutex;
-        std::unique_ptr<QmpClient> _qmp;
-        std::filesystem::path      _qmpSocket;
-        std::filesystem::path      _stubSocket;
-        QmpTransportFactory        _qmpFactory;
-        RspTransportFactory        _rspFactory;
-        DebugInspector*            _inspector {nullptr};
-        std::unique_ptr<RspClient> _attachedRsp;
-        RspEndpoint                _attachedEndpoint;
-        RspTargetDescription       _attachedDescription;
-        std::string                _attachedArchitecture;
-        std::atomic<std::uint64_t> _ownerSession {0};
-        bool                       _attachPaused {false};
-        std::atomic<bool>          _stubActive {false};
-        std::atomic<bool>          _hostPaused {false};
-        std::atomic<bool>          _controlPaused {false};
-        std::atomic<std::uint32_t> _watchCount {0};
+        std::mutex                    _qmpMutex;
+        std::unique_ptr<QmpClient>    _qmp;
+        std::filesystem::path         _qmpSocket;
+        std::filesystem::path         _stubSocket;
+        QmpTransportFactory           _qmpFactory;
+        RspTransportFactory           _rspFactory;
+        DebugInspector*               _inspector {nullptr};
+        std::unique_ptr<RspClient>    _attachedRsp;
+        RspEndpoint                   _attachedEndpoint;
+        RspTargetDescription          _attachedDescription;
+        std::string                   _attachedArchitecture;
+        std::atomic<std::uint64_t>    _ownerSession {0};
+        bool                          _attachPaused {false};
+        std::atomic<bool>             _stubActive {false};
+        std::atomic<bool>             _hostPaused {false};
+        std::atomic<bool>             _controlPaused {false};
+        std::atomic<std::uint32_t>    _watchCount {0};
+        std::atomic<DebugWatchAccess> _watchAccess {DebugWatchAccess::Write};
         // True while the attached stub is running the guest after a continue or wait.
-        std::atomic<bool>          _sessionRunning {false};
-        std::vector<ArmedResource> _resources;
-        std::uint32_t              _nextResourceId {1};
-        std::uint32_t              _usedHardwareSlots {0};
+        std::atomic<bool>             _sessionRunning {false};
+        std::vector<ArmedResource>    _resources;
+        std::uint32_t                 _nextResourceId {1};
+        std::uint32_t                 _usedHardwareSlots {0};
     };
 } // namespace mpfshost::debug
 

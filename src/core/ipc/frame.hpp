@@ -255,6 +255,7 @@ namespace mpfshost
         DebugThreadsResponse         = 0x806F,
         DisassembleResponse          = 0x8070,
         DebugBacktraceResponse       = 0x8071,
+        DebugWatchHeartbeat          = 0x8072,
         ErrorResponse                = 0x8FFF,
     };
 

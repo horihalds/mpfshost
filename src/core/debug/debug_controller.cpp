@@ -511,6 +511,7 @@ namespace mpfshost::debug
         status.hostPaused     = _hostPaused.load();
         status.vcpuCount      = cpus.count;
         status.watchCount     = _watchCount.load();
+        status.watchAccess    = _watchAccess.load();
         status.architecture   = cpus.architecture.empty() ? "unknown" : cpus.architecture;
         return true;
     }
@@ -1380,13 +1381,14 @@ namespace mpfshost::debug
         return response;
     }
 
-    std::optional<DebugWatchEnd> DebugController::watch(DebugWatchRequest           request,
-                                                        const DebugWatchHitSink&    onHit,
-                                                        const DebugWatchAbortCheck& aborted,
-                                                        bool&                       busy,
-                                                        std::string&                error,
-                                                        bool&                       unavailable,
-                                                        bool&                       notFound)
+    std::optional<DebugWatchEnd> DebugController::watch(DebugWatchRequest              request,
+                                                        const DebugWatchHitSink&       onHit,
+                                                        const DebugWatchHeartbeatSink& onHeartbeat,
+                                                        const DebugWatchAbortCheck&    aborted,
+                                                        bool&                          busy,
+                                                        std::string&                   error,
+                                                        bool&                          unavailable,
+                                                        bool&                          notFound)
     {
         busy        = false;
         unavailable = false;
@@ -1408,6 +1410,7 @@ namespace mpfshost::debug
         {
             return std::nullopt;
         }
+        _watchAccess   = request.access;
         // This watch owns the guest's run state from here; a pause requested before it started is not an
         // external pause for this run.
         _controlPaused = false;
@@ -1514,10 +1517,10 @@ namespace mpfshost::debug
                 {
                     // The watchpoint is global, so removal does not depend on which thread is selected. Retry
                     // once after dropping a stale reply: leaving a debug register armed breaks the next watch.
-                    if (!rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
+                    if (!rsp.removeWatchpoint(request.address, request.width, request.access, kRspTimeout, ignored))
                     {
                         rsp.drainPending();
-                        if (!rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
+                        if (!rsp.removeWatchpoint(request.address, request.width, request.access, kRspTimeout, ignored))
                         {
                             log::warn("host", "could not remove the watchpoint: ", ignored);
                         }
@@ -1634,13 +1637,18 @@ namespace mpfshost::debug
         {
             return std::nullopt;
         }
-        if (!rsp->insertWatchpoint(request.address, request.width, kRspTimeout, error))
+        bool unsupported = false;
+        if (!rsp->insertWatchpoint(request.address, request.width, request.access, kRspTimeout, error, unsupported))
         {
+            if (unsupported)
+            {
+                unavailable = true;
+            }
             return std::nullopt;
         }
         armedThread = threads.front();
         _watchCount = 1;
-        log::info("host", "armed a write watchpoint");
+        log::info("host", "armed a ", debugWatchAccessName(request.access), " watchpoint");
 
         // Drop any stop reply QEMU queued before this client attached, so the first poll cannot report
         // stale registers as a hit.
@@ -1648,8 +1656,49 @@ namespace mpfshost::debug
 
         DebugWatchEnd end;
         end.status                  = DebugWatchStatus::Completed;
+        end.access                  = request.access;
         std::uint32_t hits          = 0;
-        const auto    watchDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {request.timeoutMs};
+        const auto    watchStart    = std::chrono::steady_clock::now();
+        const auto    watchDeadline = watchStart + std::chrono::milliseconds {request.timeoutMs};
+        auto          nextHeartbeat = watchStart + std::chrono::milliseconds {kDebugWatchHeartbeatMs};
+
+        const auto emitHeartbeat = [&]() -> bool
+        {
+            if (!onHeartbeat)
+            {
+                return true;
+            }
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - watchStart)
+                    .count();
+            DebugWatchHeartbeat heartbeat;
+            heartbeat.elapsedMs    = static_cast<std::uint32_t>(std::min<std::int64_t>(elapsed, 0xFFFFFFFF));
+            heartbeat.hitCount     = hits;
+            heartbeat.skippedCount = end.skippedCount;
+            heartbeat.access       = request.access;
+            if (!onHeartbeat(heartbeat))
+            {
+                end.status = DebugWatchStatus::Cancelled;
+                end.error  = "the watchpoint heartbeat could not be delivered";
+                return false;
+            }
+            return true;
+        };
+
+        const auto maybeEmitHeartbeat = [&]() -> bool
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (now < nextHeartbeat)
+            {
+                return true;
+            }
+            if (!emitHeartbeat())
+            {
+                return false;
+            }
+            nextHeartbeat = now + std::chrono::milliseconds {kDebugWatchHeartbeatMs};
+            return true;
+        };
 
         // A debug-stop from another client pauses the guest through QMP, which can surface as a stub stop.
         // Stay paused until that client continues instead of resuming the guest behind its back.
@@ -1676,6 +1725,10 @@ namespace mpfshost::debug
                     return false;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds {10});
+                if (!maybeEmitHeartbeat())
+                {
+                    return false;
+                }
             }
             return true;
         };
@@ -1691,7 +1744,7 @@ namespace mpfshost::debug
             return end;
         }
 
-        while (hits < request.maxHits)
+        while (request.maxHits == 0 || hits < request.maxHits)
         {
             if (aborted && aborted())
             {
@@ -1720,6 +1773,10 @@ namespace mpfshost::debug
             const auto  polled = rsp->pollPacket(stopPacket, slice, error);
             if (polled == RspPollResult::Timeout)
             {
+                if (!maybeEmitHeartbeat())
+                {
+                    break;
+                }
                 continue;
             }
             if (polled == RspPollResult::Closed)
@@ -1774,11 +1831,14 @@ namespace mpfshost::debug
             // CR3/module fallback for them. A user-mode CR3 may be a shadow page table that MemProcFS cannot
             // report for the process, so a CR3 mismatch alone is not proof that the hit belongs to someone
             // else.
-            const auto stopAddress = stopWatchAddress(stopPacket);
-            bool       accept      = false;
+            const auto stopAddress  = stopWatchAddress(stopPacket);
+            bool       accept       = false;
+            const bool valueChanged = newValue != lastValue;
             if (stopAddress.has_value())
             {
-                accept = *stopAddress == request.address && newValue != lastValue;
+                // Read and access watchpoints fire without changing memory, so only a write watch needs the
+                // extra value check.
+                accept = *stopAddress == request.address && (request.access != DebugWatchAccess::Write || valueChanged);
             }
             else
             {
@@ -1787,7 +1847,7 @@ namespace mpfshost::debug
                 if (!accept)
                 {
                     std::string moduleError;
-                    accept = newValue != lastValue
+                    accept = (request.access != DebugWatchAccess::Write || valueChanged)
                           && _inspector->moduleForAddress(request.pid, rip, moduleError).has_value();
                 }
             }
@@ -1850,7 +1910,7 @@ namespace mpfshost::debug
                 end.error  = "the watchpoint result could not be delivered";
                 break;
             }
-            if (hits >= request.maxHits)
+            if (request.maxHits != 0 && hits >= request.maxHits)
             {
                 break;
             }
@@ -2843,9 +2903,15 @@ namespace mpfshost::debug
             releaseHardwareSlot(slot);
             return std::nullopt;
         }
-        if (!_attachedRsp->insertWatchpoint(request.address, request.width, kRspTimeout, error))
+        bool unsupported = false;
+        if (!_attachedRsp->insertWatchpoint(
+                request.address, request.width, request.access, kRspTimeout, error, unsupported))
         {
             releaseHardwareSlot(slot);
+            if (unsupported)
+            {
+                unavailable = true;
+            }
             return std::nullopt;
         }
         _attachedRsp->drainPending();
@@ -2860,6 +2926,7 @@ namespace mpfshost::debug
         resource.slot     = slot;
         resource.threadId = threads.front();
         _resources.push_back(resource);
+        _watchAccess = request.access;
         refreshWatchCount();
 
         return DebugWatchArmResponse {
@@ -2898,11 +2965,13 @@ namespace mpfshost::debug
         bool        removed = false;
         if (kind == DebugResourceKind::Watchpoint)
         {
-            removed = _attachedRsp->removeWatchpoint(found->address, found->width, kRspTimeout, removeError);
+            removed =
+                _attachedRsp->removeWatchpoint(found->address, found->width, found->access, kRspTimeout, removeError);
             if (!removed)
             {
                 _attachedRsp->drainPending();
-                removed = _attachedRsp->removeWatchpoint(found->address, found->width, kRspTimeout, removeError);
+                removed = _attachedRsp->removeWatchpoint(
+                    found->address, found->width, found->access, kRspTimeout, removeError);
             }
         }
         else
@@ -3077,11 +3146,13 @@ namespace mpfshost::debug
                     bool        removed = false;
                     if (resource.kind == DebugResourceKind::Watchpoint)
                     {
-                        removed = rsp->removeWatchpoint(resource.address, resource.width, kRspTimeout, removeError);
+                        removed = rsp->removeWatchpoint(
+                            resource.address, resource.width, resource.access, kRspTimeout, removeError);
                         if (!removed)
                         {
                             rsp->drainPending();
-                            removed = rsp->removeWatchpoint(resource.address, resource.width, kRspTimeout, removeError);
+                            removed = rsp->removeWatchpoint(
+                                resource.address, resource.width, resource.access, kRspTimeout, removeError);
                         }
                     }
                     else

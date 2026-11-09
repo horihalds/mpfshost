@@ -263,6 +263,12 @@ namespace
         std::uint64_t                                      currentCr3 {};
         std::size_t                                        watchInserts {0};
         std::size_t                                        watchRemoves {0};
+        std::size_t                                        readWatchInserts {0};
+        std::size_t                                        readWatchRemoves {0};
+        std::size_t                                        accessWatchInserts {0};
+        std::size_t                                        accessWatchRemoves {0};
+        bool                                               rejectReadWatch {false};
+        bool                                               rejectAccessWatch {false};
         std::size_t                                        breakpointInserts {0};
         std::size_t                                        breakpointRemoves {0};
         std::size_t                                        continues {0};
@@ -373,14 +379,37 @@ namespace
                                                 });
                 quoteAck(found != registerBytesByThread.end() ? found->second : registerBytes);
             }
-            else if (body.starts_with("Z2,"))
+            else if (body.starts_with("Z2,") || body.starts_with("Z3,") || body.starts_with("Z4,"))
             {
                 ++watchInserts;
-                quoteAck("OK");
+                if (body.starts_with("Z3,"))
+                {
+                    ++readWatchInserts;
+                }
+                if (body.starts_with("Z4,"))
+                {
+                    ++accessWatchInserts;
+                }
+                if ((body.starts_with("Z3,") && rejectReadWatch) || (body.starts_with("Z4,") && rejectAccessWatch))
+                {
+                    quoteAck("");
+                }
+                else
+                {
+                    quoteAck("OK");
+                }
             }
-            else if (body.starts_with("z2,"))
+            else if (body.starts_with("z2,") || body.starts_with("z3,") || body.starts_with("z4,"))
             {
                 ++watchRemoves;
+                if (body.starts_with("z3,"))
+                {
+                    ++readWatchRemoves;
+                }
+                if (body.starts_with("z4,"))
+                {
+                    ++accessWatchRemoves;
+                }
                 quoteAck("OK");
             }
             else if (body.starts_with("Z0,") || body.starts_with("Z1,"))
@@ -1014,6 +1043,195 @@ TEST_CASE("the debug controller arms, resolves and tears down a write watchpoint
     REQUIRE_FALSE(qmp->stubActive);
     REQUIRE(qmp->running);
     REQUIRE(qmp->count("gdbserver none") == 1);
+}
+
+TEST_CASE("a read watchpoint uses Z3 and reports its access mode", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123, 0x5000});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xAA};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
+        {42, 0x5000, 4, mpfshost::DebugWatchAccess::Read, 1, 5000, {}, {}},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(end->access == mpfshost::DebugWatchAccess::Read);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(rsp->readWatchInserts == 1);
+    REQUIRE(rsp->readWatchRemoves == 1);
+}
+
+TEST_CASE("an unsupported read watchpoint is reported as unavailable", "[core][debug][controller]")
+{
+    auto qmp             = std::make_shared<FakeQmpState>();
+    qmp->running         = true;
+    auto  qmpTransport   = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport   = std::make_unique<FakeRspTransport>();
+    auto* rsp            = rspTransport.get();
+    rsp->registersXml    = x86RegisterXml();
+    rsp->rejectReadWatch = true;
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        busy = false;
+    std::string error;
+    bool        unavailable = false;
+    bool        notFound    = false;
+    const auto  end         = controller.watch({42, 0x5000, 4, mpfshost::DebugWatchAccess::Read, 1, 5000, {}, {}},
+                                               {},
+                                               {},
+                                               {},
+                                               busy,
+                                               error,
+                                               unavailable,
+                                               notFound);
+    REQUIRE_FALSE(end.has_value());
+    REQUIRE(unavailable);
+    REQUIRE(error.find("read watchpoints") != std::string::npos);
+}
+
+TEST_CASE("an unlimited watch runs until cancellation", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123, 0x5000});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    std::size_t                           aborts = 0;
+    bool                                  busy   = false;
+    std::string                           error;
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
+        {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write, 0, 5000, {}, {}},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        [&aborts]()
+        {
+            return ++aborts > 1;
+        },
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(rsp->watchRemoves == 1);
+}
+
+TEST_CASE("a quiet watch emits heartbeats before it times out", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchHeartbeat> heartbeats;
+    bool                                       busy = false;
+    std::string                                error;
+    bool                                       unavailable = false;
+    bool                                       notFound    = false;
+    const auto                                 end         = controller.watch(
+        {42, 0x5000, 4, mpfshost::DebugWatchAccess::Access, 1, 1100, {}, {}},
+        {},
+        [&heartbeats](const mpfshost::DebugWatchHeartbeat& heartbeat)
+        {
+            heartbeats.push_back(heartbeat);
+            return true;
+        },
+        {},
+        busy,
+        error,
+        unavailable,
+        notFound);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE_FALSE(heartbeats.empty());
+    REQUIRE(heartbeats.front().access == mpfshost::DebugWatchAccess::Access);
+    REQUIRE(heartbeats.front().elapsedMs >= 1000);
 }
 
 TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[core][debug][controller]")
@@ -2943,9 +3161,10 @@ TEST_CASE("persistent breakpoints share four hardware slots and keep their ids",
     // Free the slot the third original breakpoint holds, then arm a watchpoint with that slot.
     REQUIRE(controller.removeBreakpoint(7, {ids[2]}, invalidState, busy, error, unavailable)->removed);
     const auto watched = controller.armWatch(
-        7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable);
+        7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Access}, invalidState, busy, error, unavailable);
     REQUIRE(watched.has_value());
     REQUIRE(watched->slot == 2);
+    REQUIRE(watched->access == mpfshost::DebugWatchAccess::Access);
 
     const auto detached = controller.detach(7, busy, error, unavailable);
     REQUIRE(detached.has_value());
@@ -2953,6 +3172,8 @@ TEST_CASE("persistent breakpoints share four hardware slots and keep their ids",
     REQUIRE_FALSE(qmp->stubActive);
     REQUIRE(rsp->breakpointRemoves == 6);
     REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE(rsp->accessWatchInserts == 1);
+    REQUIRE(rsp->accessWatchRemoves == 1);
 
     REQUIRE_FALSE(controller.listBreakpoints(7, invalidState, busy, error, unavailable).has_value());
     REQUIRE(invalidState);

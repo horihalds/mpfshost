@@ -168,9 +168,9 @@ namespace mpfshost
                     return false;
                 }
             }
-            if (command == "debug-watch" && (options.maxHits == 0 || options.maxHits > kMaxDebugWatchHits))
+            if (command == "debug-watch" && options.maxHits > kMaxDebugWatchHits)
             {
-                error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWatchHits);
+                error = "--max-hits must be between 0 and " + std::to_string(kMaxDebugWatchHits);
                 return false;
             }
             if (command == "debug-wait" && (options.maxHits == 0 || options.maxHits > kMaxDebugWaitHits))
@@ -618,16 +618,27 @@ namespace mpfshost
             {
                 if (index + 1 >= args.size())
                 {
-                    error = "--access only accepts write";
+                    error = "--access only accepts write, read or access";
                     return std::nullopt;
                 }
                 const std::string_view value {args[++index]};
-                if (value != "write")
+                if (value == "write")
                 {
-                    error = "--access only accepts write";
+                    options.watchAccess = mpfshost::DebugWatchAccess::Write;
+                }
+                else if (value == "read")
+                {
+                    options.watchAccess = mpfshost::DebugWatchAccess::Read;
+                }
+                else if (value == "access")
+                {
+                    options.watchAccess = mpfshost::DebugWatchAccess::Access;
+                }
+                else
+                {
+                    error = "--access only accepts write, read or access";
                     return std::nullopt;
                 }
-                options.watchAccess    = mpfshost::DebugWatchAccess::Write;
                 options.watchAccessSet = true;
                 continue;
             }
@@ -659,13 +670,13 @@ namespace mpfshost
             {
                 if (index + 1 >= args.size())
                 {
-                    error = "--max-hits needs a positive integer";
+                    error = "--max-hits needs a non-negative integer";
                     return std::nullopt;
                 }
                 const auto parsed = mpfshost::parseDecimalU32(args[++index]);
                 if (!parsed)
                 {
-                    error = "--max-hits needs a positive integer";
+                    error = "--max-hits needs a non-negative integer";
                     return std::nullopt;
                 }
                 options.maxHits    = *parsed;

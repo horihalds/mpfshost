@@ -469,15 +469,33 @@ namespace mpfshost::mcp
         Json debugStatusJson(const DebugStatus& status)
         {
             return Json {
-                {   "run_state", std::string {debugRunStateName(status.runState)}},
-                {"architecture",                              status.architecture},
-                { "stub_active",                                status.stubActive},
-                {  "stub_owned",                                 status.stubOwned},
-                {"foreign_stub",                               status.foreignStub},
-                { "host_paused",                                status.hostPaused},
-                {  "vcpu_count",                                 status.vcpuCount},
-                { "watch_count",                                status.watchCount}
+                {   "run_state",       std::string {debugRunStateName(status.runState)}},
+                {"architecture",                                    status.architecture},
+                { "stub_active",                                      status.stubActive},
+                {  "stub_owned",                                       status.stubOwned},
+                {"foreign_stub",                                     status.foreignStub},
+                { "host_paused",                                      status.hostPaused},
+                {  "vcpu_count",                                       status.vcpuCount},
+                { "watch_count",                                      status.watchCount},
+                {"watch_access", std::string {debugWatchAccessName(status.watchAccess)}}
             };
+        }
+
+        std::optional<DebugWatchAccess> parseWatchAccess(std::string_view text)
+        {
+            if (text == "write")
+            {
+                return DebugWatchAccess::Write;
+            }
+            if (text == "read")
+            {
+                return DebugWatchAccess::Read;
+            }
+            if (text == "access")
+            {
+                return DebugWatchAccess::Access;
+            }
+            return std::nullopt;
         }
 
         Json debugRecordJson(const DebugRegisterRecord& record)
@@ -641,12 +659,12 @@ namespace mpfshost::mcp
         Json debugArmWatchJson(const DebugWatchArmResponse& watch)
         {
             return Json {
-                {     "id",                 watch.id},
-                {    "pid",                watch.pid},
-                {"address", hexString(watch.address)},
-                {  "width",              watch.width},
-                { "access",    std::string {"write"}},
-                {   "slot",               watch.slot}
+                {     "id",                                         watch.id},
+                {    "pid",                                        watch.pid},
+                {"address",                         hexString(watch.address)},
+                {  "width",                                      watch.width},
+                { "access", std::string {debugWatchAccessName(watch.access)}},
+                {   "slot",                                       watch.slot}
             };
         }
 
@@ -974,15 +992,15 @@ namespace mpfshost::mcp
                  "Resume the guest", "Resume a guest paused by debug_stop or another client. Destructive: the guest starts running again.",
                  false,                                                                                              {target}},
                 {          "debug_watch",
-                 "Watch a process write",         "Arm a hardware write watchpoint on a process address, run the guest, and return each hit with the "
+                 "Watch a process access",         "Arm a hardware watchpoint on a process address, run the guest, and return each hit with the "
          "trap PC, CR3 and nearest symbol. Destructive: pauses and resumes the guest.", false,
                  {target,
                  pid,
                  {"address", "string", "Watched linear address (hex) or module!symbol[+offset] expression", true},
                  {"width", "integer", "Watch width in bytes: 1, 2, 4 or 8 (default 4)", false},
-                 {"access", "string", "Access to watch; only write is supported", false},
-                 {"max_hits", "integer", "Stop after this many hits (default 1)", false},
-                 {"timeout", "integer", "Seconds to wait for a write (default 30)", false}}                                  },
+                 {"access", "string", "Access to watch: write, read or access (default write)", false},
+                 {"max_hits", "integer", "Stop after this many hits, 0 to run until cancelled (default 1)", false},
+                 {"timeout", "integer", "Seconds to wait for a hit (default 30)", false}}                                    },
                 {          "debug_break",
                  "Break on an address",                                   "Arm one software or hardware breakpoint and return its first hit.",
                  false,    {target,
@@ -1017,13 +1035,13 @@ namespace mpfshost::mcp
                  "List breakpoints",                                                    "List the breakpoints armed on the attached stub.",
                  true,                                                                                              {target} },
                 {      "debug_arm_watch",
-                 "Arm a persistent watchpoint",                                               "Arm a hardware write watchpoint on the attached stub and return its id. It stays armed "
+                 "Arm a persistent watchpoint",                                               "Arm a hardware watchpoint on the attached stub and return its id. It stays armed "
                                                "until removed or the attachment ends.", false,
                  {target,
                  pid,
                  {"address", "string", "Watched linear address (hex)", true},
                  {"width", "integer", "Watch width in bytes: 1, 2, 4 or 8 (default 4)", false},
-                 {"access", "string", "Access to watch; only write is supported", false}}                                    },
+                 {"access", "string", "Access to watch: write, read or access (default write)", false}}                      },
                 {   "debug_remove_watch",
                  "Remove a watchpoint",                                                                  "Remove one armed watchpoint by id.",
                  false,                                              {target, {"id", "integer", "Armed watchpoint id", true}}},
@@ -2676,9 +2694,10 @@ namespace mpfshost::mcp
             if (name == "debug_watch")
             {
                 const auto accessText = optionalString(args, "access", "write");
-                if (accessText != "write")
+                const auto access     = parseWatchAccess(accessText);
+                if (!access)
                 {
-                    return failure("access only accepts write");
+                    return failure("access only accepts write, read or access");
                 }
                 const auto width   = hasArg(args, "width") ? numberValue(args, "width", false) : 4;
                 const auto maxHits = hasArg(args, "max_hits") ? numberValue(args, "max_hits", false) : 1;
@@ -2687,7 +2706,7 @@ namespace mpfshost::mcp
                 {
                     return failure("width must be 1, 2, 4 or 8");
                 }
-                if (maxHits == 0 || maxHits > kMaxDebugWatchHits)
+                if (maxHits > kMaxDebugWatchHits)
                 {
                     return failure("max_hits is out of range");
                 }
@@ -2704,7 +2723,7 @@ namespace mpfshost::mcp
                      u32Value(args, "pid", true),
                      targetAddress.address,
                      static_cast<std::uint32_t>(width),
-                     DebugWatchAccess::Write,
+                     *access,
                      static_cast<std::uint32_t>(maxHits),
                      static_cast<std::uint32_t>(timeout * 1000),
                      targetAddress.module,
@@ -2722,6 +2741,7 @@ namespace mpfshost::mcp
                     {"status", std::string {debugWatchStatusName(end->status)}},
                     {"hit_count", end->hitCount},
                     {"skipped_count", end->skippedCount},
+                    {"access", std::string {debugWatchAccessName(end->access)}},
                     {"error", end->error},
                     {"symbol", requireString(args, "address")},
                     {"hits", std::move(hits)}
@@ -2876,9 +2896,10 @@ namespace mpfshost::mcp
             if (name == "debug_arm_watch")
             {
                 const auto accessText = optionalString(args, "access", "write");
-                if (accessText != "write")
+                const auto access     = parseWatchAccess(accessText);
+                if (!access)
                 {
-                    return failure("access only accepts write");
+                    return failure("access only accepts write, read or access");
                 }
                 const auto width = hasArg(args, "width") ? numberValue(args, "width", false) : 4;
                 if (width != 1 && width != 2 && width != 4 && width != 8)
@@ -2891,7 +2912,7 @@ namespace mpfshost::mcp
                                                      u32Value(args, "pid", true),
                                                      hexValue(args, "address", true),
                                                      static_cast<std::uint32_t>(width),
-                                                     DebugWatchAccess::Write},
+                                                     *access},
                                                     error);
                 if (!response)
                 {

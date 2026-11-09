@@ -123,6 +123,13 @@ namespace mpfshost
 
     // Streams one hit at a time through `onHit` and returns the end record. A dedicated connection is used
     // for each watch, so cancellation means closing that connection.
+    [[nodiscard]] std::optional<DebugWatchEnd>
+    debugWatch(const std::filesystem::path&                           socketPath,
+               const DebugWatchQuery&                                 query,
+               const std::function<void(const DebugWatchData&)>&      onHit,
+               const std::function<void(const DebugWatchHeartbeat&)>& onHeartbeat,
+               std::string&                                           error);
+
     [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                      socketPath,
                                                           const DebugWatchQuery&                            query,
                                                           const std::function<void(const DebugWatchData&)>& onHit,

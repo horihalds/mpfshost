@@ -664,6 +664,8 @@ namespace mpfshost
             return "DisassembleResponse";
         case MessageType::DebugBacktraceResponse:
             return "DebugBacktraceResponse";
+        case MessageType::DebugWatchHeartbeat:
+            return "DebugWatchHeartbeat";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:

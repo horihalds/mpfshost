@@ -170,6 +170,42 @@ TEST_CASE("RSP formats breakpoint and step packets", "[core][debug][rsp]")
     REQUIRE(packets[3].find("$z1,401000,1#") == 0);
 }
 
+TEST_CASE("RSP formats write, read and access watchpoint packets", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("OK") + acked("OK") + acked("OK") + acked("OK") + acked("OK") + acked("OK")};
+    std::string error;
+    bool        unsupported = false;
+    REQUIRE(rsp.client->insertWatchpoint(0x401000, 4, mpfshost::DebugWatchAccess::Write, 100ms, error, unsupported));
+    REQUIRE_FALSE(unsupported);
+    REQUIRE(rsp.client->removeWatchpoint(0x401000, 4, mpfshost::DebugWatchAccess::Write, 100ms, error));
+    REQUIRE(rsp.client->insertWatchpoint(0x401000, 8, mpfshost::DebugWatchAccess::Read, 100ms, error, unsupported));
+    REQUIRE_FALSE(unsupported);
+    REQUIRE(rsp.client->removeWatchpoint(0x401000, 8, mpfshost::DebugWatchAccess::Read, 100ms, error));
+    REQUIRE(rsp.client->insertWatchpoint(0x401000, 1, mpfshost::DebugWatchAccess::Access, 100ms, error, unsupported));
+    REQUIRE_FALSE(unsupported);
+    REQUIRE(rsp.client->removeWatchpoint(0x401000, 1, mpfshost::DebugWatchAccess::Access, 100ms, error));
+
+    const auto packets = packetWrites(*rsp.raw);
+    REQUIRE(packets.size() == 6);
+    REQUIRE(packets[0].find("$Z2,401000,4#") == 0);
+    REQUIRE(packets[1].find("$z2,401000,4#") == 0);
+    REQUIRE(packets[2].find("$Z3,401000,8#") == 0);
+    REQUIRE(packets[3].find("$z3,401000,8#") == 0);
+    REQUIRE(packets[4].find("$Z4,401000,1#") == 0);
+    REQUIRE(packets[5].find("$z4,401000,1#") == 0);
+}
+
+TEST_CASE("RSP reports a read watchpoint the stub does not implement", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("")};
+    std::string error;
+    bool        unsupported = false;
+    REQUIRE_FALSE(
+        rsp.client->insertWatchpoint(0x401000, 4, mpfshost::DebugWatchAccess::Read, 100ms, error, unsupported));
+    REQUIRE(unsupported);
+    REQUIRE(error.find("read watchpoints") != std::string::npos);
+}
+
 TEST_CASE("RSP names the thread in a vCont single step", "[core][debug][rsp]")
 {
     FakeRsp     rsp {acked("PacketSize=20020;vContSupported+")};

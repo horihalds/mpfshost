@@ -193,7 +193,7 @@ to it automatically.
  `--client debug-threads <vm>` | List each stub thread with its vCPU index, GDB thread id, `rip`, `rsp`, `cr3` and, when resolvable, the guest pid and tid. Requires a paused guest. |
  `--client disassemble <vm>` | Decode instructions at a process address; `--pid`, `--address` (hex), `--count` (1–128, default 16). Undecodable bytes print as `.byte` lines. Needs no debugger attachment, so it works while the guest runs. |
  `--client debug-backtrace <vm>` | Walk the selected stopped thread's frame-pointer chain; `--pid`, `--vcpu <n>` or `--thread <id>`, `--max-frames` (1–128, default 32). Prints each address with its module/export/PDB symbol when it resolves. Requires a paused guest. |
- `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). `--address` accepts hex or `module!symbol[+offset]`, `module+offset`, a bare module name. Prints the resolved target and trapped store. Destructive. |
+ `--client debug-watch <vm>` | Watch a process address for write, read or access; `--pid`, `--address`, `--width` (1/2/4/8), `--access write\|read\|access`, `--max-hits` (0 runs until cancelled), `--timeout` (seconds). `--address` accepts hex or `module!symbol[+offset]`, `module+offset`, a bare module name. Prints the resolved target, trapped store and periodic heartbeats. Destructive. |
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). `--address` accepts the same symbolic forms. Reports the resolved address, first hit and symbol, then removes it. Destructive. |
  `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0) or `--thread <id>` from `debug-threads`. Destructive. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
@@ -272,7 +272,7 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   `debug-registers`. `debug-stop` pauses the guest and
   `debug-continue` resumes it; the host remembers whether **it** paused the VM. `debug-registers`, `debug-threads`
   and `debug-step` only work on a paused guest and leave it paused. They start a temporary GDB stub on a Unix socket under `/tmp`, as
-  do `debug-watch` and `debug-break`; a watch reports each write hit and a breakpoint reports its first hit, both with
+  do `debug-watch` and `debug-break`; a watch reports each write, read or access hit and a breakpoint reports its first hit, both with
   the trap PC and nearest symbol, and always remove the trap and stop the stub afterwards. A breakpoint is one-shot:
   repeat the command to stop again. These commands are destructive: a paused guest stops executing until it is
   resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md). `disassemble` is not a debug command: it only reads

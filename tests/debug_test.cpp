@@ -138,6 +138,7 @@ TEST_CASE("debug status round trips through both response codecs", "[core][debug
     status.stubOwned    = true;
     status.foreignStub  = false;
     status.architecture = "x86_64";
+    status.watchAccess  = mpfshost::DebugWatchAccess::Access;
 
     const auto state   = mpfshost::decodeDebugStateResponse(mpfshost::encodeDebugStateResponse(status));
     const auto control = mpfshost::decodeDebugControlResponse(mpfshost::encodeDebugControlResponse(status));
@@ -151,6 +152,7 @@ TEST_CASE("debug status round trips through both response codecs", "[core][debug
     REQUIRE(state->stubOwned);
     REQUIRE_FALSE(state->foreignStub);
     REQUIRE(state->architecture == "x86_64");
+    REQUIRE(state->watchAccess == mpfshost::DebugWatchAccess::Access);
     REQUIRE(control->runState == mpfshost::DebugRunState::Paused);
 
     status.stubOwned   = false;
@@ -387,17 +389,27 @@ TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec
     REQUIRE(decodedHit->processFound);
     REQUIRE(decodedHit->threadFound);
 
-    const auto decodedEnd = mpfshost::decodeDebugWatchEnd(
-        mpfshost::encodeDebugWatchEnd({mpfshost::DebugWatchStatus::Timeout, 2, 1, "timed out"}));
+    const auto decodedEnd = mpfshost::decodeDebugWatchEnd(mpfshost::encodeDebugWatchEnd(
+        {mpfshost::DebugWatchStatus::Timeout, 2, 1, mpfshost::DebugWatchAccess::Read, "timed out"}));
     REQUIRE(decodedEnd.has_value());
     REQUIRE(decodedEnd->status == mpfshost::DebugWatchStatus::Timeout);
     REQUIRE(decodedEnd->hitCount == 2);
     REQUIRE(decodedEnd->skippedCount == 1);
+    REQUIRE(decodedEnd->access == mpfshost::DebugWatchAccess::Read);
     REQUIRE(decodedEnd->error == "timed out");
+
+    const auto decodedHeartbeat = mpfshost::decodeDebugWatchHeartbeat(
+        mpfshost::encodeDebugWatchHeartbeat({1500, 3, 4, mpfshost::DebugWatchAccess::Access}));
+    REQUIRE(decodedHeartbeat.has_value());
+    REQUIRE(decodedHeartbeat->elapsedMs == 1500);
+    REQUIRE(decodedHeartbeat->hitCount == 3);
+    REQUIRE(decodedHeartbeat->skippedCount == 4);
+    REQUIRE(decodedHeartbeat->access == mpfshost::DebugWatchAccess::Access);
 
     REQUIRE_FALSE(mpfshost::decodeDebugWatchRequest({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugWatchData({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugWatchEnd({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugWatchHeartbeat({}).has_value());
 }
 
 TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]")
@@ -755,30 +767,43 @@ TEST_CASE("debug watch hits stream through the fake backend", "[core][debug][ses
     mpfshost::DebugWatchEnd end;
     end.status   = mpfshost::DebugWatchStatus::Completed;
     end.hitCount = 1;
+    end.access   = mpfshost::DebugWatchAccess::Read;
     fixture.backend().setDebugWatch({hit}, end);
+    fixture.backend().setDebugWatchHeartbeats({
+        mpfshost::DebugWatchHeartbeat {1000, 0, 0, mpfshost::DebugWatchAccess::Read}
+    });
     RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
 
-    std::vector<mpfshost::DebugWatchData> received;
-    std::string                           error;
-    const auto                            result = mpfshost::debugWatch(
+    std::vector<mpfshost::DebugWatchData>      received;
+    std::vector<mpfshost::DebugWatchHeartbeat> heartbeats;
+    std::string                                error;
+    const auto                                 result = mpfshost::debugWatch(
         fixture.socketPath(),
-        {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 2, 5000, {}, {}},
+        {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Read, 2, 5000, {}, {}},
         [&received](const mpfshost::DebugWatchData& data)
         {
             received.push_back(data);
+        },
+        [&heartbeats](const mpfshost::DebugWatchHeartbeat& heartbeat)
+        {
+            heartbeats.push_back(heartbeat);
         },
         error);
     REQUIRE(result.has_value());
     REQUIRE(error.empty());
     REQUIRE(result->status == mpfshost::DebugWatchStatus::Completed);
     REQUIRE(result->hitCount == 1);
+    REQUIRE(result->access == mpfshost::DebugWatchAccess::Read);
     REQUIRE(received.size() == 1);
     REQUIRE(received[0].rip == 0x1000);
     REQUIRE(received[0].module == "ntdll.dll");
+    REQUIRE(heartbeats.size() == 1);
+    REQUIRE(heartbeats[0].elapsedMs == 1000);
     REQUIRE(fixture.backend().debugState()->watchCalls == 1);
     REQUIRE(fixture.backend().debugState()->lastWatchRequest.has_value());
     REQUIRE(fixture.backend().debugState()->lastWatchRequest->pid == 42);
     REQUIRE(fixture.backend().debugState()->lastWatchRequest->maxHits == 2);
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest->access == mpfshost::DebugWatchAccess::Read);
 }
 
 TEST_CASE("debug breakpoints and single steps are delivered through the fake backend", "[core][debug][session]")

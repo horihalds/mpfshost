@@ -215,7 +215,8 @@ is left alone. `VmmHandle` destruction runs the shutdown teardown after every se
 `debug-arm-break` and `debug-arm-watch` arm a resource on the attached stub and return an id. Unlike the one-shot
 `debug-break`/`debug-watch` commands, nothing is disarmed until `debug-remove-break`, `debug-remove-watch`,
 `debug-detach` or a teardown. Arming requires an attachment and a paused guest, so attach first; the attach leaves the
-guest paused. `debug-breakpoints` and `debug-watchpoints` list the armed resources.
+guest paused. `debug-arm-watch --access write|read|access` selects the hardware mode; a stub that rejects the read or
+access form answers `CapabilityUnavailable`. `debug-breakpoints` and `debug-watchpoints` list the armed resources.
 
 The four x86 hardware debug slots are shared by hardware breakpoints and watchpoints. Software breakpoints do not use
 a slot, but they still obey the `Z0` address-space limitation documented below. An arm that would exceed the slot
@@ -240,7 +241,8 @@ report hits without re-arming anything. A wait that times out leaves the guest r
 
 The host removes every armed resource on detach, host shutdown, session death, and after a stop packet that reports a
 guest exit or a snapshot/reset. A stub close during a wait also clears the bookkeeping, because the debug registers
-went with it. The `watchCount` in `debug-status` counts armed watchpoints only.
+went with it. The `watchCount` in `debug-status` counts armed watchpoints only, and `watch-access` reports the access
+mode of the most recently armed one.
 
 ### Persistent resource validation record
 
@@ -342,7 +344,7 @@ QEMU names the watched address in a write-watchpoint stop, for example
 the watched value changed. It falls back to the older CR3-or-module rule only when the stub omits the field. The
 field is stronger evidence than the process DTB, which can be a shadow page table that MemProcFS does not report.
 
-## Manual check: write watchpoint
+## Manual check: watchpoints
 
 This procedure needs a live Windows guest and root. It was run against `windows` on 2026-11-09; the result is in
 the validation record below. The guest probe now makes the trigger deterministic, so a live re-run no longer needs
@@ -370,6 +372,16 @@ Notepad or injected keystrokes.
 
 6. Run the same sequence through MCP `debug_watch`. Confirm that cancelling the client (Ctrl-C) still leaves the VM
    running and the stub stopped.
+
+`--access read` arms `Z3` and `--access access` arms `Z4`. Read and access watches do not require the watched value to
+change, so the trigger byte pattern is irrelevant; a stop at the watched address is the hit. QEMU's x86 gdbstub maps
+`Z3` and `Z4` onto the same four hardware debug-register slots as `Z2`; a stub that rejects either command is reported
+as `CapabilityUnavailable`, not as a timeout. The guest may already use a slot, in which case arming fails explicitly.
+
+`--max-hits 0` runs until the client disconnects, the request timeout expires, or the host shuts down. A quiet run
+prints a `watching  elapsed=<ms>  hits=<n>  skipped=<n>  access=<mode>` heartbeat roughly every second; the same
+`DebugWatchHeartbeat` frame reaches MCP callers only through the client API, which ignores it by default. Ctrl-C on a
+dedicated connection is the normal cancellation path and still restores the guest.
 
 Only one exclusive debug operation runs at a time: a second registers, breakpoint, step or watch request is refused
 with `Busy`, so a watch holds one of the four hardware debug-register slots. `debug-status` and

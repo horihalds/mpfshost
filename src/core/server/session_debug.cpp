@@ -304,7 +304,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "the watch width must be 1, 2, 4 or 8 bytes");
             return;
         }
-        if (request->maxHits == 0 || request->maxHits > kMaxDebugWatchHits)
+        if (request->maxHits > kMaxDebugWatchHits)
         {
             sendError(requestId, ErrorCode::MalformedPayload, "the hit limit is out of range");
             return;
@@ -358,12 +358,27 @@ namespace mpfshost
             }
             return true;
         };
+        const DebugWatchHeartbeatSink onHeartbeat = [&](const DebugWatchHeartbeat& heartbeat)
+        {
+            if (abortCheck())
+            {
+                return false;
+            }
+            sendPayload(requestId, MessageType::DebugWatchHeartbeat, encodeDebugWatchHeartbeat(heartbeat));
+            if (_writeFailed)
+            {
+                aborted = true;
+                return false;
+            }
+            return true;
+        };
 
         bool        busy = false;
         std::string error;
         bool        unavailable = false;
         bool        notFound    = false;
-        const auto  end         = provider->debugWatch(*request, onHit, abortCheck, busy, error, unavailable, notFound);
+        const auto  end =
+            provider->debugWatch(*request, onHit, onHeartbeat, abortCheck, busy, error, unavailable, notFound);
         if (!end.has_value())
         {
             if (aborted)

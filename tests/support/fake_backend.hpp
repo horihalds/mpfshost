@@ -449,6 +449,7 @@ namespace mpfshost::testing
 
         std::optional<DebugWatchRequest> lastWatchRequest;
         std::vector<DebugWatchData>      watchHits;
+        std::vector<DebugWatchHeartbeat> watchHeartbeats;
         DebugWatchEnd                    watchEnd;
         std::string                      watchFailure;
         bool                             watchBusy {};
@@ -1782,13 +1783,14 @@ namespace mpfshost::testing
             return _debugState->backtraceResponse;
         }
 
-        [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
-                                                              const DebugWatchHitSink&    onHit,
-                                                              const DebugWatchAbortCheck& aborted,
-                                                              bool&                       busy,
-                                                              std::string&                error,
-                                                              bool&                       unavailable,
-                                                              bool&                       notFound) override
+        [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&       request,
+                                                              const DebugWatchHitSink&       onHit,
+                                                              const DebugWatchHeartbeatSink& onHeartbeat,
+                                                              const DebugWatchAbortCheck&    aborted,
+                                                              bool&                          busy,
+                                                              std::string&                   error,
+                                                              bool&                          unavailable,
+                                                              bool&                          notFound) override
         {
             ++_debugState->watchCalls;
             _debugState->lastWatchRequest = request;
@@ -1799,6 +1801,13 @@ namespace mpfshost::testing
                 notFound    = _debugState->watchNotFound;
                 error       = _debugState->watchFailure;
                 return std::nullopt;
+            }
+            for (const auto& heartbeat : _debugState->watchHeartbeats)
+            {
+                if ((aborted && aborted()) || (onHeartbeat && !onHeartbeat(heartbeat)))
+                {
+                    break;
+                }
             }
             for (const auto& hit : _debugState->watchHits)
             {
@@ -2650,6 +2659,11 @@ namespace mpfshost::testing
         {
             _debugState->watchHits = std::move(hits);
             _debugState->watchEnd  = std::move(end);
+        }
+
+        void setDebugWatchHeartbeats(std::vector<DebugWatchHeartbeat> heartbeats)
+        {
+            _debugState->watchHeartbeats = std::move(heartbeats);
         }
 
         void failDebugWatchWith(std::string message, bool busy = false, bool notFound = false)

@@ -570,16 +570,27 @@ namespace mpfshost
         DebugControlAction action {DebugControlAction::Stop};
     };
 
+    enum class DebugWatchAccess : std::uint8_t
+    {
+        Write  = 0,
+        Read   = 1,
+        Access = 2,
+    };
+
+    [[nodiscard]] std::string_view debugWatchAccessName(DebugWatchAccess access) noexcept;
+
     struct DebugStatus
     {
-        DebugRunState runState {DebugRunState::Unknown};
-        bool          stubActive {};
-        bool          hostPaused {}; // the host pressed stop and has not continued it
-        std::uint32_t vcpuCount {};
-        std::uint32_t watchCount {};
-        bool          stubOwned {};   // this host started the active stub
-        bool          foreignStub {}; // a stub is active but this host does not own it
-        std::string   architecture;   // QEMU's guest architecture, or "unknown" when QMP did not name it
+        DebugRunState    runState {DebugRunState::Unknown};
+        bool             stubActive {};
+        bool             hostPaused {}; // the host pressed stop and has not continued it
+        std::uint32_t    vcpuCount {};
+        std::uint32_t    watchCount {};
+        bool             stubOwned {};   // this host started the active stub
+        bool             foreignStub {}; // a stub is active but this host does not own it
+        std::string      architecture;   // QEMU's guest architecture, or "unknown" when QMP did not name it
+        // Access mode of the most recently armed watchpoint, one-shot or persistent.
+        DebugWatchAccess watchAccess {DebugWatchAccess::Write};
     };
 
     using DebugStateResponse   = DebugStatus;
@@ -710,11 +721,6 @@ namespace mpfshost
         std::string                      stopReason;   // empty when the chain ended at a null frame pointer
     };
 
-    enum class DebugWatchAccess : std::uint8_t
-    {
-        Write = 0,
-    };
-
     enum class DebugWatchStatus : std::uint8_t
     {
         Completed = 0,
@@ -726,9 +732,12 @@ namespace mpfshost
     [[nodiscard]] std::string_view debugWatchStatusName(DebugWatchStatus status) noexcept;
 
     inline constexpr std::uint32_t kMaxDebugWatchWidth     = 8;
-    inline constexpr std::uint32_t kMaxDebugWatchHits      = 64;
+    inline constexpr std::uint32_t kMaxDebugWatchHits      = 1'000'000;
     inline constexpr std::uint32_t kMaxDebugWatchTimeoutMs = 3'600'000;
     inline constexpr std::size_t   kDebugWatchBytesBefore  = 16;
+    // A quiet watch still sends this often so a caller can tell it apart from a hung connection. The controller
+    // overload without a heartbeat sink simply emits none.
+    inline constexpr std::uint32_t kDebugWatchHeartbeatMs  = 1'000;
 
     struct DebugWatchRequest
     {
@@ -771,11 +780,20 @@ namespace mpfshost
         bool                   threadFound {};
     };
 
+    struct DebugWatchHeartbeat
+    {
+        std::uint32_t    elapsedMs {};
+        std::uint32_t    hitCount {};
+        std::uint32_t    skippedCount {};
+        DebugWatchAccess access {DebugWatchAccess::Write};
+    };
+
     struct DebugWatchEnd
     {
         DebugWatchStatus status {DebugWatchStatus::Completed};
         std::uint32_t    hitCount {};
         std::uint32_t    skippedCount {};
+        DebugWatchAccess access {DebugWatchAccess::Write};
         std::string      error;
     };
 
@@ -2245,12 +2263,14 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugBacktraceResponse>
     decodeDebugBacktraceResponse(std::span<const std::byte> payload);
 
-    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchRequest(const DebugWatchRequest& message);
-    [[nodiscard]] std::optional<DebugWatchRequest> decodeDebugWatchRequest(std::span<const std::byte> payload);
-    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchData(const DebugWatchData& message);
-    [[nodiscard]] std::optional<DebugWatchData>    decodeDebugWatchData(std::span<const std::byte> payload);
-    [[nodiscard]] std::vector<std::byte>           encodeDebugWatchEnd(const DebugWatchEnd& message);
-    [[nodiscard]] std::optional<DebugWatchEnd>     decodeDebugWatchEnd(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugWatchRequest(const DebugWatchRequest& message);
+    [[nodiscard]] std::optional<DebugWatchRequest>   decodeDebugWatchRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugWatchData(const DebugWatchData& message);
+    [[nodiscard]] std::optional<DebugWatchData>      decodeDebugWatchData(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugWatchHeartbeat(const DebugWatchHeartbeat& message);
+    [[nodiscard]] std::optional<DebugWatchHeartbeat> decodeDebugWatchHeartbeat(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugWatchEnd(const DebugWatchEnd& message);
+    [[nodiscard]] std::optional<DebugWatchEnd>       decodeDebugWatchEnd(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointRequest(const DebugBreakpointRequest& message);
     [[nodiscard]] std::optional<DebugBreakpointRequest>

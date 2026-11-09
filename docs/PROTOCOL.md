@@ -135,7 +135,7 @@ range.
  `DebugThreadsRequest` | `0x004B` | `DebugThreadsResponse` `0x806F` | single | `debug-threads` |
  `DisassembleRequest` | `0x004C` | `DisassembleResponse` `0x8070` | single | `disassemble` |
  `DebugBacktraceRequest` | `0x004D` | `DebugBacktraceResponse` `0x8071` | single | `debug-backtrace` |
- `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
+ `DebugWatchRequest` | `0x003E` | `DebugWatchHeartbeat` `0x8072` / `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
@@ -199,6 +199,7 @@ carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPa
  `stubOwned` | `u8` | `1` when this host process started the active stub |
  `foreignStub` | `u8` | `1` when a stub is active but this host process does not own it |
  `architecture` | string | Guest architecture from QMP `query-cpus-fast` (`x86_64`, `aarch64`, …), or `unknown` |
+ `watchAccess` | `u8` | Access mode of the most recently armed watchpoint (`0` write, `1` read, `2` access) |
 
 The debugger only supports x86-64 guests. `debug-registers`, `debug-watch`, `debug-break` and `debug-step` ask QMP
 for the architecture first and answer `CapabilityUnavailable` with the detected name when it is not `x86_64`, before
@@ -270,7 +271,8 @@ attachment when it disconnects. Every resource gets a `u32` id from a counter th
 while other resources are removed.
 
 `DebugBreakpointArmRequest` carries `pid` (`u32`), `address` (`u64`) and `kind` (`u8`: `0` software, `1` hardware).
-`DebugWatchArmRequest` carries `pid`, `address`, `width` (`u32`, 1, 2, 4 or 8) and `access` (`u8`, only `0` write).
+`DebugWatchArmRequest` carries `pid`, `address`, `width` (`u32`, 1, 2, 4 or 8) and `access` (`u8`: `0` write, `1`
+read, `2` access). A stub that rejects a read or access watch answers `CapabilityUnavailable`.
 The responses carry the assigned `id`, the original fields, and a `slot` (`u32`): the hardware debug slot index
 0–3, or `0xFFFFFFFF` for a software breakpoint. At most four hardware slots exist and hardware breakpoints and
 watchpoints share them, so arming a fifth answers `InvalidState`. Software breakpoints consume no slot.
@@ -299,8 +301,7 @@ symbol fields with the same layout as `DebugBreakpointResponse` below, and final
 breakpoint whose stop CR3 matches neither process DTB is accepted through the target's module map only when the
 address lies in a target module, and then `unverified = 1`; a stop at the same PC outside those modules belongs to
 another process and is skipped. Watchpoints keep their watch-address attribution. `DebugWaitEnd` uses the
-`DebugWatchEnd` layout: status (`0` completed, `1` timeout, `2` cancelled, `3` error), hit count, skipped count and
-an error string.
+`DebugWatchEnd` status, hit count, skipped count and error string, without the access field.
 A stop that matches no armed resource is skipped and counted; a stub close, guest exit or snapshot while waiting
 clears the resources and ends as `Error`.
 
@@ -400,16 +401,17 @@ depth limit, an unreadable frame, a zero return address or a corrupt saved point
 
 ## Debug watch
 
-`DebugWatchRequest` is streamed: zero or more `DebugWatchData` frames followed by exactly one `DebugWatchEnd`, or one
-`ErrorResponse` instead. A dedicated connection per watch is expected, so closing it is the cancellation signal.
+`DebugWatchRequest` is streamed: zero or more `DebugWatchHeartbeat` frames, zero or more `DebugWatchData` frames, then
+exactly one `DebugWatchEnd`, or one `ErrorResponse` instead. A dedicated connection per watch is expected, so closing it
+is the cancellation signal.
 
  Field | Type | Meaning |
  -------|------|---------|
  `pid` | `u32` | Process whose address is watched; zero is `MalformedPayload` |
  `address` | `u64` | Watched linear address, or an offset from the module or symbol named below; zero is `MalformedPayload` only for a raw address |
  `width` | `u32` | Watch width in bytes: 1, 2, 4 or 8 |
- `access` | `u8` | `0` write; other values are `MalformedPayload` in this slice |
- `maxHits` | `u32` | Stop after this many matching hits, 1–`kMaxDebugWatchHits` (64) |
+ `access` | `u8` | `0` write (`Z2`), `1` read (`Z3`), `2` access (`Z4`); other values are `MalformedPayload` |
+ `maxHits` | `u32` | Stop after this many matching hits, 0–`kMaxDebugWatchHits` (1 000 000); `0` runs until cancelled or timed out |
  `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
  `module` | string | Optional module name; when set, `address` is an offset from this module or from `symbol` |
  `symbol` | string | Optional export or PDB symbol in `module`; empty means `address` is module-relative |
@@ -422,12 +424,16 @@ matches nothing is answered with `NotFound` (`16`), not `Internal`. Raw hex addr
 stored in `address` with both string fields empty.
 
 The host pauses the guest if it is running, starts a stub it owns, reads the process DTBs (`paDTB` and
-`paDTB_UserOpt`), arms one `Z2` watchpoint (QEMU's debug registers are global, not per vCPU), resumes execution
-through the stub and polls with short timeouts so cancellation, the request deadline and peer loss are observed. Every stop reply is matched by masking the
+`paDTB_UserOpt`), arms one watchpoint with `Z2`, `Z3` or `Z4` according to `access` (QEMU's debug registers are
+global, not per vCPU), resumes execution through the stub and polls with short timeouts so cancellation, the request
+deadline and peer loss are observed. While no hit arrives the host sends a `DebugWatchHeartbeat` every
+`kDebugWatchHeartbeatMs` (1 000 ms) so a quiet watch does not look hung. A stub that rejects `Z3` or `Z4` answers
+`CapabilityUnavailable` (`20`) with the access mode named in the error. Every stop reply is matched by masking the
 low twelve bits of `cr3` and comparing it with both process DTBs; a mismatch resumes the guest, counts one skipped hit
-and keeps watching. On a match the host captures `rip`, `rsp` and `cr3` before reading the watched value from the
-requested process and resolving `rip` against the module list, the nearest export and any already-loaded PDB (no
-download is started).
+and keeps watching. Read and access watches accept a matching stop address without requiring the watched value to
+change; a write watch still requires the value comparison. On a match the host captures `rip`, `rsp` and `cr3` before
+reading the watched value from the requested process and resolving `rip` against the module list, the nearest export
+and any already-loaded PDB (no download is started).
 
 `DebugWatchData` fields:
 
@@ -446,11 +452,14 @@ download is started).
  `pdbFound`, `pdbSymbol`, `pdbDisplacement` | `u8`, string, `u32` | Symbol from an already-loaded PDB, when present |
  `guestPid`, `guestTid`, `processFound`, `threadFound` | `u32`, `u32`, `u8`, `u8` | Guest context of the stop, as in `DebugRegisterRecord` |
 
+`DebugWatchHeartbeat` carries `elapsedMs` (`u32`), `hitCount` (`u32`), `skippedCount` (`u32`) and `access` (`u8`, same
+values as the request). It is informational and may arrive between any two data frames.
+
 `DebugWatchEnd` carries a `u8` status (`0` completed, `1` timeout, `2` cancelled, `3` error), the `u32` hit count, the
-`u32` skipped-hit count and an error string. Teardown removes the watchpoints, stops a stub the host started, resumes
-the guest if this request paused it (an already-paused guest is left paused) and verifies the result with
-`query-status`. `Busy` (`19`) means another exclusive debug operation (registers, watch, breakpoint, step or detach)
-holds the target; `InvalidState` means another owner holds the GDB stub. `debug-status` and
+`u32` skipped-hit count, the armed `access` mode (`u8`) and an error string. Teardown removes the watchpoints, stops a
+stub the host started, resumes the guest if this request paused it (an already-paused guest is left paused) and verifies
+the result with `query-status`. `Busy` (`19`) means another exclusive debug operation (registers, watch, breakpoint,
+step or detach) holds the target; `InvalidState` means another owner holds the GDB stub. `debug-status` and
 `debug-stop`/`debug-continue` are not exclusive and stay available while a watch is in flight.
 
 ## Debug breakpoints

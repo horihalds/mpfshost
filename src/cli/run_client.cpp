@@ -139,7 +139,7 @@ namespace mpfshost::cli
         void printDebugStatus(const mpfshost::DebugStatus& status)
         {
             std::printf("run-state=%s  arch=%s  stub-active=%s  stub-owned=%s  foreign-stub=%s  host-paused=%s  "
-                        "vcpus=%u  watches=%u\n",
+                        "vcpus=%u  watches=%u  watch-access=%s\n",
                         std::string {mpfshost::debugRunStateName(status.runState)}.c_str(),
                         status.architecture.c_str(),
                         status.stubActive ? "yes" : "no",
@@ -147,7 +147,8 @@ namespace mpfshost::cli
                         status.foreignStub ? "yes" : "no",
                         status.hostPaused ? "yes" : "no",
                         static_cast<unsigned>(status.vcpuCount),
-                        static_cast<unsigned>(status.watchCount));
+                        static_cast<unsigned>(status.watchCount),
+                        std::string {mpfshost::debugWatchAccessName(status.watchAccess)}.c_str());
         }
     } // namespace
 
@@ -1950,16 +1951,26 @@ namespace mpfshost::cli
                         }
                     }
                 },
+                [](const mpfshost::DebugWatchHeartbeat& heartbeat)
+                {
+                    std::printf("watching  elapsed=%ums  hits=%u  skipped=%u  access=%s\n",
+                                static_cast<unsigned>(heartbeat.elapsedMs),
+                                static_cast<unsigned>(heartbeat.hitCount),
+                                static_cast<unsigned>(heartbeat.skippedCount),
+                                std::string {mpfshost::debugWatchAccessName(heartbeat.access)}.c_str());
+                    std::fflush(stdout);
+                },
                 error);
             if (!end)
             {
                 mpfshost::log::error("client", error);
                 return 1;
             }
-            std::printf("%s  hits=%u  skipped=%u\n",
+            std::printf("%s  hits=%u  skipped=%u  access=%s\n",
                         std::string {mpfshost::debugWatchStatusName(end->status)}.c_str(),
                         static_cast<unsigned>(end->hitCount),
-                        static_cast<unsigned>(end->skippedCount));
+                        static_cast<unsigned>(end->skippedCount),
+                        std::string {mpfshost::debugWatchAccessName(end->access)}.c_str());
             if (!end->error.empty())
             {
                 mpfshost::log::error("client", end->error);

@@ -57,15 +57,16 @@ namespace mpfshost
         return _debug.backtrace(request, invalidState, busy, error, unavailable);
     }
 
-    std::optional<DebugWatchEnd> VmmHandle::debugWatch(const DebugWatchRequest&    request,
-                                                       const DebugWatchHitSink&    onHit,
-                                                       const DebugWatchAbortCheck& aborted,
-                                                       bool&                       busy,
-                                                       std::string&                error,
-                                                       bool&                       unavailable,
-                                                       bool&                       notFound)
+    std::optional<DebugWatchEnd> VmmHandle::debugWatch(const DebugWatchRequest&       request,
+                                                       const DebugWatchHitSink&       onHit,
+                                                       const DebugWatchHeartbeatSink& onHeartbeat,
+                                                       const DebugWatchAbortCheck&    aborted,
+                                                       bool&                          busy,
+                                                       std::string&                   error,
+                                                       bool&                          unavailable,
+                                                       bool&                          notFound)
     {
-        return _debug.watch(request, onHit, aborted, busy, error, unavailable, notFound);
+        return _debug.watch(request, onHit, onHeartbeat, aborted, busy, error, unavailable, notFound);
     }
 
     std::optional<DebugBreakpointResponse> VmmHandle::debugBreakpoint(const DebugBreakpointRequest& request,

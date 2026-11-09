@@ -277,13 +277,14 @@ namespace mpfshost
                                                                                    bool&                        busy,
                                                                                    std::string&                 error,
                                                                                    bool& unavailable) override;
-        [[nodiscard]] std::optional<DebugWatchEnd>                  debugWatch(const DebugWatchRequest&    request,
-                                                                               const DebugWatchHitSink&    onHit,
-                                                                               const DebugWatchAbortCheck& aborted,
-                                                                               bool&                       busy,
-                                                                               std::string&                error,
-                                                                               bool&                       unavailable,
-                                                                               bool&                       notFound) override;
+        [[nodiscard]] std::optional<DebugWatchEnd>           debugWatch(const DebugWatchRequest&       request,
+                                                                        const DebugWatchHitSink&       onHit,
+                                                                        const DebugWatchHeartbeatSink& onHeartbeat,
+                                                                        const DebugWatchAbortCheck&    aborted,
+                                                                        bool&                          busy,
+                                                                        std::string&                   error,
+                                                                        bool&                          unavailable,
+                                                                        bool&                          notFound) override;
         [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
                                                                              const DebugWatchAbortCheck&   aborted,
                                                                              bool&                         invalidState,

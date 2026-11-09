@@ -12,9 +12,10 @@
 
 namespace mpfshost
 {
-    using DebugWatchHitSink    = std::function<bool(const DebugWatchData&)>;
-    using DebugWatchAbortCheck = std::function<bool()>;
-    using DebugWaitHitSink     = std::function<bool(const DebugWaitHit&)>;
+    using DebugWatchHitSink       = std::function<bool(const DebugWatchData&)>;
+    using DebugWatchHeartbeatSink = std::function<bool(const DebugWatchHeartbeat&)>;
+    using DebugWatchAbortCheck    = std::function<bool()>;
+    using DebugWaitHitSink        = std::function<bool(const DebugWaitHit&)>;
 
     // Guest control through QEMU's QMP socket. Every call answers the complete debug status, so a control
     // request does not need a second round trip to report the resulting run state.
@@ -50,16 +51,18 @@ namespace mpfshost
                                                                                    bool&        invalidState,
                                                                                    bool&        busy,
                                                                                    std::string& error,
-                                                                                   bool&        unavailable) = 0;
-        // `onHit` sends one data frame and returns false when it could not be written; `aborted` is polled
-        // between short stops so cancellation, the request deadline and peer loss all end the watch quickly.
-        [[nodiscard]] virtual std::optional<DebugWatchEnd>          debugWatch(const DebugWatchRequest&    request,
-                                                                               const DebugWatchHitSink&    onHit,
-                                                                               const DebugWatchAbortCheck& aborted,
-                                                                               bool&                       busy,
-                                                                               std::string&                error,
-                                                                               bool&                       unavailable,
-                                                                               bool&                       notFound) = 0;
+                                                                                   bool&        unavailable)   = 0;
+        // `onHit` sends one data frame and returns false when it could not be written; `onHeartbeat` does the
+        // same for the periodic status frame; `aborted` is polled between short stops so cancellation, the
+        // request deadline and peer loss all end the watch quickly.
+        [[nodiscard]] virtual std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&       request,
+                                                                      const DebugWatchHitSink&       onHit,
+                                                                      const DebugWatchHeartbeatSink& onHeartbeat,
+                                                                      const DebugWatchAbortCheck&    aborted,
+                                                                      bool&                          busy,
+                                                                      std::string&                   error,
+                                                                      bool&                          unavailable,
+                                                                      bool&                          notFound) = 0;
         // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
         // `notFound` reports a module or symbol that could not be resolved, which the session maps to NotFound.
         [[nodiscard]] virtual std::optional<DebugBreakpointResponse>

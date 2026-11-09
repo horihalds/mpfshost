@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "core/ipc/message.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -101,12 +103,17 @@ namespace mpfshost::debug
         readAllRegisters(std::vector<std::byte>& registers, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool
         readRegister(std::uint32_t number, std::uint64_t& value, std::chrono::milliseconds timeout, std::string& error);
+        // Arms one hardware watchpoint. `unsupported` reports that the stub rejected a read or access watchpoint,
+        // which the caller maps to CapabilityUnavailable instead of a generic stub failure.
         [[nodiscard]] bool insertWatchpoint(std::uint64_t             address,
                                             std::uint32_t             size,
+                                            DebugWatchAccess          access,
                                             std::chrono::milliseconds timeout,
-                                            std::string&              error);
+                                            std::string&              error,
+                                            bool&                     unsupported);
         [[nodiscard]] bool removeWatchpoint(std::uint64_t             address,
                                             std::uint32_t             size,
+                                            DebugWatchAccess          access,
                                             std::chrono::milliseconds timeout,
                                             std::string&              error);
         [[nodiscard]] bool

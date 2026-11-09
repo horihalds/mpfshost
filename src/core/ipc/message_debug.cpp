@@ -16,6 +16,7 @@ namespace mpfshost
             writer.writeU8(status.stubOwned ? 1 : 0);
             writer.writeU8(status.foreignStub ? 1 : 0);
             writer.writeString(status.architecture);
+            writer.writeU8(static_cast<std::uint8_t>(status.watchAccess));
         }
 
         DebugStatus readDebugStatus(ByteReader& reader)
@@ -29,6 +30,7 @@ namespace mpfshost
             status.stubOwned    = reader.readU8() != 0;
             status.foreignStub  = reader.readU8() != 0;
             status.architecture = reader.readString();
+            status.watchAccess  = static_cast<DebugWatchAccess>(reader.readU8());
             return status;
         }
 
@@ -44,6 +46,11 @@ namespace mpfshost
             ByteReader  reader {payload};
             DebugStatus status = readDebugStatus(reader);
             if (!reader.ok() || !reader.atEnd())
+            {
+                return std::nullopt;
+            }
+            if (status.watchAccess != DebugWatchAccess::Write && status.watchAccess != DebugWatchAccess::Read
+                && status.watchAccess != DebugWatchAccess::Access)
             {
                 return std::nullopt;
             }
@@ -402,6 +409,20 @@ namespace mpfshost
         return message;
     }
 
+    std::string_view debugWatchAccessName(DebugWatchAccess access) noexcept
+    {
+        switch (access)
+        {
+        case DebugWatchAccess::Write:
+            return "write";
+        case DebugWatchAccess::Read:
+            return "read";
+        case DebugWatchAccess::Access:
+            return "access";
+        }
+        return "write";
+    }
+
     std::string_view debugWatchStatusName(DebugWatchStatus status) noexcept
     {
         switch (status)
@@ -448,7 +469,8 @@ namespace mpfshost
         {
             return std::nullopt;
         }
-        if (message.access != DebugWatchAccess::Write)
+        if (message.access != DebugWatchAccess::Write && message.access != DebugWatchAccess::Read
+            && message.access != DebugWatchAccess::Access)
         {
             return std::nullopt;
         }
@@ -522,12 +544,43 @@ namespace mpfshost
         return message;
     }
 
+    std::vector<std::byte> encodeDebugWatchHeartbeat(const DebugWatchHeartbeat& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.elapsedMs);
+        writer.writeU32(message.hitCount);
+        writer.writeU32(message.skippedCount);
+        writer.writeU8(static_cast<std::uint8_t>(message.access));
+        return writer.take();
+    }
+
+    std::optional<DebugWatchHeartbeat> decodeDebugWatchHeartbeat(std::span<const std::byte> payload)
+    {
+        ByteReader          reader {payload};
+        DebugWatchHeartbeat message;
+        message.elapsedMs    = reader.readU32();
+        message.hitCount     = reader.readU32();
+        message.skippedCount = reader.readU32();
+        message.access       = static_cast<DebugWatchAccess>(reader.readU8());
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.access != DebugWatchAccess::Write && message.access != DebugWatchAccess::Read
+            && message.access != DebugWatchAccess::Access)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
     std::vector<std::byte> encodeDebugWatchEnd(const DebugWatchEnd& message)
     {
         ByteWriter writer;
         writer.writeU8(static_cast<std::uint8_t>(message.status));
         writer.writeU32(message.hitCount);
         writer.writeU32(message.skippedCount);
+        writer.writeU8(static_cast<std::uint8_t>(message.access));
         writer.writeString(message.error);
         return writer.take();
     }
@@ -539,6 +592,7 @@ namespace mpfshost
         message.status       = static_cast<DebugWatchStatus>(reader.readU8());
         message.hitCount     = reader.readU32();
         message.skippedCount = reader.readU32();
+        message.access       = static_cast<DebugWatchAccess>(reader.readU8());
         message.error        = reader.readString();
         if (!reader.ok() || !reader.atEnd())
         {
@@ -546,6 +600,11 @@ namespace mpfshost
         }
         if (message.status != DebugWatchStatus::Completed && message.status != DebugWatchStatus::Timeout
             && message.status != DebugWatchStatus::Cancelled && message.status != DebugWatchStatus::Error)
+        {
+            return std::nullopt;
+        }
+        if (message.access != DebugWatchAccess::Write && message.access != DebugWatchAccess::Read
+            && message.access != DebugWatchAccess::Access)
         {
             return std::nullopt;
         }
@@ -838,7 +897,9 @@ namespace mpfshost
             message.width   = reader.readU32();
             message.access  = static_cast<DebugWatchAccess>(reader.readU8());
             message.slot    = reader.readU32();
-            return reader.ok() && message.access == DebugWatchAccess::Write;
+            return reader.ok()
+                && (message.access == DebugWatchAccess::Write || message.access == DebugWatchAccess::Read
+                    || message.access == DebugWatchAccess::Access);
         }
     } // namespace
 
@@ -980,7 +1041,8 @@ namespace mpfshost
         {
             return std::nullopt;
         }
-        if (message.access != DebugWatchAccess::Write)
+        if (message.access != DebugWatchAccess::Write && message.access != DebugWatchAccess::Read
+            && message.access != DebugWatchAccess::Access)
         {
             return std::nullopt;
         }

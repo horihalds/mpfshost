@@ -787,62 +787,78 @@ namespace mpfshost::debug
         return true;
     }
 
+    namespace
+    {
+        std::string watchpointCommand(char action, std::uint64_t address, std::uint32_t size, DebugWatchAccess access)
+        {
+            static constexpr char digits[] = "0123456789abcdef";
+            const auto  kind = access == DebugWatchAccess::Write ? '2' : access == DebugWatchAccess::Read ? '3' : '4';
+            std::string command {action, kind, ','};
+            bool        started = false;
+            for (int shift = 60; shift >= 0; shift -= 4)
+            {
+                const auto digit = (address >> shift) & 0x0F;
+                if (digit != 0)
+                {
+                    started = true;
+                }
+                if (started)
+                {
+                    command.push_back(digits[digit]);
+                }
+            }
+            if (!started)
+            {
+                command.push_back('0');
+            }
+            command.push_back(',');
+            command += std::to_string(size);
+            return command;
+        }
+    } // namespace
+
     bool RspClient::insertWatchpoint(std::uint64_t             address,
                                      std::uint32_t             size,
+                                     DebugWatchAccess          access,
                                      std::chrono::milliseconds timeout,
-                                     std::string&              error)
+                                     std::string&              error,
+                                     bool&                     unsupported)
     {
-        static constexpr char digits[] = "0123456789abcdef";
-        std::string           command {"Z2,"};
-        bool                  started = false;
-        for (int shift = 60; shift >= 0; shift -= 4)
+        unsupported         = false;
+        const auto  command = watchpointCommand('Z', address, size, access);
+        std::string reply;
+        if (!sendPacket(command, reply, timeout, error))
         {
-            const auto digit = (address >> shift) & 0x0F;
-            if (digit != 0)
-            {
-                started = true;
-            }
-            if (started)
-            {
-                command.push_back(digits[digit]);
-            }
+            return false;
         }
-        if (!started)
+        if (reply == "OK")
         {
-            command.push_back('0');
+            return true;
         }
-        command.push_back(',');
-        command += std::to_string(size);
-        return checkAccepted(command, timeout, error);
+        if (access != DebugWatchAccess::Write)
+        {
+            // A stub that does not implement Z3/Z4 answers with an empty packet or an error. A transport
+            // failure returned above, so this is a capability gap rather than a timeout.
+            unsupported = true;
+            error       = std::string {"the GDB stub does not support "} + std::string {debugWatchAccessName(access)}
+                        + " watchpoints";
+            return false;
+        }
+        error = "the stub rejected " + command;
+        if (!reply.empty())
+        {
+            error += " (" + reply + ")";
+        }
+        return false;
     }
 
     bool RspClient::removeWatchpoint(std::uint64_t             address,
                                      std::uint32_t             size,
+                                     DebugWatchAccess          access,
                                      std::chrono::milliseconds timeout,
                                      std::string&              error)
     {
-        static constexpr char digits[] = "0123456789abcdef";
-        std::string           command {"z2,"};
-        bool                  started = false;
-        for (int shift = 60; shift >= 0; shift -= 4)
-        {
-            const auto digit = (address >> shift) & 0x0F;
-            if (digit != 0)
-            {
-                started = true;
-            }
-            if (started)
-            {
-                command.push_back(digits[digit]);
-            }
-        }
-        if (!started)
-        {
-            command.push_back('0');
-        }
-        command.push_back(',');
-        command += std::to_string(size);
-        return checkAccepted(command, timeout, error);
+        return checkAccepted(watchpointCommand('z', address, size, access), timeout, error);
     }
 
     bool RspClient::insertBreakpoint(std::uint64_t             address,
