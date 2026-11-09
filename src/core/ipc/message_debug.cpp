@@ -16,6 +16,7 @@ namespace mpfshost
             writer.writeU32(status.watchCount);
             writer.writeU8(status.stubOwned ? 1 : 0);
             writer.writeU8(status.foreignStub ? 1 : 0);
+            writer.writeString(status.architecture);
             return writer.take();
         }
 
@@ -23,13 +24,14 @@ namespace mpfshost
         {
             ByteReader  reader {payload};
             DebugStatus status;
-            status.runState    = static_cast<DebugRunState>(reader.readU8());
-            status.stubActive  = reader.readU8() != 0;
-            status.hostPaused  = reader.readU8() != 0;
-            status.vcpuCount   = reader.readU32();
-            status.watchCount  = reader.readU32();
-            status.stubOwned   = reader.readU8() != 0;
-            status.foreignStub = reader.readU8() != 0;
+            status.runState     = static_cast<DebugRunState>(reader.readU8());
+            status.stubActive   = reader.readU8() != 0;
+            status.hostPaused   = reader.readU8() != 0;
+            status.vcpuCount    = reader.readU32();
+            status.watchCount   = reader.readU32();
+            status.stubOwned    = reader.readU8() != 0;
+            status.foreignStub  = reader.readU8() != 0;
+            status.architecture = reader.readString();
             if (!reader.ok() || !reader.atEnd())
             {
                 return std::nullopt;

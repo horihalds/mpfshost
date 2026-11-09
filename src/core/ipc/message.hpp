@@ -578,6 +578,7 @@ namespace mpfshost
         std::uint32_t watchCount {};
         bool          stubOwned {};   // this host started the active stub
         bool          foreignStub {}; // a stub is active but this host does not own it
+        std::string   architecture;   // QEMU's guest architecture, or "unknown" when QMP did not name it
     };
 
     using DebugStateResponse   = DebugStatus;

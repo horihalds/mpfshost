@@ -184,7 +184,7 @@ to it automatically.
  `--client pool-tags <vm>` | Kernel pool allocations summarized per tag; `--tag`, `--big`. |
  `--client pfn <vm>` | Page frames; `--pfn-from`, `--pfn-count` (≤ 32768). |
  `--client config-set <vm>` | Set an allow-listed MemProcFS cache/tick, refresh or process-DTB option; `--option`, `--value`, `--pid` where the option is process-scoped. |
- `--client debug-status <vm>` | Report QEMU's run state, vCPU count and the host's debug bookkeeping. |
+ `--client debug-status <vm>` | Report QEMU's run state, guest architecture, vCPU count and the host's debug bookkeeping. |
  `--client debug-stop <vm>` | Pause the guest through QEMU's QMP socket (destructive). |
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
@@ -267,7 +267,9 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   do `debug-watch` and `debug-break`; a watch reports each write hit and a breakpoint reports its first hit, both with
   the trap PC and nearest symbol, and always remove the trap and stop the stub afterwards. A breakpoint is one-shot:
   repeat the command to stop again. These commands are destructive: a paused guest stops executing until it is
-  resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
+  resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md). Only x86-64 guests can be debugged. The register, watch,
+  breakpoint and step commands reject another architecture with `CapabilityUnavailable` before starting a stub;
+  `debug-status` still works and reports the architecture it detected.
 
 ### Using MCP mode
 

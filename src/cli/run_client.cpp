@@ -70,9 +70,10 @@ namespace mpfshost::cli
 
         void printDebugStatus(const mpfshost::DebugStatus& status)
         {
-            std::printf("run-state=%s  stub-active=%s  stub-owned=%s  foreign-stub=%s  host-paused=%s  vcpus=%u  "
-                        "watches=%u\n",
+            std::printf("run-state=%s  arch=%s  stub-active=%s  stub-owned=%s  foreign-stub=%s  host-paused=%s  "
+                        "vcpus=%u  watches=%u\n",
                         std::string {mpfshost::debugRunStateName(status.runState)}.c_str(),
+                        status.architecture.c_str(),
                         status.stubActive ? "yes" : "no",
                         status.stubOwned ? "yes" : "no",
                         status.foreignStub ? "yes" : "no",

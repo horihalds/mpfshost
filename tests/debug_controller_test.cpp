@@ -58,6 +58,7 @@ namespace
         bool                      closed {false};
         bool                      stall {false};
         std::string               failCommand;
+        std::string               architecture {"x86_64"};
         std::size_t               opens {0};
         std::chrono::milliseconds lastReadTimeout {0};
 
@@ -112,7 +113,16 @@ namespace
             }
             else if (text.find("query-cpus-fast") != std::string::npos)
             {
-                _state->incoming.emplace_back(R"({"return":[{},{"cpu-index":1}]})");
+                if (_state->architecture.empty())
+                {
+                    _state->incoming.emplace_back(R"({"return":[{},{"cpu-index":1}]})");
+                }
+                else
+                {
+                    _state->incoming.emplace_back(R"({"return":[{"cpu-index":0,"target":")" + _state->architecture
+                                                  + R"("},{"cpu-index":1,"target":")" + _state->architecture
+                                                  + R"("}]})");
+                }
             }
             else if (text.find("info chardev") != std::string::npos)
             {
@@ -448,6 +458,12 @@ namespace
         return xml;
     }
 
+    std::string aarch64RegisterXml()
+    {
+        return "<feature><reg name=\"x0\" bitsize=\"64\"/><reg name=\"x1\" bitsize=\"64\"/><reg name=\"sp\" "
+               "bitsize=\"64\"/><reg name=\"pc\" bitsize=\"64\"/></feature>";
+    }
+
     std::string registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull)
     {
         std::string bytes(172, '\0');
@@ -676,6 +692,7 @@ TEST_CASE("the debug controller reports a foreign stub as unowned", "[core][debu
     REQUIRE(status->stubActive);
     REQUIRE_FALSE(status->stubOwned);
     REQUIRE(status->foreignStub);
+    REQUIRE(status->architecture == "x86_64");
 }
 
 TEST_CASE("the debug controller detaches a foreign stub on request", "[core][debug][controller]")
@@ -1887,4 +1904,125 @@ TEST_CASE("a control pause during a watch leaves the guest paused", "[core][debu
 
     REQUIRE(controller.control(mpfshost::DebugControlAction::Continue, busy, error, unavailable).has_value());
     REQUIRE(qmp->running);
+}
+
+TEST_CASE("the debug controller rejects an architecture QMP reports as aarch64", "[core][debug][controller]")
+{
+    auto qmp          = std::make_shared<FakeQmpState>();
+    qmp->architecture = "aarch64";
+    auto rspTransport = std::make_unique<FakeRspTransport>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(records.has_value());
+    REQUIRE(unavailable);
+    REQUIRE_FALSE(invalidState);
+    REQUIRE(error.find("aarch64") != std::string::npos);
+    REQUIRE(error.find("x86_64") != std::string::npos);
+    REQUIRE(qmp->count("gdbserver") == 0);
+}
+
+TEST_CASE("the debug controller rejects an aarch64 target description before arming anything",
+          "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->architecture          = "";
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = aarch64RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(records.has_value());
+    REQUIRE(unavailable);
+    REQUIRE_FALSE(invalidState);
+    REQUIRE(error.find("aarch64") != std::string::npos);
+    REQUIRE(qmp->count("gdbserver unix:") == 1);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("the debug controller rejects an unidentified target description", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->architecture          = "";
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = "<feature><reg name=\"foo\" bitsize=\"64\"/></feature>";
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(records.has_value());
+    REQUIRE(unavailable);
+    REQUIRE(error.find("does not identify") != std::string::npos);
+    REQUIRE(qmp->count("gdbserver unix:") == 1);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+}
+
+TEST_CASE("debug status reports the architecture of an unsupported guest", "[core][debug][controller]")
+{
+    auto qmp          = std::make_shared<FakeQmpState>();
+    qmp->architecture = "aarch64";
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  status      = controller.state(busy, error, unavailable);
+    REQUIRE(status.has_value());
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(status->architecture == "aarch64");
+    REQUIRE(status->runState == mpfshost::DebugRunState::Paused);
 }

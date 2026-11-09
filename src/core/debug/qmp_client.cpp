@@ -278,6 +278,62 @@ namespace mpfshost::debug
                                        : std::string {};
             return description.empty() ? "QMP error " + errorClass : "QMP error " + errorClass + ": " + description;
         }
+
+        // QEMU reports the machine architecture in `target` and sometimes only in `qom-type`. CPU model names
+        // embed the architecture, for example `cortex-a57-arm-cpu`, so match the known families rather than
+        // requiring an exact string.
+        std::string normaliseArchitecture(std::string_view value)
+        {
+            std::string lower;
+            lower.reserve(value.size());
+            for (const char character : value)
+            {
+                lower.push_back(character >= 'A' && character <= 'Z' ? static_cast<char>(character - 'A' + 'a')
+                                                                     : character);
+            }
+            if (lower.empty())
+            {
+                return {};
+            }
+            if (lower.find("aarch64") != std::string::npos || lower.find("arm64") != std::string::npos)
+            {
+                return "aarch64";
+            }
+            if (lower.find("x86_64") != std::string::npos || lower.find("x86-64") != std::string::npos)
+            {
+                return "x86_64";
+            }
+            if (lower.find("i386") != std::string::npos || lower.find("i686") != std::string::npos)
+            {
+                return "i386";
+            }
+            if (lower.find("arm") != std::string::npos)
+            {
+                return "arm";
+            }
+            return lower;
+        }
+
+        std::string cpuArchitecture(const Json& cpu)
+        {
+            if (!cpu.is_object())
+            {
+                return {};
+            }
+            if (cpu.contains("target") && cpu.at("target").is_string())
+            {
+                const auto target = normaliseArchitecture(cpu.at("target").get<std::string>());
+                if (!target.empty())
+                {
+                    return target;
+                }
+            }
+            if (cpu.contains("qom-type") && cpu.at("qom-type").is_string())
+            {
+                return normaliseArchitecture(cpu.at("qom-type").get<std::string>());
+            }
+            return {};
+        }
     } // namespace
 
     std::unique_ptr<QmpTransport> makeUnixQmpTransport()
@@ -539,7 +595,7 @@ namespace mpfshost::debug
         return true;
     }
 
-    bool QmpClient::queryVcpuCount(std::uint32_t& count, std::chrono::milliseconds timeout, std::string& error)
+    bool QmpClient::queryCpusFast(QmpCpuInfo& info, std::chrono::milliseconds timeout, std::string& error)
     {
         std::string resultJson;
         if (!execute("query-cpus-fast", resultJson, timeout, error))
@@ -562,7 +618,8 @@ namespace mpfshost::debug
             error = "the QMP query-cpus-fast reply is not a list";
             return false;
         }
-        count = static_cast<std::uint32_t>(result.size());
+        info.count        = static_cast<std::uint32_t>(result.size());
+        info.architecture = result.empty() ? std::string {} : cpuArchitecture(result.front());
         return true;
     }
 

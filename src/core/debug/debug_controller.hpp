@@ -94,7 +94,10 @@ namespace mpfshost::debug
         // with the running request's remaining budget.
         [[nodiscard]] bool                       qmpCall(const QmpCall& call, std::string& error, bool& unavailable);
         [[nodiscard]] bool qmpQueryStatus(QmpStatusInfo& info, std::string& error, bool& unavailable);
-        [[nodiscard]] bool qmpQueryVcpuCount(std::uint32_t& count, std::string& error, bool& unavailable);
+        [[nodiscard]] bool qmpQueryCpusFast(QmpCpuInfo& info, std::string& error, bool& unavailable);
+        // Rejects a guest that QMP already identifies as something other than x86-64. An empty architecture
+        // means QMP did not say; the caller then checks the stub's target description after starting it.
+        [[nodiscard]] bool checkQmpArchitecture(std::string& architecture, std::string& error, bool& unavailable);
         [[nodiscard]] bool
         qmpExecute(std::string_view command, std::string& result, std::string& error, bool& unavailable);
         [[nodiscard]] bool
@@ -106,8 +109,11 @@ namespace mpfshost::debug
         [[nodiscard]] bool startUnixStub(RspClient& rsp, RspEndpoint& endpoint, std::string& error, bool& unavailable);
         [[nodiscard]] bool startTcpStub(RspClient& rsp, RspEndpoint& endpoint, std::string& error, bool& unavailable);
         [[nodiscard]] bool connectRsp(RspClient& rsp, const RspEndpoint& endpoint, std::string& error);
-        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
-        readRecords(RspClient& rsp, const DebugRegistersRequest& request, std::string& error);
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> readRecords(RspClient&                   rsp,
+                                                                                  const DebugRegistersRequest& request,
+                                                                                  std::string& architecture,
+                                                                                  std::string& error,
+                                                                                  bool&        unavailable);
         [[nodiscard]] std::optional<DebugRegisterRecord> readRecord(RspClient&                  rsp,
                                                                     const RspTargetDescription& description,
                                                                     std::uint32_t               vcpu,

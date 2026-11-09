@@ -27,6 +27,9 @@ namespace mpfshost::debug
         constexpr auto kRspTimeout     = std::chrono::seconds {5};
         constexpr auto kRspConnectWait = std::chrono::seconds {2};
 
+        // The register layout, rip/cr3 lookups and the x86 decoder only understand x86-64.
+        constexpr std::string_view kSupportedArchitecture = "x86_64";
+
         bool looksLikeStubFailure(std::string_view reply)
         {
             return reply.find("couldn't") != std::string_view::npos || reply.find("duplicate") != std::string_view::npos
@@ -156,6 +159,50 @@ namespace mpfshost::debug
                 return rsp.readRegister(fallback->number, value, timeout, error);
             }
             error = "the GDB stub does not expose " + std::string {name};
+            return false;
+        }
+
+        bool isSupportedArchitecture(std::string_view architecture)
+        {
+            return architecture == kSupportedArchitecture;
+        }
+
+        // The target description is the fallback when QMP's query-cpus-fast does not name the architecture.
+        // Register names are enough to tell the families apart before any register is read.
+        std::string architectureFromTargetDescription(const RspTargetDescription& description)
+        {
+            if (findRspRegister(description, "rip"))
+            {
+                return "x86_64";
+            }
+            if (findRspRegister(description, "eip"))
+            {
+                return "i386";
+            }
+            if (findRspRegister(description, "pc"))
+            {
+                if (findRspRegister(description, "x0"))
+                {
+                    return "aarch64";
+                }
+                return "arm";
+            }
+            return {};
+        }
+
+        bool rejectArchitecture(std::string_view architecture, bool fromStub, std::string& error, bool& unavailable)
+        {
+            unavailable = true;
+            if (architecture.empty())
+            {
+                error = fromStub
+                          ? "the GDB target description does not identify a supported architecture; only x86_64 guests "
+                            "can be debugged"
+                          : "the guest architecture is unknown; only x86_64 guests can be debugged";
+                return false;
+            }
+            error = "the guest architecture '" + std::string {architecture}
+                  + "' is not supported; only x86_64 guests can be debugged";
             return false;
         }
 
@@ -312,15 +359,30 @@ namespace mpfshost::debug
             unavailable);
     }
 
-    bool DebugController::qmpQueryVcpuCount(std::uint32_t& count, std::string& error, bool& unavailable)
+    bool DebugController::qmpQueryCpusFast(QmpCpuInfo& info, std::string& error, bool& unavailable)
     {
         return qmpCall(
             [&](QmpClient& client, std::chrono::milliseconds timeout, std::string& callError)
             {
-                return client.queryVcpuCount(count, timeout, callError);
+                return client.queryCpusFast(info, timeout, callError);
             },
             error,
             unavailable);
+    }
+
+    bool DebugController::checkQmpArchitecture(std::string& architecture, std::string& error, bool& unavailable)
+    {
+        QmpCpuInfo info;
+        if (!qmpQueryCpusFast(info, error, unavailable))
+        {
+            return false;
+        }
+        architecture = info.architecture;
+        if (!architecture.empty() && !isSupportedArchitecture(architecture))
+        {
+            return rejectArchitecture(architecture, false, error, unavailable);
+        }
+        return true;
     }
 
     bool
@@ -357,8 +419,8 @@ namespace mpfshost::debug
             return false;
         }
 
-        std::uint32_t vcpuCount = 0;
-        if (!qmpQueryVcpuCount(vcpuCount, error, unavailable))
+        QmpCpuInfo cpus;
+        if (!qmpQueryCpusFast(cpus, error, unavailable))
         {
             return false;
         }
@@ -378,8 +440,9 @@ namespace mpfshost::debug
         status.stubOwned      = stubActive;
         status.foreignStub    = active && !stubActive;
         status.hostPaused     = _hostPaused.load();
-        status.vcpuCount      = vcpuCount;
+        status.vcpuCount      = cpus.count;
         status.watchCount     = _watchCount.load();
+        status.architecture   = cpus.architecture.empty() ? "unknown" : cpus.architecture;
         return true;
     }
 
@@ -596,8 +659,11 @@ namespace mpfshost::debug
         return false;
     }
 
-    std::optional<std::vector<DebugRegisterRecord>>
-    DebugController::readRecords(RspClient& rsp, const DebugRegistersRequest& request, std::string& error)
+    std::optional<std::vector<DebugRegisterRecord>> DebugController::readRecords(RspClient&                   rsp,
+                                                                                 const DebugRegistersRequest& request,
+                                                                                 std::string& architecture,
+                                                                                 std::string& error,
+                                                                                 bool&        unavailable)
     {
         if (!rsp.negotiate(kRspTimeout, error))
         {
@@ -608,6 +674,15 @@ namespace mpfshost::debug
         if (!rsp.readTargetDescription(description, kRspTimeout, error))
         {
             return std::nullopt;
+        }
+        if (architecture.empty())
+        {
+            architecture = architectureFromTargetDescription(description);
+            if (!isSupportedArchitecture(architecture))
+            {
+                rejectArchitecture(architecture, true, error, unavailable);
+                return std::nullopt;
+            }
         }
 
         std::vector<std::string> threads;
@@ -730,6 +805,12 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
         {
@@ -800,7 +881,7 @@ namespace mpfshost::debug
             }
         } cleanup {*this};
 
-        return readRecords(*rsp, request, error);
+        return readRecords(*rsp, request, architecture, error, unavailable);
     }
 
     std::optional<DebugWatchEnd> DebugController::watch(const DebugWatchRequest&    request,
@@ -827,6 +908,12 @@ namespace mpfshost::debug
         // This watch owns the guest's run state from here; a pause requested before it started is not an
         // external pause for this run.
         _controlPaused = false;
+
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
 
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
@@ -974,6 +1061,15 @@ namespace mpfshost::debug
         if (!rsp->readTargetDescription(description, kRspTimeout, error))
         {
             return std::nullopt;
+        }
+        if (architecture.empty())
+        {
+            architecture = architectureFromTargetDescription(description);
+            if (!isSupportedArchitecture(architecture))
+            {
+                rejectArchitecture(architecture, true, error, unavailable);
+                return std::nullopt;
+            }
         }
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))
@@ -1266,6 +1362,12 @@ namespace mpfshost::debug
         // This breakpoint owns the guest's run state from here; see the watch path for the same reset.
         _controlPaused = false;
 
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
         {
@@ -1408,6 +1510,15 @@ namespace mpfshost::debug
         if (!rsp->readTargetDescription(description, kRspTimeout, error))
         {
             return std::nullopt;
+        }
+        if (architecture.empty())
+        {
+            architecture = architectureFromTargetDescription(description);
+            if (!isSupportedArchitecture(architecture))
+            {
+                rejectArchitecture(architecture, true, error, unavailable);
+                return std::nullopt;
+            }
         }
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))
@@ -1655,6 +1766,12 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
         {
@@ -1734,6 +1851,15 @@ namespace mpfshost::debug
         if (!rsp->readTargetDescription(description, kRspTimeout, error))
         {
             return std::nullopt;
+        }
+        if (architecture.empty())
+        {
+            architecture = architectureFromTargetDescription(description);
+            if (!isSupportedArchitecture(architecture))
+            {
+                rejectArchitecture(architecture, true, error, unavailable);
+                return std::nullopt;
+            }
         }
         std::vector<std::string> threads;
         if (!rsp->queryThreads(threads, kRspTimeout, error))

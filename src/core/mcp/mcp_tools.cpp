@@ -446,6 +446,7 @@ namespace mpfshost::mcp
         {
             return Json {
                 {   "run_state", std::string {debugRunStateName(status.runState)}},
+                {"architecture",                              status.architecture},
                 { "stub_active",                                status.stubActive},
                 {  "stub_owned",                                 status.stubOwned},
                 {"foreign_stub",                               status.foreignStub},

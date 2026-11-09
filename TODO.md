@@ -15,24 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 2. Reject guests whose architecture the debugger cannot read
-
-The register layout, `rip`/`cr3` lookups and `x86_decoder` assume x86-64. An aarch64 or 32-bit guest fails late with
-"the GDB stub does not expose rip" or, worse, reads the wrong registers.
-
-- Detect the architecture from QMP `query-cpus-fast` (`target`/`qom-type`) and, as a fallback, from the target XML
-  register names. Treat only `x86_64` as supported for now.
-- Return `CapabilityUnavailable` with a clear message before starting a stub for registers, watch, break or step.
-  `debug-status` stays available because it only needs QMP.
-- Add the detected architecture to `DebugStatus` as an additive field or, if the payload layout must stay unchanged,
-  report it through the existing error text and document the limitation.
-- Tests: an aarch64 target description and an unknown architecture are rejected; x86-64 still passes; status remains
-  usable for an unsupported guest.
-- Document the x86-64-only restriction and what a future generic register form would require in `docs/PROTOCOL.md`
-  and `docs/DEBUGGING.md`.
-
-Acceptance: an unsupported guest gets one clear error instead of a stub start or a misleading register failure.
-
 ### 3. Add an explicit debug attach and detach
 
 Breakpoints, watchpoints and single-step are usable only as isolated one-shot requests. Introduce the ownership

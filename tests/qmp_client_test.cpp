@@ -202,18 +202,50 @@ TEST_CASE("QMP client reports a closed control channel", "[core][debug][qmp]")
     REQUIRE(error.find("closed") != std::string::npos);
 }
 
-TEST_CASE("QMP client reads the vCPU count from query-cpus-fast", "[core][debug][qmp]")
+TEST_CASE("QMP client reads the vCPU count and architecture from query-cpus-fast", "[core][debug][qmp]")
 {
     auto lines = handshake();
-    lines.emplace_back(R"({"return":[{"cpu-index":0},{"cpu-index":1},{"cpu-index":2}]})");
+    lines.emplace_back(
+        R"({"return":[{"cpu-index":0,"target":"x86_64","qom-type":"x86_64-cpu"},{"cpu-index":1,"target":"x86_64"}]})");
 
     FakeQmp     qmp {std::move(lines)};
     std::string error;
     REQUIRE(qmp.client->connect("/run/qmp.sock", 100ms, error));
 
-    std::uint32_t count = 0;
-    REQUIRE(qmp.client->queryVcpuCount(count, 100ms, error));
-    REQUIRE(count == 3);
+    mpfshost::debug::QmpCpuInfo info;
+    REQUIRE(qmp.client->queryCpusFast(info, 100ms, error));
+    REQUIRE(info.count == 2);
+    REQUIRE(info.architecture == "x86_64");
+}
+
+TEST_CASE("QMP client derives an ARM architecture from qom-type", "[core][debug][qmp]")
+{
+    auto lines = handshake();
+    lines.emplace_back(R"({"return":[{"cpu-index":0,"qom-type":"cortex-a57-arm-cpu"}]})");
+
+    FakeQmp     qmp {std::move(lines)};
+    std::string error;
+    REQUIRE(qmp.client->connect("/run/qmp.sock", 100ms, error));
+
+    mpfshost::debug::QmpCpuInfo info;
+    REQUIRE(qmp.client->queryCpusFast(info, 100ms, error));
+    REQUIRE(info.count == 1);
+    REQUIRE(info.architecture == "arm");
+}
+
+TEST_CASE("QMP client leaves the architecture empty when query-cpus-fast does not name it", "[core][debug][qmp]")
+{
+    auto lines = handshake();
+    lines.emplace_back(R"({"return":[{"cpu-index":0}]})");
+
+    FakeQmp     qmp {std::move(lines)};
+    std::string error;
+    REQUIRE(qmp.client->connect("/run/qmp.sock", 100ms, error));
+
+    mpfshost::debug::QmpCpuInfo info;
+    REQUIRE(qmp.client->queryCpusFast(info, 100ms, error));
+    REQUIRE(info.count == 1);
+    REQUIRE(info.architecture.empty());
 }
 
 TEST_CASE("QMP run state mapping is stable", "[core][debug][qmp]")

@@ -50,6 +50,24 @@ A guest stopped by an attached GDB stub reports QMP `debug` while no request is 
 than `paused`. It is still stopped and `debug-continue` resumes it normally. A QMP `stop` does not turn `debug` back
 into `paused`; QEMU leaves that state on `cont`.
 
+## Architecture gate
+
+Register records, the `rip`/`cr3` lookups and the instruction decoder all assume x86-64. Before starting a GDB stub,
+`debug-registers`, `debug-watch`, `debug-break` and `debug-step` read the architecture from QMP `query-cpus-fast`,
+using the `target` field and falling back to `qom-type`. Only `x86_64` is accepted. Any other architecture, or one
+that QMP does not name and the stub's `target.xml` cannot identify, fails with `CapabilityUnavailable` and a message
+naming the detected architecture. No stub is started when QMP already reports an unsupported architecture.
+
+When `query-cpus-fast` does not name the architecture, the host starts a stub and inspects the register names in
+`target.xml` before reading or arming anything: `rip` means x86-64, `eip` means i386, `pc` with `x0` means
+aarch64, and `pc` without `x0` means 32-bit ARM. This fallback necessarily starts a stub, but nothing is armed and
+the stub is torn down on the rejection path. `debug-status` never starts a stub: it reports `arch=<name>` from QMP, or
+`arch=unknown`, and stays usable for an unsupported guest.
+
+A future generic register form would need a per-architecture register list and layout, architecture-aware replacements
+for `rip`/`cr3`/`rsp`, a decoder that is not x86-specific, and an architecture field in the register records so a
+client can interpret them.
+
 ## Manual check: state, stop and continue
 
 1. Start the host (root) and confirm the target is visible:
@@ -64,7 +82,7 @@ into `paused`; QEMU leaves that state on `cont`.
    ./build/mpfshost --client debug-status <vm>
    ```
 
-   Expect `run-state=running`, `stub-active=no`, `stub-owned=no`, `foreign-stub=no`, `host-paused=no`,
+   Expect `run-state=running`, `arch=x86_64`, `stub-active=no`, `stub-owned=no`, `foreign-stub=no`, `host-paused=no`,
    `vcpus=<n>` matching the QEMU command line, and `watches=0`.
 
 3. Pause it:

@@ -163,6 +163,16 @@ carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPa
  `watchCount` | `u32` | watchpoints armed by the host |
  `stubOwned` | `u8` | `1` when this host process started the active stub |
  `foreignStub` | `u8` | `1` when a stub is active but this host process does not own it |
+ `architecture` | string | Guest architecture from QMP `query-cpus-fast` (`x86_64`, `aarch64`, …), or `unknown` |
+
+The debugger only supports x86-64 guests. `debug-registers`, `debug-watch`, `debug-break` and `debug-step` ask QMP
+for the architecture first and answer `CapabilityUnavailable` with the detected name when it is not `x86_64`, before
+starting a GDB stub. When `query-cpus-fast` omits both `target` and `qom-type`, the host starts a stub and falls back
+to the register names in `target.xml`; an aarch64 or 32-bit description, or one that names no known architecture, is
+rejected the same way before any register or debug resource is touched. `debug-status` remains available because it
+only needs QMP, and reports the architecture it detected. A future generic register form would need a per-architecture
+register layout, a decoder that is not x86-specific, and architecture-aware `rip`/`cr3` equivalents instead of the
+current fixed x86-64 record.
 
 The host reaches the target's QEMU control plane through the QMP Unix socket that the target scan pairs with the QEMU
 pid (`list-targets` reports it). No new host flag gates these types; the connection's access policy is the gate, as
@@ -215,7 +225,8 @@ the guest is still paused.
 The host reads QEMU's `target.xml` (following `xi:include`), uses its register numbering and byte layout for the
 `g` packet, and falls back to a fixed x86-64 layout only for a register that the XML omits. If the stub cannot be
 started it tries loopback TCP before failing; it never uses the all-interfaces default and never stops a stub it did
-not start.
+not start. The record layout above and the register names in every request are x86-64; an unsupported architecture is
+rejected as described under "Debug control".
 
 ## Debug watch
 

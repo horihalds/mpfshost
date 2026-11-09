@@ -41,6 +41,14 @@ namespace mpfshost::debug
         bool        singlestep {};
     };
 
+    struct QmpCpuInfo
+    {
+        std::uint32_t count {};
+        // QEMU's guest architecture from `target` or `qom-type`, normalised to a short name such as `x86_64`.
+        // Empty when the reply names neither field.
+        std::string   architecture;
+    };
+
     // Speaks the QMP control channel: greeting, qmp_capabilities, command/reply matching and asynchronous
     // event skipping. Every wait is bounded by the caller's timeout.
     class QmpClient
@@ -71,7 +79,7 @@ namespace mpfshost::debug
                                         std::chrono::milliseconds timeout,
                                         std::string&              error);
         [[nodiscard]] bool queryStatus(QmpStatusInfo& info, std::chrono::milliseconds timeout, std::string& error);
-        [[nodiscard]] bool queryVcpuCount(std::uint32_t& count, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool queryCpusFast(QmpCpuInfo& info, std::chrono::milliseconds timeout, std::string& error);
 
         [[nodiscard]] bool isOpen() const noexcept
         {

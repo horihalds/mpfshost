@@ -123,13 +123,14 @@ TEST_CASE("debug control request round trips and rejects unknown actions", "[cor
 TEST_CASE("debug status round trips through both response codecs", "[core][debug][codec]")
 {
     mpfshost::DebugStatus status;
-    status.runState    = mpfshost::DebugRunState::Paused;
-    status.stubActive  = true;
-    status.hostPaused  = true;
-    status.vcpuCount   = 12;
-    status.watchCount  = 2;
-    status.stubOwned   = true;
-    status.foreignStub = false;
+    status.runState     = mpfshost::DebugRunState::Paused;
+    status.stubActive   = true;
+    status.hostPaused   = true;
+    status.vcpuCount    = 12;
+    status.watchCount   = 2;
+    status.stubOwned    = true;
+    status.foreignStub  = false;
+    status.architecture = "x86_64";
 
     const auto state   = mpfshost::decodeDebugStateResponse(mpfshost::encodeDebugStateResponse(status));
     const auto control = mpfshost::decodeDebugControlResponse(mpfshost::encodeDebugControlResponse(status));
@@ -142,6 +143,7 @@ TEST_CASE("debug status round trips through both response codecs", "[core][debug
     REQUIRE(state->watchCount == 2);
     REQUIRE(state->stubOwned);
     REQUIRE_FALSE(state->foreignStub);
+    REQUIRE(state->architecture == "x86_64");
     REQUIRE(control->runState == mpfshost::DebugRunState::Paused);
 
     status.stubOwned   = false;
