@@ -159,6 +159,24 @@ alone.
 `debug-threads` requires a paused guest and the same stub ownership rules as `debug-registers`. It reuses an
 attachment, or starts and stops a temporary stub and leaves the guest paused. It never logs guest memory.
 
+### Thread discovery validation record
+
+Run on 2026-11-09 against the `windows` target (12 vCPUs, QEMU 10.2.2) with `guest-probe.exe` pid 2780:
+
+- With the guest idle and paused, `debug-threads` returned 12 records. Every vCPU was in the System process
+  (`cr3=0x1ae000`, `pid=4`) with `tid=?`, because the idle kernel stacks did not match a thread range MemProcFS
+  reported.
+- After `debug-attach`, a hardware watchpoint on `GuestProbeCounter` hit on vCPU 0/thread `p01.01` with
+  `cr3=0x366454000`, `pid=2780`, `tid=5900`, `rip=0x7ff7850e1487` and `export=GuestProbeMarker+0x7`.
+- `debug-threads` then resolved the user-mode vCPUs: vCPU 0 was pid 2780/tid 5900, vCPU 4 pid 9488/tid 7656,
+  vCPU 5 pid 8824/tid 9472 and vCPU 10 pid 2668/tid 4100. The kernel vCPUs still reported `pid=4  tid=?`.
+- `debug-step --thread p01.01` advanced that thread from `rip=0x7ff7850e1487` to `0x7ff7850e14aa` and reported the
+  same `p01.01`/pid 2780/tid 5900; the guest stayed paused.
+- `debug-detach` removed the watch, stopped the stub, reported `guest-resumed=yes`, and `debug-status` returned to
+  `running`, `stub-active=no`, `host-paused=no`.
+- Step-by-thread therefore selects the named stub thread rather than the first vCPU, and guest pid/tid resolution
+  succeeds once a vCPU is executing in a resolvable user process.
+
 ## Stub endpoint and ownership
 
 `debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry,
@@ -536,9 +554,7 @@ build:
   restart gives the module marker a new ASLR base if a shared base causes a stop storm.
 - The first watch hit immediately after a host restart once reported RIP and CR3 from the previous probe process;
   a rerun was correct. Check whether a queued stop needs draining when a new stub session starts.
-- `debug-threads` and `debug-step --thread` have only fake-stub coverage. On a live guest, confirm that each vCPU in
-  the probe process reports the expected pid/tid, that an idle kernel vCPU reports `pid=?` or a kernel thread, and
-  that stepping by GDB thread id advances that thread and not the first vCPU.
+
 
 Record the remaining answers here after the next live run.
 
