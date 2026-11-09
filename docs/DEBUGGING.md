@@ -167,16 +167,18 @@ after the first run.
    running and the stub stopped.
 
 Only one watch runs at a time: a second debug operation is refused with `Busy`, so a watch holds one of the four
-hardware debug-register slots. If the guest already uses that slot, arming the `Z2` package fails and the request
-reports an error instead of silently missing writes.
+hardware debug-register slots. QEMU's debug registers are global rather than per vCPU; a second `Z2` for the same
+address on another thread is rejected with `E22`, so the host arms the watchpoint once. If the guest already uses
+that slot, arming fails and the request reports an error instead of silently missing writes.
 
-Record here: whether `Z2` had to be armed on every vCPU or once per target, the observed `cr3` values, and whether
+Record here: the observed `cr3` values, whether the first hit was a reallocation vs the logical store, and whether
 repeated hits kept the guest responsive.
 
 ## Checks still owed to a live guest
 
-- ~~Whether `Z2` watchpoints must be armed per vCPU.~~ The implementation arms `Z2` on every stub thread; a live
-  run still has to confirm that this catches a write on any vCPU.
+- ~~Whether `Z2` watchpoints must be armed per vCPU.~~ Answered on 2026-11-09 against `windows` (12 vCPU): a first
+  `Z2,<addr>,2` on one thread returns `OK`; repeating it for the same address on another thread returns `E22`.
+  QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
 
@@ -187,8 +189,7 @@ Record the remaining answers here after the next live run.
 Any future slice that starts a stub or arms a watchpoint must:
 
 - remember whether the host started the stub and never stop one it did not start;
-- remove watchpoints from every armed vCPU and stop the stub on success, timeout, cancellation, error and client
-  death;
+- remove the watchpoint and stop the stub on success, timeout, cancellation, error and client death;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
 - refuse concurrent debug operations with `Busy`;
 - never log guest memory contents.

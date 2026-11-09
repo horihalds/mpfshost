@@ -173,18 +173,19 @@ namespace
             std::uint64_t cr3 {};
         };
 
-        std::string           pending;
-        std::string           registersXml;
-        std::string           registerBytes;
-        bool                  noAck {false};
-        bool                  fail {false};
-        std::deque<StopReply> stops;
-        std::uint64_t         currentRip {};
-        std::uint64_t         currentRsp {};
-        std::uint64_t         currentCr3 {};
-        std::size_t           watchInserts {0};
-        std::size_t           watchRemoves {0};
-        std::size_t           continues {0};
+        std::string              pending;
+        std::string              registersXml;
+        std::string              registerBytes;
+        bool                     noAck {false};
+        bool                     fail {false};
+        std::deque<StopReply>    stops;
+        std::vector<std::string> threads {"1.1"};
+        std::uint64_t            currentRip {};
+        std::uint64_t            currentRsp {};
+        std::uint64_t            currentCr3 {};
+        std::size_t              watchInserts {0};
+        std::size_t              watchRemoves {0};
+        std::size_t              continues {0};
 
         [[nodiscard]] bool open(const RspEndpoint&, std::chrono::milliseconds, std::string&) override
         {
@@ -253,15 +254,32 @@ namespace
             }
             else if (body == "qfThreadInfo")
             {
-                quoteAck("m1.1");
+                std::string list {"m"};
+                for (std::size_t index = 0; index < threads.size(); ++index)
+                {
+                    if (index != 0)
+                    {
+                        list.push_back(',');
+                    }
+                    list += threads[index];
+                }
+                quoteAck(list);
             }
             else if (body == "qsThreadInfo")
             {
                 quoteAck("l");
             }
-            else if (body == "Hg1.1")
+            else if (body.starts_with("Hg"))
             {
-                quoteAck("OK");
+                const auto thread = body.substr(2);
+                if (std::find(threads.begin(), threads.end(), thread) != threads.end())
+                {
+                    quoteAck("OK");
+                }
+                else
+                {
+                    quoteAck("E22");
+                }
             }
             else if (body == "g")
             {
@@ -677,6 +695,42 @@ TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[cor
     REQUIRE(end->skippedCount == 1);
     REQUIRE(hits.size() == 1);
     REQUIRE(rsp->continues == 2);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("the watchpoint is armed once even with several vCPUs", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->threads       = {"1.1", "1.2"};
+    rsp->stops.push_back({"1.2", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        busy = false;
+    std::string error;
+    const auto end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(rsp->watchInserts == 1);
+    REQUIRE(rsp->watchRemoves == 1);
     REQUIRE(qmp->running);
 }
 

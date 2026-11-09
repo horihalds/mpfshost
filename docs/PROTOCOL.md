@@ -202,8 +202,8 @@ not start.
  `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
 
 The host pauses the guest if it is running, starts a stub it owns, reads the process DTBs (`paDTB` and
-`paDTB_UserOpt`), arms a `Z2` watchpoint on every vCPU thread, resumes execution through the stub and polls with short
-timeouts so cancellation, the request deadline and peer loss are observed. Every stop reply is matched by masking the
+`paDTB_UserOpt`), arms one `Z2` watchpoint (QEMU's debug registers are global, not per vCPU), resumes execution
+through the stub and polls with short timeouts so cancellation, the request deadline and peer loss are observed. Every stop reply is matched by masking the
 low twelve bits of `cr3` and comparing it with both process DTBs; a mismatch resumes the guest, counts one skipped hit
 and keeps watching. On a match the host captures `rip`, `rsp` and `cr3` before reading the watched value from the
 requested process and resolving `rip` against the module list, the nearest export and any already-loaded PDB (no

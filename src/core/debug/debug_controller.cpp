@@ -721,30 +721,29 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
-        std::vector<std::string> armedThreads;
+        // QEMU's gdbstub keeps one global debug-register set: a second Z2 for the same address on another vCPU
+        // is rejected, so the watchpoint is armed once rather than once per thread.
+        std::optional<std::string> armedThread;
 
         struct Cleanup
         {
-            DebugController&          self;
-            QmpClient&                client;
-            RspClient&                rsp;
-            std::vector<std::string>& armedThreads;
-            const DebugWatchRequest&  request;
-            bool                      stoppedByUs;
+            DebugController&            self;
+            QmpClient&                  client;
+            RspClient&                  rsp;
+            std::optional<std::string>& armedThread;
+            const DebugWatchRequest&    request;
+            bool                        stoppedByUs;
 
             ~Cleanup()
             {
                 std::string ignored;
                 rsp.drainPending();
-                for (auto thread = armedThreads.rbegin(); thread != armedThreads.rend(); ++thread)
+                if (armedThread)
                 {
-                    if (!rsp.selectThread(*thread, kRspTimeout, ignored))
+                    if (rsp.selectThread(*armedThread, kRspTimeout, ignored)
+                        && !rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
                     {
-                        continue;
-                    }
-                    if (!rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
-                    {
-                        log::warn("host", "could not remove a watchpoint from ", *thread, ": ", ignored);
+                        log::warn("host", "could not remove the watchpoint: ", ignored);
                     }
                 }
                 self._watchCount = 0;
@@ -781,7 +780,7 @@ namespace mpfshost::debug
                     }
                 }
             }
-        } cleanup {*this, *client, *rsp, armedThreads, request, stoppedByUs};
+        } cleanup {*this, *client, *rsp, armedThread, request, stoppedByUs};
 
         if (!rsp->negotiate(kRspTimeout, error))
         {
@@ -823,20 +822,17 @@ namespace mpfshost::debug
             }
         }
 
-        for (const auto& thread : threads)
+        if (!rsp->selectThread(threads.front(), kRspTimeout, error))
         {
-            if (!rsp->selectThread(thread, kRspTimeout, error))
-            {
-                return std::nullopt;
-            }
-            if (!rsp->insertWatchpoint(request.address, request.width, kRspTimeout, error))
-            {
-                return std::nullopt;
-            }
-            armedThreads.push_back(thread);
+            return std::nullopt;
         }
+        if (!rsp->insertWatchpoint(request.address, request.width, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        armedThread = threads.front();
         _watchCount = 1;
-        log::info("host", "armed a write watchpoint on ", threads.size(), " vCPU(s)");
+        log::info("host", "armed a write watchpoint");
 
         if (!rsp->continueExecution(kRspTimeout, error))
         {
