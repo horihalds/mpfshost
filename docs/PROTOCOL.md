@@ -20,7 +20,7 @@ this document explains it.
  Offset | Size | Field | Value |
 --------|------|-------|-------|
  0 | u32 | magic | `kProtocolMagic` = `0x5350464D` (`'M','F','P','S'`) |
- 4 | u16 | version | `kProtocolVersion` = `1` |
+ 4 | u16 | version | `kProtocolVersion` = `2` |
  6 | u16 | type | `MessageType` |
  8 | u64 | request id | chosen by the client, echoed in every response frame |
  16 | u32 | payload length | at most `kMaxPayloadLength` = 1 MiB |
@@ -586,8 +586,9 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  22 | `ProtocolError` | client-side only: a malformed or mismatched response |
  23 | `InvalidArgument` | client-side only: local argument validation failed |
 
-Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
-existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.
+Codes and message types are additive. Version `2` covers the process-descriptor image path and the read-flags byte;
+an older host rejects a version-2 client at the frame header instead of misparsing a response. Do not change an
+existing payload layout again without bumping `kProtocolVersion` and redeploying host and clients together.
 
 ## Limits
 

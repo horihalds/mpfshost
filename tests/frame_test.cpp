@@ -539,7 +539,7 @@ TEST_CASE("cancellation message types and error codes are declared", "[ipc][fram
     REQUIRE(static_cast<std::uint16_t>(mpfshost::ErrorCode::Cancelled) == 17);
     REQUIRE(static_cast<std::uint16_t>(mpfshost::ErrorCode::Timeout) == 18);
     REQUIRE(static_cast<std::uint16_t>(mpfshost::ErrorCode::Busy) == 19);
-    REQUIRE(mpfshost::kProtocolVersion == 1);
+    REQUIRE(mpfshost::kProtocolVersion == 2);
 }
 
 TEST_CASE("malformed message payloads are rejected", "[ipc][message]")

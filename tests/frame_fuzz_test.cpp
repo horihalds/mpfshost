@@ -806,7 +806,8 @@ TEST_CASE("readFrame rejects a bad magic", "[fuzz][frame]")
 
 TEST_CASE("readFrame rejects an unsupported version", "[fuzz][frame]")
 {
-    for (const std::uint16_t version : {std::uint16_t {0}, std::uint16_t {2}, std::uint16_t {0xFFFF}})
+    for (const std::uint16_t version :
+         {std::uint16_t {0}, static_cast<std::uint16_t>(mpfshost::kProtocolVersion + 1), std::uint16_t {0xFFFF}})
     {
         const auto header = rawHeader(
             mpfshost::kProtocolMagic, version, static_cast<std::uint16_t>(mpfshost::MessageType::BindRequest), 1, 0);
