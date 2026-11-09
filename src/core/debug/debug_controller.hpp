@@ -128,6 +128,7 @@ namespace mpfshost::debug
         DebugInspector*            _inspector {nullptr};
         std::atomic<bool>          _stubActive {false};
         std::atomic<bool>          _hostPaused {false};
+        std::atomic<bool>          _controlPaused {false};
         std::atomic<std::uint32_t> _watchCount {0};
     };
 } // namespace mpfshost::debug

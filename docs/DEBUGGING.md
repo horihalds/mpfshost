@@ -222,10 +222,11 @@ Notepad or injected keystrokes.
 
 Only one exclusive debug operation runs at a time: a second registers, breakpoint, step or watch request is refused
 with `Busy`, so a watch holds one of the four hardware debug-register slots. `debug-status` and
-`debug-stop`/`debug-continue` still run during a watch because they only need QMP. QEMU's debug registers are global
-rather than per vCPU; a second `Z2` for the same address on another thread is rejected with `E22`, so the host arms
-the watchpoint once. If the guest already uses that slot, arming fails and the request reports an error instead of
-silently missing writes.
+`debug-stop`/`debug-continue` still run during a watch because they only need QMP. A pause requested during a watch
+is held until `debug-continue`: the watch does not resume the guest behind the other client. QEMU's debug registers
+are global rather than per vCPU; a second `Z2` for the same address on another thread is rejected with `E22`, so the
+host arms the watchpoint once. If the guest already uses that slot, arming fails and the request reports an error
+instead of silently missing writes.
 
 Record here: the observed `cr3` values, whether the first hit was a reallocation vs the logical store, and whether
 repeated hits kept the guest responsive.

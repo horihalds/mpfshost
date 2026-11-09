@@ -435,9 +435,12 @@ namespace mpfshost::debug
                 _hostPaused = true;
                 log::info("host", "paused the guest through QMP");
             }
+            // A watch in flight may see the resulting stub stop; it must not resume the guest underneath us.
+            _controlPaused = true;
         }
         else
         {
+            _controlPaused = false;
             if (before != DebugRunState::Running)
             {
                 std::string ignored;
@@ -821,6 +824,9 @@ namespace mpfshost::debug
             error = "the watchpoint service is unavailable";
             return std::nullopt;
         }
+        // This watch owns the guest's run state from here; a pause requested before it started is not an
+        // external pause for this run.
+        _controlPaused = false;
 
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
@@ -928,19 +934,27 @@ namespace mpfshost::debug
                 QmpStatusInfo after;
                 if (stoppedByUs)
                 {
-                    if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status != "running")
+                    if (self._controlPaused.load())
                     {
-                        if (!self.qmpExecute("cont", ignored, ignored, ignoredUnavailable))
+                        // Another client asked for a pause during the watch; leave the guest as it asked.
+                        log::info("host", "leaving the guest paused after a watchpoint");
+                    }
+                    else
+                    {
+                        if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status != "running")
                         {
-                            log::warn("host", "could not resume the guest after a watchpoint: ", ignored);
+                            if (!self.qmpExecute("cont", ignored, ignored, ignoredUnavailable))
+                            {
+                                log::warn("host", "could not resume the guest after a watchpoint: ", ignored);
+                            }
                         }
+                        QmpStatusInfo verified;
+                        if (self.qmpQueryStatus(verified, ignored, ignoredUnavailable) && verified.status != "running")
+                        {
+                            log::warn("host", "the guest is still not running after a watchpoint");
+                        }
+                        self._hostPaused = false;
                     }
-                    QmpStatusInfo verified;
-                    if (self.qmpQueryStatus(verified, ignored, ignoredUnavailable) && verified.status != "running")
-                    {
-                        log::warn("host", "the guest is still not running after a watchpoint");
-                    }
-                    self._hostPaused = false;
                 }
                 else if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status == "running")
                 {
@@ -1007,15 +1021,51 @@ namespace mpfshost::debug
         // Drop any stop reply QEMU queued before this client attached, so the first poll cannot report
         // stale registers as a hit.
         rsp->drainPending();
-        if (!rsp->continueExecution(kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
 
         DebugWatchEnd end;
         end.status                  = DebugWatchStatus::Completed;
         std::uint32_t hits          = 0;
         const auto    watchDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {request.timeoutMs};
+
+        // A debug-stop from another client pauses the guest through QMP, which can surface as a stub stop.
+        // Stay paused until that client continues instead of resuming the guest behind its back.
+        const auto waitForControlResume = [&]() -> bool
+        {
+            while (_controlPaused.load())
+            {
+                if (aborted && aborted())
+                {
+                    end.status = DebugWatchStatus::Cancelled;
+                    end.error  = "the watchpoint was cancelled";
+                    return false;
+                }
+                if (requestExpired())
+                {
+                    end.status = DebugWatchStatus::Timeout;
+                    end.error  = "the request deadline expired";
+                    return false;
+                }
+                if (std::chrono::steady_clock::now() >= watchDeadline)
+                {
+                    end.status = DebugWatchStatus::Timeout;
+                    end.error  = "the watchpoint timed out";
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds {10});
+            }
+            return true;
+        };
+
+        if (!waitForControlResume())
+        {
+            return end;
+        }
+        if (!rsp->continueExecution(kRspTimeout, error))
+        {
+            end.status = DebugWatchStatus::Error;
+            end.error  = error;
+            return end;
+        }
 
         while (hits < request.maxHits)
         {
@@ -1121,6 +1171,10 @@ namespace mpfshost::debug
             if (!accept)
             {
                 ++end.skippedCount;
+                if (!waitForControlResume())
+                {
+                    break;
+                }
                 if (!rsp->continueExecution(kRspTimeout, error))
                 {
                     end.status = DebugWatchStatus::Error;
@@ -1209,6 +1263,8 @@ namespace mpfshost::debug
             error = "the breakpoint service is unavailable";
             return std::nullopt;
         }
+        // This breakpoint owns the guest's run state from here; see the watch path for the same reset.
+        _controlPaused = false;
 
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
@@ -1312,19 +1368,27 @@ namespace mpfshost::debug
                 QmpStatusInfo after;
                 if (stoppedByUs)
                 {
-                    if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status != "running")
+                    if (self._controlPaused.load())
                     {
-                        if (!self.qmpExecute("cont", ignored, ignored, ignoredUnavailable))
+                        // Another client asked for a pause during the breakpoint; leave the guest paused.
+                        log::info("host", "leaving the guest paused after a breakpoint");
+                    }
+                    else
+                    {
+                        if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status != "running")
                         {
-                            log::warn("host", "could not resume the guest after a breakpoint: ", ignored);
+                            if (!self.qmpExecute("cont", ignored, ignored, ignoredUnavailable))
+                            {
+                                log::warn("host", "could not resume the guest after a breakpoint: ", ignored);
+                            }
                         }
+                        QmpStatusInfo verified;
+                        if (self.qmpQueryStatus(verified, ignored, ignoredUnavailable) && verified.status != "running")
+                        {
+                            log::warn("host", "the guest is still not running after a breakpoint");
+                        }
+                        self._hostPaused = false;
                     }
-                    QmpStatusInfo verified;
-                    if (self.qmpQueryStatus(verified, ignored, ignoredUnavailable) && verified.status != "running")
-                    {
-                        log::warn("host", "the guest is still not running after a breakpoint");
-                    }
-                    self._hostPaused = false;
                 }
                 else if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status == "running")
                 {
@@ -1380,15 +1444,49 @@ namespace mpfshost::debug
 
         // A stop reply queued before this client attached must not be mistaken for a breakpoint hit.
         rsp->drainPending();
-        if (!rsp->continueExecution(kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
 
         DebugBreakpointResponse response;
         response.address = request.address;
         const auto breakpointDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds {request.timeoutMs};
+
+        const auto waitForControlResume = [&]() -> bool
+        {
+            while (_controlPaused.load())
+            {
+                if (aborted && aborted())
+                {
+                    response.status = DebugBreakpointStatus::Cancelled;
+                    response.error  = "the breakpoint was cancelled";
+                    return false;
+                }
+                if (requestExpired())
+                {
+                    response.status = DebugBreakpointStatus::Timeout;
+                    response.error  = "the request deadline expired";
+                    return false;
+                }
+                if (std::chrono::steady_clock::now() >= breakpointDeadline)
+                {
+                    response.status = DebugBreakpointStatus::Timeout;
+                    response.error  = "the breakpoint timed out";
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds {10});
+            }
+            return true;
+        };
+
+        if (!waitForControlResume())
+        {
+            return response;
+        }
+        if (!rsp->continueExecution(kRspTimeout, error))
+        {
+            response.status = DebugBreakpointStatus::Error;
+            response.error  = error;
+            return response;
+        }
 
         while (true)
         {
@@ -1492,6 +1590,10 @@ namespace mpfshost::debug
                               moduleHit);
                 }
                 ++response.skippedCount;
+                if (!waitForControlResume())
+                {
+                    break;
+                }
                 if (!rsp->continueExecution(kRspTimeout, error))
                 {
                     response.status = DebugBreakpointStatus::Error;

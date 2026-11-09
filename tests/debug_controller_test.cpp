@@ -1823,3 +1823,68 @@ TEST_CASE("the request deadline bounds a pending QMP command", "[core][debug][co
     REQUIRE(qmp->lastReadTimeout > 0ms);
     REQUIRE(qmp->lastReadTimeout <= 40ms);
 }
+
+TEST_CASE("a control pause during a watch leaves the guest paused", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+    inspector.values = {0xAA};
+    std::promise<void> armed;
+    auto               armedFuture = armed.get_future();
+    inspector.onWatchRead          = [&armed]
+    {
+        armed.set_value();
+    };
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::optional<mpfshost::DebugWatchEnd> end;
+    bool                                   watchBusy        = false;
+    bool                                   watchUnavailable = false;
+    std::string                            watchError;
+    std::thread                            watcher {[&]
+                                                    {
+                             end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 300},
+                                                    {},
+                                                    {},
+                                                    watchBusy,
+                                                    watchError,
+                                                    watchUnavailable);
+                                                    }};
+
+    armedFuture.wait();
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE(controller.control(mpfshost::DebugControlAction::Stop, busy, error, unavailable).has_value());
+    REQUIRE_FALSE(qmp->running);
+
+    watcher.join();
+    REQUIRE(end.has_value());
+    REQUIRE_FALSE(qmp->running);
+    REQUIRE_FALSE(qmp->stubActive);
+
+    const auto paused = controller.state(busy, error, unavailable);
+    REQUIRE(paused.has_value());
+    REQUIRE(paused->runState == mpfshost::DebugRunState::Paused);
+    REQUIRE(paused->hostPaused);
+
+    REQUIRE(controller.control(mpfshost::DebugControlAction::Continue, busy, error, unavailable).has_value());
+    REQUIRE(qmp->running);
+}
