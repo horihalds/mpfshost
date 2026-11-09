@@ -3189,6 +3189,58 @@ TEST_CASE("a debug wait does not query threads while the stub is running", "[cor
     REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
 }
 
+TEST_CASE("a debug wait does not resume a guest paused by a control request", "[core][debug][controller]")
+{
+    auto qmp                    = std::make_shared<FakeQmpState>();
+    qmp->running                = false;
+    auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport           = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml  = x86RegisterXml();
+    rspTransport->registerBytes = registerBytes();
+    auto* rsp                   = rspTransport.get();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(controller
+                .armWatch(7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable)
+                .has_value());
+    REQUIRE(controller.continueGuest(7, invalidState, busy, error, unavailable).has_value());
+    const auto continuesBefore = rsp->continues;
+
+    REQUIRE(controller.control(mpfshost::DebugControlAction::Stop, busy, error, unavailable).has_value());
+    const auto end = controller.wait(
+        {50, 1},
+        [](const mpfshost::DebugWaitHit&)
+        {
+            return true;
+        },
+        {},
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE(rsp->continues == continuesBefore);
+
+    REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}
+
 TEST_CASE("persistent breakpoints share four hardware slots and keep their ids", "[core][debug][controller]")
 {
     auto qmp           = std::make_shared<FakeQmpState>();

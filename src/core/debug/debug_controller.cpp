@@ -3346,6 +3346,14 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        if (_controlPaused.load())
+        {
+            DebugWaitEnd paused;
+            paused.status = DebugWatchStatus::Timeout;
+            paused.error  = "the guest was paused by another request";
+            return paused;
+        }
+
         std::vector<std::string> threads;
         if (!_sessionRunning.load())
         {
@@ -3383,6 +3391,13 @@ namespace mpfshost::debug
             {
                 end.status = DebugWatchStatus::Timeout;
                 end.error  = "the request deadline expired";
+                break;
+            }
+
+            if (_controlPaused.load())
+            {
+                end.status = DebugWatchStatus::Timeout;
+                end.error  = "the guest was paused by another request";
                 break;
             }
 
