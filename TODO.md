@@ -15,27 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 4. Make breakpoints and watchpoints persistent for a debug session
-
-Once a session exists, a caller should be able to arm several breakpoints/watchpoints, continue, and receive hits
-over multiple requests instead of re-arming for every hit.
-
-- Add `DebugBreakpointArmRequest`/`DebugBreakpointArmResponse` (with an id), `DebugBreakpointRemoveRequest`,
-  `DebugBreakpointListRequest`/`Response`, and the equivalent watch set. Keep the existing one-shot messages for
-  compatibility.
-- Allow at most four hardware slots, shared by hardware breakpoints and watchpoints; reject arming a fifth with
-  `InvalidState`. Software breakpoints do not consume a slot but must respect the `Z0` address-space limitation.
-- Add `DebugWaitRequest` (timeout, max hits) that returns the next stop for any armed breakpoint/watchpoint, including
-  the hit's id, registers and symbolization. Add `DebugContinueRequest` that resumes without disarming.
-- Remove every armed resource on detach, host shutdown, snapshot/reset detection and session death.
-- Add the client streaming function, CLI commands and MCP tools. Keep the one-shot commands working.
-- Tests: arm/continue/hit/remove/list, slot exhaustion, a watch and breakpoint armed together, cancellation during
-  wait, teardown on detach, and ids that stay stable while other resources are removed.
-- Document the new messages in `docs/PROTOCOL.md` and the workflow in `docs/DEBUGGING.md`.
-
-Acceptance: a caller can arm several breakpoints and watchpoints, continue the guest, receive hits over repeated
-waits, remove individual resources and detach with nothing left armed.
-
 ### 5. Add debug thread discovery
 
 `--vcpu` is the stub's thread-list index, and callers have no way to see which guest thread or process a register

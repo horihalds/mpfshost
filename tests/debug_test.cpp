@@ -765,3 +765,166 @@ TEST_CASE("a concurrent debug operation is reported as Busy", "[core][debug][ses
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->code == mpfshost::ErrorCode::Busy);
 }
+
+TEST_CASE("persistent debug resource messages round trip", "[core][debug][codec]")
+{
+    const auto armBreak = mpfshost::decodeDebugBreakpointArmRequest(
+        mpfshost::encodeDebugBreakpointArmRequest({42, 0x1000, mpfshost::DebugBreakpointKind::Hardware}));
+    REQUIRE(armBreak.has_value());
+    REQUIRE(armBreak->pid == 42);
+    REQUIRE(armBreak->address == 0x1000);
+    REQUIRE(armBreak->kind == mpfshost::DebugBreakpointKind::Hardware);
+
+    const auto armBreakResponse = mpfshost::decodeDebugBreakpointArmResponse(
+        mpfshost::encodeDebugBreakpointArmResponse({7, 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 2}));
+    REQUIRE(armBreakResponse.has_value());
+    REQUIRE(armBreakResponse->id == 7);
+    REQUIRE(armBreakResponse->slot == 2);
+
+    const auto armWatch = mpfshost::decodeDebugWatchArmRequest(
+        mpfshost::encodeDebugWatchArmRequest({42, 0x2000, 8, mpfshost::DebugWatchAccess::Write}));
+    REQUIRE(armWatch.has_value());
+    REQUIRE(armWatch->width == 8);
+
+    const auto armWatchResponse = mpfshost::decodeDebugWatchArmResponse(
+        mpfshost::encodeDebugWatchArmResponse({9, 42, 0x2000, 8, mpfshost::DebugWatchAccess::Write, 3}));
+    REQUIRE(armWatchResponse.has_value());
+    REQUIRE(armWatchResponse->slot == 3);
+
+    const auto remove =
+        mpfshost::decodeDebugResourceRemoveResponse(mpfshost::encodeDebugResourceRemoveResponse({9, true}));
+    REQUIRE(remove.has_value());
+    REQUIRE(remove->removed);
+
+    const mpfshost::DebugBreakpointListResponse breakList {{armBreakResponse.value()}};
+    const auto                                  decodedBreakList =
+        mpfshost::decodeDebugBreakpointListResponse(mpfshost::encodeDebugBreakpointListResponse(breakList));
+    REQUIRE(decodedBreakList.has_value());
+    REQUIRE(decodedBreakList->breakpoints.size() == 1);
+    REQUIRE(decodedBreakList->breakpoints.front().id == 7);
+
+    const mpfshost::DebugWatchListResponse watchList {{armWatchResponse.value()}};
+    const auto                             decodedWatchList =
+        mpfshost::decodeDebugWatchListResponse(mpfshost::encodeDebugWatchListResponse(watchList));
+    REQUIRE(decodedWatchList.has_value());
+    REQUIRE(decodedWatchList->watches.size() == 1);
+    REQUIRE(decodedWatchList->watches.front().id == 9);
+
+    const mpfshost::DebugWaitHit hit {
+        5,
+        mpfshost::DebugResourceKind::Watchpoint,
+        mpfshost::DebugBreakpointKind::Software,
+        0x2000,
+        {0, "p01.01", 0x1000, 0x2000, 0, 0, 0, 0x3000, 0, 0},
+        "guest-probe.exe",
+        0x100,
+        true,
+        0x1000,
+        0x10,
+        "GuestProbeMarker",
+        true,
+        "GuestProbeMarker",
+        4
+    };
+    const auto decodedHit = mpfshost::decodeDebugWaitHit(mpfshost::encodeDebugWaitHit(hit));
+    REQUIRE(decodedHit.has_value());
+    REQUIRE(decodedHit->id == 5);
+    REQUIRE(decodedHit->record.threadId == "p01.01");
+    REQUIRE(decodedHit->module == "guest-probe.exe");
+    REQUIRE(decodedHit->pdbDisplacement == 4);
+
+    const mpfshost::DebugWaitEnd end {mpfshost::DebugWatchStatus::Completed, 1, 2, {}};
+    const auto                   decodedEnd = mpfshost::decodeDebugWaitEnd(mpfshost::encodeDebugWaitEnd(end));
+    REQUIRE(decodedEnd.has_value());
+    REQUIRE(decodedEnd->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(decodedEnd->skippedCount == 2);
+
+    REQUIRE_FALSE(mpfshost::decodeDebugBreakpointArmRequest({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugWaitRequest(std::vector<std::byte> {std::byte {0}}).has_value());
+}
+
+TEST_CASE("persistent debug resources are delivered through the fake backend", "[core][debug][session]")
+{
+    DebugFixture fixture;
+
+    const mpfshost::DebugBreakpointArmResponse breakpoint {11, 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 0};
+    const mpfshost::DebugWatchArmResponse      watch {12, 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1};
+    fixture.backend().setDebugArmBreakpoint(breakpoint);
+    fixture.backend().setDebugArmWatch(watch);
+    fixture.backend().setDebugListBreakpoints({{breakpoint}});
+    fixture.backend().setDebugListWatches({{watch}});
+    fixture.backend().setDebugRemoveBreakpoint({11, true});
+    fixture.backend().setDebugRemoveWatch({12, true});
+
+    mpfshost::DebugStatus continued;
+    continued.runState = mpfshost::DebugRunState::Running;
+    fixture.backend().setDebugContinue(continued);
+
+    mpfshost::DebugWaitHit hit;
+    hit.id              = 11;
+    hit.kind            = mpfshost::DebugResourceKind::Breakpoint;
+    hit.address         = 0x1000;
+    hit.record.vcpu     = 3;
+    hit.record.threadId = "p01.04";
+    hit.record.rip      = 0x1000;
+    mpfshost::DebugWaitEnd waitEnd;
+    waitEnd.status   = mpfshost::DebugWatchStatus::Completed;
+    waitEnd.hitCount = 1;
+    fixture.backend().setDebugWait({hit}, waitEnd);
+
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  armedBreak = mpfshost::debugArmBreakpoint(
+        fixture.socketPath(), {"vm1", 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware}, error);
+    REQUIRE(armedBreak.has_value());
+    REQUIRE(armedBreak->id == 11);
+
+    const auto armedWatch =
+        mpfshost::debugArmWatch(fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write}, error);
+    REQUIRE(armedWatch.has_value());
+    REQUIRE(armedWatch->slot == 1);
+
+    const auto breaks = mpfshost::debugListBreakpoints(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE(breaks.has_value());
+    REQUIRE(breaks->size() == 1);
+    REQUIRE(breaks->front().address == 0x1000);
+
+    const auto watches = mpfshost::debugListWatches(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE(watches.has_value());
+    REQUIRE(watches->size() == 1);
+
+    const auto status = mpfshost::debugContinueArmed(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE(status.has_value());
+    REQUIRE(status->runState == mpfshost::DebugRunState::Running);
+
+    std::vector<mpfshost::DebugWaitHit> hits;
+    const auto                          waited = mpfshost::debugWait(
+        fixture.socketPath(),
+        {"vm1", 5000, 1},
+        [&hits](const mpfshost::DebugWaitHit& received)
+        {
+            hits.push_back(received);
+        },
+        error);
+    REQUIRE(waited.has_value());
+    REQUIRE(waited->hitCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits.front().id == 11);
+
+    const auto removedBreak = mpfshost::debugRemoveBreakpoint(fixture.socketPath(), {"vm1", 11}, error);
+    REQUIRE(removedBreak.has_value());
+    REQUIRE(removedBreak->removed);
+    const auto removedWatch = mpfshost::debugRemoveWatch(fixture.socketPath(), {"vm1", 12}, error);
+    REQUIRE(removedWatch.has_value());
+    REQUIRE(removedWatch->removed);
+
+    REQUIRE(fixture.backend().debugState()->armBreakpointCalls == 1);
+    REQUIRE(fixture.backend().debugState()->armWatchCalls == 1);
+    REQUIRE(fixture.backend().debugState()->listBreakpointsCalls == 1);
+    REQUIRE(fixture.backend().debugState()->listWatchesCalls == 1);
+    REQUIRE(fixture.backend().debugState()->continueCalls == 1);
+    REQUIRE(fixture.backend().debugState()->waitCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastArmBreakpointRequest->address == 0x1000);
+    REQUIRE(fixture.backend().debugState()->lastArmWatchRequest->width == 4);
+}

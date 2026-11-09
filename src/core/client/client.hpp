@@ -129,6 +129,66 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugDetachResponse>
     debugDetach(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
 
+    struct DebugBreakpointArmQuery
+    {
+        std::string         targetName;
+        std::uint32_t       pid {};
+        std::uint64_t       address {};
+        DebugBreakpointKind kind {DebugBreakpointKind::Software};
+    };
+
+    [[nodiscard]] std::optional<DebugBreakpointArmResponse> debugArmBreakpoint(const std::filesystem::path& socketPath,
+                                                                               const DebugBreakpointArmQuery& query,
+                                                                               std::string&                   error);
+
+    struct DebugResourceRemoveQuery
+    {
+        std::string   targetName;
+        std::uint32_t id {};
+    };
+
+    [[nodiscard]] std::optional<DebugResourceRemoveResponse> debugRemoveBreakpoint(
+        const std::filesystem::path& socketPath, const DebugResourceRemoveQuery& query, std::string& error);
+
+    [[nodiscard]] std::optional<std::vector<DebugBreakpointArmResponse>>
+    debugListBreakpoints(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
+
+    struct DebugWatchArmQuery
+    {
+        std::string      targetName;
+        std::uint32_t    pid {};
+        std::uint64_t    address {};
+        std::uint32_t    width {4};
+        DebugWatchAccess access {DebugWatchAccess::Write};
+    };
+
+    [[nodiscard]] std::optional<DebugWatchArmResponse>
+    debugArmWatch(const std::filesystem::path& socketPath, const DebugWatchArmQuery& query, std::string& error);
+
+    [[nodiscard]] std::optional<DebugResourceRemoveResponse> debugRemoveWatch(const std::filesystem::path& socketPath,
+                                                                              const DebugResourceRemoveQuery& query,
+                                                                              std::string&                    error);
+
+    [[nodiscard]] std::optional<std::vector<DebugWatchArmResponse>>
+    debugListWatches(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
+
+    // Resumes the attached stub without removing any armed breakpoint or watchpoint.
+    [[nodiscard]] std::optional<DebugStatus>
+    debugContinueArmed(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);
+
+    struct DebugWaitQuery
+    {
+        std::string   targetName;
+        std::uint32_t timeoutMs {30000};
+        std::uint32_t maxHits {1};
+    };
+
+    // Streams one stop per armed resource through `onHit` and returns the end record.
+    [[nodiscard]] std::optional<DebugWaitEnd> debugWait(const std::filesystem::path&                    socketPath,
+                                                        const DebugWaitQuery&                           query,
+                                                        const std::function<void(const DebugWaitHit&)>& onHit,
+                                                        std::string&                                    error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;

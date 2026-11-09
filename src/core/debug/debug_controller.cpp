@@ -288,6 +288,21 @@ namespace mpfshost::debug
             hit.pdbSymbol       = std::move(location.pdbSymbol);
             hit.pdbDisplacement = location.pdbDisplacement;
         }
+
+        void resolveWaitHitSymbols(DebugInspector* inspector, std::uint32_t pid, DebugWaitHit& hit)
+        {
+            DebugLocation location;
+            resolveLocation(inspector, pid, hit.record.rip, location);
+            hit.module          = std::move(location.module);
+            hit.moduleOffset    = location.moduleOffset;
+            hit.exportFound     = location.exportFound;
+            hit.exportAddress   = location.exportAddress;
+            hit.exportOffset    = location.exportOffset;
+            hit.exportName      = std::move(location.exportName);
+            hit.pdbFound        = location.pdbFound;
+            hit.pdbSymbol       = std::move(location.pdbSymbol);
+            hit.pdbDisplacement = location.pdbDisplacement;
+        }
     } // namespace
 
     DebugController::DebugController(std::filesystem::path qmpSocket,
@@ -498,8 +513,9 @@ namespace mpfshost::debug
                 _hostPaused = true;
                 log::info("host", "paused the guest through QMP");
             }
+            _sessionRunning = false;
             // A watch in flight may see the resulting stub stop; it must not resume the guest underneath us.
-            _controlPaused = true;
+            _controlPaused  = true;
         }
         else
         {
@@ -516,7 +532,8 @@ namespace mpfshost::debug
                     log::info("host", "resumed the guest through QMP");
                 }
             }
-            _hostPaused = false;
+            _hostPaused     = false;
+            _sessionRunning = true;
         }
 
         DebugStatus status;
@@ -2054,6 +2071,739 @@ namespace mpfshost::debug
         }
     }
 
+    bool DebugController::ownsAttachment(std::uint64_t sessionId, bool& invalidState, std::string& error)
+    {
+        // The attachment is shared the same way register reads and one-shot resources are: any client bound to
+        // the target may manage resources, while only the owner session ends the attachment when it closes.
+        (void)sessionId;
+        if (_attachedRsp == nullptr)
+        {
+            invalidState = true;
+            error        = "attach the debugger before managing persistent breakpoints or watchpoints";
+            return false;
+        }
+        return true;
+    }
+
+    bool DebugController::requirePausedForResource(bool& invalidState, std::string& error, bool& unavailable)
+    {
+        QmpStatusInfo current;
+        if (!qmpQueryStatus(current, error, unavailable))
+        {
+            return false;
+        }
+        if (_sessionRunning.load() || current.status == "running")
+        {
+            invalidState = true;
+            error        = "pause the guest before changing debug resources";
+            return false;
+        }
+        return true;
+    }
+
+    std::uint32_t DebugController::allocateHardwareSlot() noexcept
+    {
+        for (std::uint32_t slot = 0; slot < kMaxDebugHardwareSlots; ++slot)
+        {
+            if ((_usedHardwareSlots & (1u << slot)) == 0)
+            {
+                _usedHardwareSlots |= 1u << slot;
+                return slot;
+            }
+        }
+        return kNoDebugHardwareSlot;
+    }
+
+    void DebugController::releaseHardwareSlot(std::uint32_t slot) noexcept
+    {
+        if (slot < kMaxDebugHardwareSlots)
+        {
+            _usedHardwareSlots &= ~(1u << slot);
+        }
+    }
+
+    void DebugController::refreshWatchCount() noexcept
+    {
+        std::uint32_t count = 0;
+        for (const auto& resource : _resources)
+        {
+            if (resource.kind == DebugResourceKind::Watchpoint)
+            {
+                ++count;
+            }
+        }
+        _watchCount = count;
+    }
+
+    std::optional<DebugBreakpointArmResponse> DebugController::armBreakpoint(std::uint64_t                    sessionId,
+                                                                             const DebugBreakpointArmRequest& request,
+                                                                             bool&        invalidState,
+                                                                             bool&        busy,
+                                                                             std::string& error,
+                                                                             bool&        unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+        if (_resources.size() >= kMaxDebugArmedResources)
+        {
+            invalidState = true;
+            error        = "no more debug resources can be armed";
+            return std::nullopt;
+        }
+        if (!requirePausedForResource(invalidState, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        for (const auto& resource : _resources)
+        {
+            if (resource.kind == DebugResourceKind::Breakpoint && resource.address == request.address
+                && resource.breakpointKind == request.kind)
+            {
+                invalidState = true;
+                error        = "that breakpoint is already armed";
+                return std::nullopt;
+            }
+        }
+
+        const bool    hardware = request.kind == DebugBreakpointKind::Hardware;
+        std::uint32_t slot     = kNoDebugHardwareSlot;
+        if (hardware)
+        {
+            slot = allocateHardwareSlot();
+            if (slot == kNoDebugHardwareSlot)
+            {
+                invalidState = true;
+                error        = "all four hardware debug slots are in use";
+                return std::nullopt;
+            }
+        }
+
+        const auto releaseSlot = [&]()
+        {
+            if (slot != kNoDebugHardwareSlot)
+            {
+                releaseHardwareSlot(slot);
+            }
+        };
+
+        std::vector<std::string> threads;
+        if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+        {
+            releaseSlot();
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            releaseSlot();
+            error = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+        if (!_attachedRsp->selectThread(threads.front(), kRspTimeout, error))
+        {
+            releaseSlot();
+            return std::nullopt;
+        }
+        if (!_attachedRsp->insertBreakpoint(request.address, hardware, kRspTimeout, error))
+        {
+            releaseSlot();
+            return std::nullopt;
+        }
+        _attachedRsp->drainPending();
+
+        ArmedResource resource;
+        resource.id             = _nextResourceId++;
+        resource.kind           = DebugResourceKind::Breakpoint;
+        resource.breakpointKind = request.kind;
+        resource.pid            = request.pid;
+        resource.address        = request.address;
+        resource.slot           = slot;
+        resource.threadId       = threads.front();
+        _resources.push_back(resource);
+
+        return DebugBreakpointArmResponse {resource.id, resource.pid, resource.address, resource.breakpointKind, slot};
+    }
+
+    std::optional<DebugWatchArmResponse> DebugController::armWatch(std::uint64_t               sessionId,
+                                                                   const DebugWatchArmRequest& request,
+                                                                   bool&                       invalidState,
+                                                                   bool&                       busy,
+                                                                   std::string&                error,
+                                                                   bool&                       unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+        if (_resources.size() >= kMaxDebugArmedResources)
+        {
+            invalidState = true;
+            error        = "no more debug resources can be armed";
+            return std::nullopt;
+        }
+        if (!requirePausedForResource(invalidState, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        for (const auto& resource : _resources)
+        {
+            if (resource.kind == DebugResourceKind::Watchpoint && resource.address == request.address)
+            {
+                invalidState = true;
+                error        = "a watchpoint is already armed at that address";
+                return std::nullopt;
+            }
+        }
+
+        const auto slot = allocateHardwareSlot();
+        if (slot == kNoDebugHardwareSlot)
+        {
+            invalidState = true;
+            error        = "all four hardware debug slots are in use";
+            return std::nullopt;
+        }
+
+        std::vector<std::string> threads;
+        if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+        {
+            releaseHardwareSlot(slot);
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            releaseHardwareSlot(slot);
+            error = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+        if (!_attachedRsp->selectThread(threads.front(), kRspTimeout, error))
+        {
+            releaseHardwareSlot(slot);
+            return std::nullopt;
+        }
+        if (!_attachedRsp->insertWatchpoint(request.address, request.width, kRspTimeout, error))
+        {
+            releaseHardwareSlot(slot);
+            return std::nullopt;
+        }
+        _attachedRsp->drainPending();
+
+        ArmedResource resource;
+        resource.id       = _nextResourceId++;
+        resource.kind     = DebugResourceKind::Watchpoint;
+        resource.pid      = request.pid;
+        resource.address  = request.address;
+        resource.width    = request.width;
+        resource.access   = request.access;
+        resource.slot     = slot;
+        resource.threadId = threads.front();
+        _resources.push_back(resource);
+        refreshWatchCount();
+
+        return DebugWatchArmResponse {
+            resource.id, resource.pid, resource.address, resource.width, resource.access, slot};
+    }
+
+    std::optional<DebugResourceRemoveResponse> DebugController::removeResource(std::uint64_t     sessionId,
+                                                                               std::uint32_t     id,
+                                                                               DebugResourceKind kind,
+                                                                               bool&             invalidState,
+                                                                               std::string&      error,
+                                                                               bool&             unavailable)
+    {
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+        if (!requirePausedForResource(invalidState, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        const auto found = std::find_if(_resources.begin(),
+                                        _resources.end(),
+                                        [id, kind](const ArmedResource& resource)
+                                        {
+                                            return resource.id == id && resource.kind == kind;
+                                        });
+        if (found == _resources.end())
+        {
+            return DebugResourceRemoveResponse {id, false};
+        }
+
+        _attachedRsp->drainPending();
+        std::string removeError;
+        bool        removed = false;
+        if (kind == DebugResourceKind::Watchpoint)
+        {
+            removed = _attachedRsp->removeWatchpoint(found->address, found->width, kRspTimeout, removeError);
+            if (!removed)
+            {
+                _attachedRsp->drainPending();
+                removed = _attachedRsp->removeWatchpoint(found->address, found->width, kRspTimeout, removeError);
+            }
+        }
+        else
+        {
+            const bool hardware = found->breakpointKind == DebugBreakpointKind::Hardware;
+            removed             = _attachedRsp->removeBreakpoint(found->address, hardware, kRspTimeout, removeError);
+            if (!removed)
+            {
+                _attachedRsp->drainPending();
+                removed = _attachedRsp->removeBreakpoint(found->address, hardware, kRspTimeout, removeError);
+            }
+        }
+        if (!removed)
+        {
+            error = removeError.empty() ? "the debug stub could not remove the resource" : removeError;
+            return std::nullopt;
+        }
+
+        releaseHardwareSlot(found->slot);
+        _resources.erase(found);
+        refreshWatchCount();
+        return DebugResourceRemoveResponse {id, true};
+    }
+
+    std::optional<DebugResourceRemoveResponse>
+    DebugController::removeBreakpoint(std::uint64_t                       sessionId,
+                                      const DebugBreakpointRemoveRequest& request,
+                                      bool&                               invalidState,
+                                      bool&                               busy,
+                                      std::string&                        error,
+                                      bool&                               unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        return removeResource(sessionId, request.id, DebugResourceKind::Breakpoint, invalidState, error, unavailable);
+    }
+
+    std::optional<DebugResourceRemoveResponse> DebugController::removeWatch(std::uint64_t                  sessionId,
+                                                                            const DebugWatchRemoveRequest& request,
+                                                                            bool&                          invalidState,
+                                                                            bool&                          busy,
+                                                                            std::string&                   error,
+                                                                            bool&                          unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        return removeResource(sessionId, request.id, DebugResourceKind::Watchpoint, invalidState, error, unavailable);
+    }
+
+    std::optional<DebugBreakpointListResponse> DebugController::listBreakpoints(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+
+        DebugBreakpointListResponse response;
+        for (const auto& resource : _resources)
+        {
+            if (resource.kind == DebugResourceKind::Breakpoint)
+            {
+                response.breakpoints.push_back(
+                    {resource.id, resource.pid, resource.address, resource.breakpointKind, resource.slot});
+            }
+        }
+        return response;
+    }
+
+    std::optional<DebugWatchListResponse> DebugController::listWatches(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+
+        DebugWatchListResponse response;
+        for (const auto& resource : _resources)
+        {
+            if (resource.kind == DebugResourceKind::Watchpoint)
+            {
+                response.watches.push_back(
+                    {resource.id, resource.pid, resource.address, resource.width, resource.access, resource.slot});
+            }
+        }
+        return response;
+    }
+
+    std::optional<DebugContinueResponse> DebugController::continueGuest(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+
+        if (!_sessionRunning.load())
+        {
+            _attachedRsp->drainPending();
+            if (!_attachedRsp->continueExecution(kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            _sessionRunning = true;
+        }
+
+        DebugStatus status;
+        if (!readStatus(status, error, unavailable))
+        {
+            return std::nullopt;
+        }
+        return status;
+    }
+
+    void DebugController::clearArmedResources(RspClient* rsp) noexcept
+    {
+        try
+        {
+            if (rsp != nullptr)
+            {
+                rsp->drainPending();
+                for (const auto& resource : _resources)
+                {
+                    std::string removeError;
+                    bool        removed = false;
+                    if (resource.kind == DebugResourceKind::Watchpoint)
+                    {
+                        removed = rsp->removeWatchpoint(resource.address, resource.width, kRspTimeout, removeError);
+                        if (!removed)
+                        {
+                            rsp->drainPending();
+                            removed = rsp->removeWatchpoint(resource.address, resource.width, kRspTimeout, removeError);
+                        }
+                    }
+                    else
+                    {
+                        const bool hardware = resource.breakpointKind == DebugBreakpointKind::Hardware;
+                        removed = rsp->removeBreakpoint(resource.address, hardware, kRspTimeout, removeError);
+                        if (!removed)
+                        {
+                            rsp->drainPending();
+                            removed = rsp->removeBreakpoint(resource.address, hardware, kRspTimeout, removeError);
+                        }
+                    }
+                    if (!removed)
+                    {
+                        log::warn("host", "could not remove an armed debug resource during teardown: ", removeError);
+                    }
+                }
+            }
+        }
+        catch (...)
+        {
+            log::warn("host", "debug resource teardown failed unexpectedly");
+        }
+        _resources.clear();
+        _usedHardwareSlots = 0;
+        _watchCount        = 0;
+        _sessionRunning    = false;
+    }
+
+    std::optional<DebugWaitEnd> DebugController::wait(const DebugWaitRequest&     request,
+                                                      const DebugWaitHitSink&     onHit,
+                                                      const DebugWatchAbortCheck& aborted,
+                                                      std::uint64_t               sessionId,
+                                                      bool&                       invalidState,
+                                                      bool&                       busy,
+                                                      std::string&                error,
+                                                      bool&                       unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+        if (_resources.empty())
+        {
+            invalidState = true;
+            error        = "no breakpoints or watchpoints are armed";
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!qmpQueryStatus(current, error, unavailable))
+        {
+            return std::nullopt;
+        }
+        if (current.status == "shutdown" || current.status == "guest-panicked")
+        {
+            clearArmedResources(_attachedRsp.get());
+            invalidState = true;
+            error        = "the guest stopped before any armed resource fired";
+            return std::nullopt;
+        }
+
+        std::vector<std::string> threads;
+        if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            error = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+
+        if (!_sessionRunning.load())
+        {
+            _attachedRsp->drainPending();
+            if (!_attachedRsp->continueExecution(kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            _sessionRunning = true;
+        }
+
+        DebugWaitEnd end;
+        end.status                 = DebugWatchStatus::Completed;
+        std::uint32_t hits         = 0;
+        const auto    waitDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {request.timeoutMs};
+
+        while (hits < request.maxHits)
+        {
+            if (aborted && aborted())
+            {
+                end.status = DebugWatchStatus::Cancelled;
+                end.error  = "the debug wait was cancelled";
+                break;
+            }
+            if (requestExpired())
+            {
+                end.status = DebugWatchStatus::Timeout;
+                end.error  = "the request deadline expired";
+                break;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= waitDeadline)
+            {
+                end.status = DebugWatchStatus::Timeout;
+                end.error  = "the debug wait timed out";
+                break;
+            }
+            const auto slice = std::min(std::chrono::duration_cast<std::chrono::milliseconds>(waitDeadline - now),
+                                        std::chrono::milliseconds {100});
+
+            std::string stopPacket;
+            const auto  polled = _attachedRsp->pollPacket(stopPacket, slice, error);
+            if (polled == RspPollResult::Timeout)
+            {
+                continue;
+            }
+            if (polled == RspPollResult::Closed)
+            {
+                clearArmedResources(nullptr);
+                end.status = DebugWatchStatus::Error;
+                end.error  = error.empty() ? "the GDB stub closed the connection" : error;
+                break;
+            }
+            if (!stopPacket.empty() && (stopPacket.front() == 'W' || stopPacket.front() == 'X'))
+            {
+                clearArmedResources(nullptr);
+                end.status = DebugWatchStatus::Error;
+                end.error  = "the guest stopped before any armed resource fired";
+                break;
+            }
+
+            bool       stopped = false;
+            const auto thread  = stopThreadId(stopPacket, stopped);
+            if (!stopped)
+            {
+                continue;
+            }
+            if (thread && !thread->empty() && !_attachedRsp->selectThread(*thread, kRspTimeout, error))
+            {
+                end.status = DebugWatchStatus::Error;
+                end.error  = error;
+                break;
+            }
+
+            const auto           watchAddress = stopWatchAddress(stopPacket);
+            const ArmedResource* resource     = nullptr;
+            if (watchAddress.has_value())
+            {
+                const auto found = std::find_if(_resources.begin(),
+                                                _resources.end(),
+                                                [address = *watchAddress](const ArmedResource& candidate)
+                                                {
+                                                    return candidate.kind == DebugResourceKind::Watchpoint
+                                                        && candidate.address == address;
+                                                });
+                if (found != _resources.end())
+                {
+                    resource = &*found;
+                }
+            }
+            else
+            {
+                std::uint64_t rip = 0;
+                if (!readNamedRegister(*_attachedRsp, _attachedDescription, "rip", rip, kRspTimeout, error))
+                {
+                    end.status = DebugWatchStatus::Error;
+                    end.error  = error;
+                    break;
+                }
+                const auto found =
+                    std::find_if(_resources.begin(),
+                                 _resources.end(),
+                                 [rip](const ArmedResource& candidate)
+                                 {
+                                     return candidate.kind == DebugResourceKind::Breakpoint && candidate.address == rip;
+                                 });
+                if (found != _resources.end())
+                {
+                    resource = &*found;
+                }
+            }
+
+            if (resource == nullptr)
+            {
+                ++end.skippedCount;
+                if (!_attachedRsp->continueExecution(kRspTimeout, error))
+                {
+                    end.status = DebugWatchStatus::Error;
+                    end.error  = error;
+                    break;
+                }
+                _sessionRunning = true;
+                continue;
+            }
+
+            std::uint32_t index = 0;
+            if (thread && !thread->empty())
+            {
+                const auto found = std::find(threads.begin(), threads.end(), *thread);
+                if (found != threads.end())
+                {
+                    index = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
+                }
+            }
+            auto record = readRecord(*_attachedRsp, _attachedDescription, index, threads[index], error);
+            if (!record)
+            {
+                end.status = DebugWatchStatus::Error;
+                end.error  = error;
+                break;
+            }
+
+            DebugWaitHit hit;
+            hit.id             = resource->id;
+            hit.kind           = resource->kind;
+            hit.breakpointKind = resource->breakpointKind;
+            hit.address        = resource->address;
+            hit.record         = std::move(*record);
+            if (_inspector != nullptr)
+            {
+                resolveWaitHitSymbols(_inspector, resource->pid, hit);
+            }
+
+            ++hits;
+            end.hitCount    = hits;
+            _sessionRunning = false;
+            if (onHit && !onHit(hit))
+            {
+                end.status = DebugWatchStatus::Cancelled;
+                end.error  = "the debug wait result could not be delivered";
+                break;
+            }
+            if (hits >= request.maxHits)
+            {
+                break;
+            }
+            if (!_attachedRsp->continueExecution(kRspTimeout, error))
+            {
+                end.status = DebugWatchStatus::Error;
+                end.error  = error;
+                break;
+            }
+            _sessionRunning = true;
+        }
+
+        end.hitCount = hits;
+        return end;
+    }
+
     std::optional<DebugAttachResponse> DebugController::attach(
         std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {
@@ -2199,6 +2949,10 @@ namespace mpfshost::debug
         _attachedArchitecture = architecture;
         _attachPaused         = pausedByUs;
         _ownerSession         = sessionId;
+        _resources.clear();
+        _usedHardwareSlots = 0;
+        _watchCount        = 0;
+        _sessionRunning    = false;
 
         DebugAttachResponse response;
         response.guestPaused = pausedByUs;
@@ -2252,6 +3006,24 @@ namespace mpfshost::debug
         response.detached    = wasAttached;
         response.foreignStub = active && !stubOwned;
 
+        // A running guest cannot have its debug registers changed. Stop it only when some resource still has
+        // to be removed, then put it back the way the caller found it.
+        const bool guestWasRunning    = _sessionRunning.load() || current.status == "running";
+        bool       stoppedForTeardown = false;
+        if (!_resources.empty() && guestWasRunning)
+        {
+            std::string ignored;
+            if (qmpExecute("stop", ignored, error, unavailable))
+            {
+                stoppedForTeardown = true;
+            }
+            else
+            {
+                log::warn("host", "could not pause the guest to remove debug resources: ", error);
+            }
+        }
+        clearArmedResources(_attachedRsp.get());
+
         if (_attachedRsp)
         {
             _attachedRsp->disconnect();
@@ -2278,11 +3050,21 @@ namespace mpfshost::debug
         _attachedDescription = {};
         _ownerSession        = 0;
         _attachPaused        = false;
+        _sessionRunning      = false;
 
-        // Resume only a pause this attachment made. A guest that was already paused before the attach stays
-        // paused, and a pause requested by debug-stop is left for the client that asked for it.
-        const bool resume = wasAttached ? attachPaused : _hostPaused.load();
-        if (current.status != "running" && resume)
+        // Resume a guest this detach had to stop, or a pause the attachment made. A guest that was already
+        // paused before the attach stays paused, and a pause requested by debug-stop is left for the client
+        // that asked for it.
+        bool resume = false;
+        if (guestWasRunning)
+        {
+            resume = stoppedForTeardown;
+        }
+        else
+        {
+            resume = wasAttached ? attachPaused : _hostPaused.load();
+        }
+        if (resume)
         {
             std::string ignored;
             if (!qmpExecute("cont", ignored, error, unavailable))
@@ -2340,6 +3122,7 @@ namespace mpfshost::debug
             std::string     error;
             bool            unavailable = false;
             std::error_code removeError;
+            clearArmedResources(_attachedRsp.get());
             if (_attachedRsp)
             {
                 _attachedRsp->disconnect();

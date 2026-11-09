@@ -540,6 +540,52 @@ namespace mpfshost::mcp
             };
         }
 
+        Json debugArmBreakpointJson(const DebugBreakpointArmResponse& breakpoint)
+        {
+            return Json {
+                {     "id",                                                              breakpoint.id},
+                {    "pid",                                                             breakpoint.pid},
+                {"address",                                              hexString(breakpoint.address)},
+                {   "kind", breakpoint.kind == DebugBreakpointKind::Hardware ? "hardware" : "software"},
+                {   "slot", breakpoint.slot == kNoDebugHardwareSlot ? Json {} : Json {breakpoint.slot}}
+            };
+        }
+
+        Json debugArmWatchJson(const DebugWatchArmResponse& watch)
+        {
+            return Json {
+                {     "id",                 watch.id},
+                {    "pid",                watch.pid},
+                {"address", hexString(watch.address)},
+                {  "width",              watch.width},
+                { "access",    std::string {"write"}},
+                {   "slot",               watch.slot}
+            };
+        }
+
+        Json debugWaitHitJson(const DebugWaitHit& hit)
+        {
+            return Json {
+                {              "id",                                                                  hit.id},
+                {            "kind", hit.kind == DebugResourceKind::Watchpoint ? "watchpoint" : "breakpoint"},
+                {         "address",                                                  hexString(hit.address)},
+                {            "vcpu",                                                         hit.record.vcpu},
+                {       "thread_id",                                                     hit.record.threadId},
+                {             "rip",                                               hexString(hit.record.rip)},
+                {             "rsp",                                               hexString(hit.record.rsp)},
+                {             "cr3",                                               hexString(hit.record.cr3)},
+                {          "module",                                                              hit.module},
+                {   "module_offset",                                              hexSmall(hit.moduleOffset)},
+                {    "export_found",                                                         hit.exportFound},
+                {  "export_address",                                            hexString(hit.exportAddress)},
+                {   "export_offset",                                              hexSmall(hit.exportOffset)},
+                {     "export_name",                                                          hit.exportName},
+                {       "pdb_found",                                                            hit.pdbFound},
+                {      "pdb_symbol",                                                           hit.pdbSymbol},
+                {"pdb_displacement",                                                     hit.pdbDisplacement}
+            };
+        }
+
         ToolOutcome success(Json structured)
         {
             ToolOutcome outcome;
@@ -844,6 +890,42 @@ namespace mpfshost::mcp
                  "Stop the debug stub",              "Stop an active GDB stub, including a stale one left by an earlier host process, and report the "
               "run state. Destructive: resumes the guest only if this host paused it.", false,
                  {target}                                                                                                    },
+                {      "debug_arm_break",
+                 "Arm a persistent breakpoint",                                                                    "Arm a breakpoint on the attached stub and return its id. It stays armed until removed or the "
+                                                                    "attachment ends.", false,
+                 {target,
+                 pid,
+                 {"address", "string", "Breakpoint linear address (hex)", true},
+                 {"kind", "string", "Breakpoint kind: software or hardware (default software)", false}}                      },
+                {   "debug_remove_break",
+                 "Remove a breakpoint",                                                                  "Remove one armed breakpoint by id.",
+                 false,                                              {target, {"id", "integer", "Armed breakpoint id", true}}},
+                {    "debug_list_breaks",
+                 "List breakpoints",                                                    "List the breakpoints armed on the attached stub.",
+                 true,                                                                                              {target} },
+                {      "debug_arm_watch",
+                 "Arm a persistent watchpoint",                                               "Arm a hardware write watchpoint on the attached stub and return its id. It stays armed "
+                                               "until removed or the attachment ends.", false,
+                 {target,
+                 pid,
+                 {"address", "string", "Watched linear address (hex)", true},
+                 {"width", "integer", "Watch width in bytes: 1, 2, 4 or 8 (default 4)", false},
+                 {"access", "string", "Access to watch; only write is supported", false}}                                    },
+                {   "debug_remove_watch",
+                 "Remove a watchpoint",                                                                  "Remove one armed watchpoint by id.",
+                 false,                                              {target, {"id", "integer", "Armed watchpoint id", true}}},
+                {   "debug_list_watches",
+                 "List watchpoints",                                                    "List the watchpoints armed on the attached stub.",
+                 true,                                                                                              {target} },
+                {         "debug_resume",
+                 "Resume with resources armed",                       "Resume the attached stub without removing any armed breakpoint or watchpoint.",
+                 false,                                                                                              {target}},
+                {           "debug_wait",
+                 "Wait for a debug stop",                                      "Resume if needed and wait for the next stop from any armed resource, returning each hit with its "
+                                      "id and registers. Destructive: runs the guest.", false,
+                 {target,
+                 {"max_hits", "integer", "Stop after this many hits (default 1)", false},
+                 {"timeout", "integer", "Seconds to wait (default 30)", false}}                                              },
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -2516,6 +2598,170 @@ namespace mpfshost::mcp
                 result["guest_resumed"] = response->guestResumed;
                 result["detached"]      = response->detached;
                 return success(std::move(result));
+            }
+
+            if (name == "debug_arm_break")
+            {
+                const auto          kindText = optionalString(args, "kind", "software");
+                DebugBreakpointKind kind {};
+                if (kindText == "software")
+                {
+                    kind = DebugBreakpointKind::Software;
+                }
+                else if (kindText == "hardware")
+                {
+                    kind = DebugBreakpointKind::Hardware;
+                }
+                else
+                {
+                    return failure("kind only accepts software or hardware");
+                }
+
+                const auto response = debugArmBreakpoint(
+                    socket,
+                    {requireString(args, "target"), u32Value(args, "pid", true), hexValue(args, "address", true), kind},
+                    error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(debugArmBreakpointJson(*response));
+            }
+
+            if (name == "debug_remove_break")
+            {
+                const auto response =
+                    debugRemoveBreakpoint(socket, {requireString(args, "target"), u32Value(args, "id", true)}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {     "id",      response->id},
+                    {"removed", response->removed}
+                });
+            }
+
+            if (name == "debug_list_breaks")
+            {
+                const auto response = debugListBreakpoints(socket, {requireString(args, "target")}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json breakpoints = Json::array();
+                for (const auto& breakpoint : *response)
+                {
+                    breakpoints.push_back(debugArmBreakpointJson(breakpoint));
+                }
+                return success(Json {
+                    {"breakpoints", std::move(breakpoints)}
+                });
+            }
+
+            if (name == "debug_arm_watch")
+            {
+                const auto accessText = optionalString(args, "access", "write");
+                if (accessText != "write")
+                {
+                    return failure("access only accepts write");
+                }
+                const auto width = hasArg(args, "width") ? numberValue(args, "width", false) : 4;
+                if (width != 1 && width != 2 && width != 4 && width != 8)
+                {
+                    return failure("width must be 1, 2, 4 or 8");
+                }
+
+                const auto response = debugArmWatch(socket,
+                                                    {requireString(args, "target"),
+                                                     u32Value(args, "pid", true),
+                                                     hexValue(args, "address", true),
+                                                     static_cast<std::uint32_t>(width),
+                                                     DebugWatchAccess::Write},
+                                                    error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(debugArmWatchJson(*response));
+            }
+
+            if (name == "debug_remove_watch")
+            {
+                const auto response =
+                    debugRemoveWatch(socket, {requireString(args, "target"), u32Value(args, "id", true)}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {     "id",      response->id},
+                    {"removed", response->removed}
+                });
+            }
+
+            if (name == "debug_list_watches")
+            {
+                const auto response = debugListWatches(socket, {requireString(args, "target")}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json watches = Json::array();
+                for (const auto& watch : *response)
+                {
+                    watches.push_back(debugArmWatchJson(watch));
+                }
+                return success(Json {
+                    {"watchpoints", std::move(watches)}
+                });
+            }
+
+            if (name == "debug_resume")
+            {
+                const auto response = debugContinueArmed(socket, {requireString(args, "target")}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(debugStatusJson(*response));
+            }
+
+            if (name == "debug_wait")
+            {
+                const auto maxHits = hasArg(args, "max_hits") ? numberValue(args, "max_hits", false) : 1;
+                const auto timeout = hasArg(args, "timeout") ? numberValue(args, "timeout", false) : 30;
+                if (maxHits == 0 || maxHits > kMaxDebugWaitHits)
+                {
+                    return failure("max_hits is out of range");
+                }
+                if (timeout == 0 || timeout > kMaxDebugWatchTimeoutMs / 1000)
+                {
+                    return failure("timeout is out of range");
+                }
+
+                Json       hits = Json::array();
+                const auto end  = debugWait(
+                    socket,
+                    {requireString(args, "target"),
+                     static_cast<std::uint32_t>(timeout * 1000),
+                     static_cast<std::uint32_t>(maxHits)},
+                    [&hits](const DebugWaitHit& hit)
+                    {
+                        hits.push_back(debugWaitHitJson(hit));
+                    },
+                    error);
+                if (!end)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {       "status", std::string {debugWatchStatusName(end->status)}},
+                    {    "hit_count",                                   end->hitCount},
+                    {"skipped_count",                               end->skippedCount},
+                    {        "error",                                      end->error},
+                    {         "hits",                                 std::move(hits)}
+                });
             }
 
             if (name == "write_memory")

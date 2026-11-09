@@ -24,6 +24,7 @@ namespace mpfshost::debug
     using RspTransportFactory  = std::move_only_function<std::unique_ptr<RspTransport>()>;
     using DebugWatchHitSink    = std::function<bool(const DebugWatchData&)>;
     using DebugWatchAbortCheck = std::function<bool()>;
+    using DebugWaitHitSink     = std::function<bool(const DebugWaitHit&)>;
 
     // Owns the host-side debug bookkeeping and the QMP/GDB stub lifecycle for one VM. QEMU's QMP socket is
     // the source of truth for the guest's run state. The factory arguments exist so tests can script both
@@ -86,6 +87,55 @@ namespace mpfshost::debug
         // session's attachment.
         void detachSession(std::uint64_t sessionId) noexcept;
 
+        // Persistent resources live on the attached stub. Every arm, remove and list call requires the
+        // requesting session to own the attachment; a running guest is refused because QEMU cannot change a
+        // debug register while it is running.
+        [[nodiscard]] std::optional<DebugBreakpointArmResponse> armBreakpoint(std::uint64_t sessionId,
+                                                                              const DebugBreakpointArmRequest& request,
+                                                                              bool&        invalidState,
+                                                                              bool&        busy,
+                                                                              std::string& error,
+                                                                              bool&        unavailable);
+        [[nodiscard]] std::optional<DebugResourceRemoveResponse>
+        removeBreakpoint(std::uint64_t                       sessionId,
+                         const DebugBreakpointRemoveRequest& request,
+                         bool&                               invalidState,
+                         bool&                               busy,
+                         std::string&                        error,
+                         bool&                               unavailable);
+        [[nodiscard]] std::optional<DebugBreakpointListResponse>
+        listBreakpoints(std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
+
+        [[nodiscard]] std::optional<DebugWatchArmResponse>       armWatch(std::uint64_t               sessionId,
+                                                                          const DebugWatchArmRequest& request,
+                                                                          bool&                       invalidState,
+                                                                          bool&                       busy,
+                                                                          std::string&                error,
+                                                                          bool&                       unavailable);
+        [[nodiscard]] std::optional<DebugResourceRemoveResponse> removeWatch(std::uint64_t                  sessionId,
+                                                                             const DebugWatchRemoveRequest& request,
+                                                                             bool&        invalidState,
+                                                                             bool&        busy,
+                                                                             std::string& error,
+                                                                             bool&        unavailable);
+        [[nodiscard]] std::optional<DebugWatchListResponse>
+        listWatches(std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
+
+        // Resumes the attached stub without removing any armed resource.
+        [[nodiscard]] std::optional<DebugContinueResponse>
+        continueGuest(std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
+
+        // Waits for the next stop from any armed breakpoint or watchpoint. A currently stopped guest is resumed
+        // first; the guest is left stopped at the last reported hit.
+        [[nodiscard]] std::optional<DebugWaitEnd> wait(const DebugWaitRequest&     request,
+                                                       const DebugWaitHitSink&     onHit,
+                                                       const DebugWatchAbortCheck& aborted,
+                                                       std::uint64_t               sessionId,
+                                                       bool&                       invalidState,
+                                                       bool&                       busy,
+                                                       std::string&                error,
+                                                       bool&                       unavailable);
+
         // Best-effort teardown for host shutdown: stops a stub this host owns and resumes a guest this host
         // paused. Never touches a foreign stub, and never throws.
         void shutdown() noexcept;
@@ -97,6 +147,34 @@ namespace mpfshost::debug
 
     private:
         using QmpCall = std::function<bool(QmpClient&, std::chrono::milliseconds, std::string&)>;
+
+        struct ArmedResource
+        {
+            std::uint32_t       id {};
+            DebugResourceKind   kind {DebugResourceKind::Breakpoint};
+            DebugBreakpointKind breakpointKind {DebugBreakpointKind::Software};
+            std::uint32_t       pid {};
+            std::uint64_t       address {};
+            std::uint32_t       width {};
+            DebugWatchAccess    access {DebugWatchAccess::Write};
+            std::uint32_t       slot {kNoDebugHardwareSlot};
+            std::string         threadId; // the stub thread selected when the resource was armed
+        };
+
+        // All resource bookkeeping runs under _operationMutex.
+        [[nodiscard]] bool          ownsAttachment(std::uint64_t sessionId, bool& invalidState, std::string& error);
+        [[nodiscard]] bool          requirePausedForResource(bool& invalidState, std::string& error, bool& unavailable);
+        [[nodiscard]] std::uint32_t allocateHardwareSlot() noexcept;
+        void                        releaseHardwareSlot(std::uint32_t slot) noexcept;
+        void                        refreshWatchCount() noexcept;
+        [[nodiscard]] std::optional<DebugResourceRemoveResponse> removeResource(std::uint64_t     sessionId,
+                                                                                std::uint32_t     id,
+                                                                                DebugResourceKind kind,
+                                                                                bool&             invalidState,
+                                                                                std::string&      error,
+                                                                                bool&             unavailable);
+        // Removes every armed resource from the attached stub. The caller must have stopped the guest first.
+        void                                                     clearArmedResources(RspClient* rsp) noexcept;
 
         [[nodiscard]] std::unique_ptr<QmpClient> makeQmp();
         [[nodiscard]] std::unique_ptr<RspClient> makeRsp();
@@ -154,6 +232,11 @@ namespace mpfshost::debug
         std::atomic<bool>          _hostPaused {false};
         std::atomic<bool>          _controlPaused {false};
         std::atomic<std::uint32_t> _watchCount {0};
+        // True while the attached stub is running the guest after a continue or wait.
+        std::atomic<bool>          _sessionRunning {false};
+        std::vector<ArmedResource> _resources;
+        std::uint32_t              _nextResourceId {1};
+        std::uint32_t              _usedHardwareSlots {0};
     };
 } // namespace mpfshost::debug
 

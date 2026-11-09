@@ -102,6 +102,14 @@ namespace mpfshost
         void               handleDebugStep(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugAttach(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugDetach(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugBreakpointArm(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugBreakpointRemove(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugBreakpointList(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugWatchArm(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugWatchRemove(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugWatchList(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugContinue(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugWait(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleConfigSet(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleVmList(std::uint64_t requestId);
         void               handleGpaTranslate(std::uint64_t requestId, std::span<const std::byte> payload);

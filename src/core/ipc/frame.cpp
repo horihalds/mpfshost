@@ -466,6 +466,22 @@ namespace mpfshost
             return "DebugDetachRequest";
         case MessageType::DebugAttachRequest:
             return "DebugAttachRequest";
+        case MessageType::DebugBreakpointArmRequest:
+            return "DebugBreakpointArmRequest";
+        case MessageType::DebugBreakpointRemoveRequest:
+            return "DebugBreakpointRemoveRequest";
+        case MessageType::DebugBreakpointListRequest:
+            return "DebugBreakpointListRequest";
+        case MessageType::DebugWatchArmRequest:
+            return "DebugWatchArmRequest";
+        case MessageType::DebugWatchRemoveRequest:
+            return "DebugWatchRemoveRequest";
+        case MessageType::DebugWatchListRequest:
+            return "DebugWatchListRequest";
+        case MessageType::DebugContinueRequest:
+            return "DebugContinueRequest";
+        case MessageType::DebugWaitRequest:
+            return "DebugWaitRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -620,6 +636,22 @@ namespace mpfshost
             return "DebugControlResponse";
         case MessageType::DebugRegistersResponse:
             return "DebugRegistersResponse";
+        case MessageType::DebugBreakpointArmResponse:
+            return "DebugBreakpointArmResponse";
+        case MessageType::DebugResourceRemoveResponse:
+            return "DebugResourceRemoveResponse";
+        case MessageType::DebugBreakpointListResponse:
+            return "DebugBreakpointListResponse";
+        case MessageType::DebugWatchArmResponse:
+            return "DebugWatchArmResponse";
+        case MessageType::DebugWatchListResponse:
+            return "DebugWatchListResponse";
+        case MessageType::DebugContinueResponse:
+            return "DebugContinueResponse";
+        case MessageType::DebugWaitHit:
+            return "DebugWaitHit";
+        case MessageType::DebugWaitEnd:
+            return "DebugWaitEnd";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:

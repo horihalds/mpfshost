@@ -68,6 +68,33 @@ namespace mpfshost::cli
                         static_cast<unsigned long long>(record.r15));
         }
 
+        void printDebugArmBreakpoint(const mpfshost::DebugBreakpointArmResponse& breakpoint)
+        {
+            std::printf("breakpoint  id=%u  pid=%u  address=0x%016llx  kind=%s  ",
+                        static_cast<unsigned>(breakpoint.id),
+                        static_cast<unsigned>(breakpoint.pid),
+                        static_cast<unsigned long long>(breakpoint.address),
+                        breakpoint.kind == mpfshost::DebugBreakpointKind::Hardware ? "hardware" : "software");
+            if (breakpoint.slot == mpfshost::kNoDebugHardwareSlot)
+            {
+                std::printf("slot=none\n");
+            }
+            else
+            {
+                std::printf("slot=%u\n", static_cast<unsigned>(breakpoint.slot));
+            }
+        }
+
+        void printDebugArmWatch(const mpfshost::DebugWatchArmResponse& watch)
+        {
+            std::printf("watchpoint  id=%u  pid=%u  address=0x%016llx  width=%u  access=write  slot=%u\n",
+                        static_cast<unsigned>(watch.id),
+                        static_cast<unsigned>(watch.pid),
+                        static_cast<unsigned long long>(watch.address),
+                        static_cast<unsigned>(watch.width),
+                        static_cast<unsigned>(watch.slot));
+        }
+
         void printDebugStatus(const mpfshost::DebugStatus& status)
         {
             std::printf("run-state=%s  arch=%s  stub-active=%s  stub-owned=%s  foreign-stub=%s  host-paused=%s  "
@@ -1855,6 +1882,153 @@ namespace mpfshost::cli
             }
             printDebugRecord(response->record);
             return 0;
+        }
+
+        if (options.command == "debug-arm-break")
+        {
+            const auto response = mpfshost::debugArmBreakpoint(
+                options.socketPath, {options.target, options.pid, options.address, options.breakpointKind}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            printDebugArmBreakpoint(*response);
+            return 0;
+        }
+
+        if (options.command == "debug-arm-watch")
+        {
+            const auto response = mpfshost::debugArmWatch(
+                options.socketPath,
+                {options.target, options.pid, options.address, options.watchWidth, options.watchAccess},
+                error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            printDebugArmWatch(*response);
+            return 0;
+        }
+
+        if (options.command == "debug-remove-break" || options.command == "debug-remove-watch")
+        {
+            const mpfshost::DebugResourceRemoveQuery query {options.target, options.resourceId};
+            const auto response = options.command == "debug-remove-break"
+                                    ? mpfshost::debugRemoveBreakpoint(options.socketPath, query, error)
+                                    : mpfshost::debugRemoveWatch(options.socketPath, query, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            std::printf("id=%u  removed=%s\n", static_cast<unsigned>(response->id), response->removed ? "yes" : "no");
+            return response->removed ? 0 : 1;
+        }
+
+        if (options.command == "debug-breakpoints" || options.command == "debug-watchpoints")
+        {
+            if (options.command == "debug-breakpoints")
+            {
+                const auto response = mpfshost::debugListBreakpoints(options.socketPath, {options.target}, error);
+                if (!response)
+                {
+                    mpfshost::log::error("client", error);
+                    return 1;
+                }
+                if (response->empty())
+                {
+                    std::printf("no breakpoints are armed\n");
+                    return 0;
+                }
+                for (const auto& breakpoint : *response)
+                {
+                    printDebugArmBreakpoint(breakpoint);
+                }
+            }
+            else
+            {
+                const auto response = mpfshost::debugListWatches(options.socketPath, {options.target}, error);
+                if (!response)
+                {
+                    mpfshost::log::error("client", error);
+                    return 1;
+                }
+                if (response->empty())
+                {
+                    std::printf("no watchpoints are armed\n");
+                    return 0;
+                }
+                for (const auto& watch : *response)
+                {
+                    printDebugArmWatch(watch);
+                }
+            }
+            return 0;
+        }
+
+        if (options.command == "debug-resume")
+        {
+            const auto status = mpfshost::debugContinueArmed(options.socketPath, {options.target}, error);
+            if (!status)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            printDebugStatus(*status);
+            return 0;
+        }
+
+        if (options.command == "debug-wait")
+        {
+            const auto end = mpfshost::debugWait(
+                options.socketPath,
+                {options.target, options.watchTimeoutSeconds * 1000, options.maxHits},
+                [](const mpfshost::DebugWaitHit& hit)
+                {
+                    std::printf("hit  id=%u  %s  address=0x%016llx\n",
+                                static_cast<unsigned>(hit.id),
+                                hit.kind == mpfshost::DebugResourceKind::Watchpoint ? "watchpoint" : "breakpoint",
+                                static_cast<unsigned long long>(hit.address));
+                    std::printf("  vcpu %u  thread %s  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
+                                static_cast<unsigned>(hit.record.vcpu),
+                                hit.record.threadId.c_str(),
+                                static_cast<unsigned long long>(hit.record.rip),
+                                static_cast<unsigned long long>(hit.record.rsp),
+                                static_cast<unsigned long long>(hit.record.cr3));
+                    if (!hit.module.empty())
+                    {
+                        std::printf("  module=%s+0x%llx\n",
+                                    hit.module.c_str(),
+                                    static_cast<unsigned long long>(hit.moduleOffset));
+                    }
+                    if (hit.exportFound)
+                    {
+                        std::printf("  export=%s+0x%llx\n",
+                                    hit.exportName.empty() ? "?" : hit.exportName.c_str(),
+                                    static_cast<unsigned long long>(hit.exportOffset));
+                    }
+                    if (hit.pdbFound)
+                    {
+                        std::printf("  symbol=%s+0x%x\n", hit.pdbSymbol.c_str(), hit.pdbDisplacement);
+                    }
+                },
+                error);
+            if (!end)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            std::printf("%s  hits=%u  skipped=%u\n",
+                        std::string {mpfshost::debugWatchStatusName(end->status)}.c_str(),
+                        static_cast<unsigned>(end->hitCount),
+                        static_cast<unsigned>(end->skippedCount));
+            if (!end->error.empty())
+            {
+                mpfshost::log::error("client", end->error);
+            }
+            return end->status == mpfshost::DebugWatchStatus::Completed ? 0 : 1;
         }
 
         if (options.command == "search")

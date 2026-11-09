@@ -63,7 +63,10 @@ namespace mpfshost
                 || command == "resolve" || command == "process-for-dtb" || command == "debug-status"
                 || command == "debug-stop" || command == "debug-continue" || command == "debug-registers"
                 || command == "debug-watch" || command == "debug-break" || command == "debug-step"
-                || command == "debug-attach" || command == "debug-detach";
+                || command == "debug-attach" || command == "debug-detach" || command == "debug-arm-break"
+                || command == "debug-arm-watch" || command == "debug-remove-break" || command == "debug-remove-watch"
+                || command == "debug-breakpoints" || command == "debug-watchpoints" || command == "debug-wait"
+                || command == "debug-resume";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -95,22 +98,34 @@ namespace mpfshost
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
-            if (command != "debug-watch" && (options.watchWidthSet || options.watchAccessSet || options.maxHitsSet))
+            if (command != "debug-watch" && command != "debug-arm-watch"
+                && (options.watchWidthSet || options.watchAccessSet))
             {
-                error = "--width, --access and --max-hits are only valid for --client debug-watch";
+                error = "--width and --access are only valid for --client debug-watch and debug-arm-watch";
                 return false;
             }
-            if (command != "debug-watch" && command != "debug-break" && options.watchTimeoutSet)
+            if (command != "debug-watch" && command != "debug-wait" && options.maxHitsSet)
             {
-                error = "--timeout is only valid for --client debug-watch and debug-break";
+                error = "--max-hits is only valid for --client debug-watch and debug-wait";
                 return false;
             }
-            if (command != "debug-break" && options.breakpointKindSet)
+            if (command != "debug-watch" && command != "debug-break" && command != "debug-wait"
+                && options.watchTimeoutSet)
             {
-                error = "--kind is only valid for --client debug-break";
+                error = "--timeout is only valid for --client debug-watch, debug-break and debug-wait";
                 return false;
             }
-            if (command == "debug-watch")
+            if (command != "debug-break" && command != "debug-arm-break" && options.breakpointKindSet)
+            {
+                error = "--kind is only valid for --client debug-break and debug-arm-break";
+                return false;
+            }
+            if (command != "debug-remove-break" && command != "debug-remove-watch" && options.resourceIdSet)
+            {
+                error = "--id is only valid for --client debug-remove-break and debug-remove-watch";
+                return false;
+            }
+            if (command == "debug-watch" || command == "debug-arm-watch")
             {
                 if (options.watchWidth != 1 && options.watchWidth != 2 && options.watchWidth != 4
                     && options.watchWidth != 8)
@@ -118,13 +133,18 @@ namespace mpfshost
                     error = "--width must be 1, 2, 4 or 8";
                     return false;
                 }
-                if (options.maxHits == 0 || options.maxHits > kMaxDebugWatchHits)
-                {
-                    error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWatchHits);
-                    return false;
-                }
             }
-            if ((command == "debug-watch" || command == "debug-break")
+            if (command == "debug-watch" && (options.maxHits == 0 || options.maxHits > kMaxDebugWatchHits))
+            {
+                error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWatchHits);
+                return false;
+            }
+            if (command == "debug-wait" && (options.maxHits == 0 || options.maxHits > kMaxDebugWaitHits))
+            {
+                error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWaitHits);
+                return false;
+            }
+            if ((command == "debug-watch" || command == "debug-break" || command == "debug-wait")
                 && (options.watchTimeoutSeconds == 0 || options.watchTimeoutSeconds > kMaxDebugWatchTimeoutMs / 1000))
             {
                 error =
@@ -183,6 +203,27 @@ namespace mpfshost
                     error = "--client debug-break needs --pid and --address";
                     return false;
                 }
+            }
+            else if (command == "debug-arm-break")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client debug-arm-break needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "debug-arm-watch")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client debug-arm-watch needs --pid and --address";
+                    return false;
+                }
+            }
+            else if ((command == "debug-remove-break" || command == "debug-remove-watch") && !options.resourceIdSet)
+            {
+                error = "--client " + command + " needs --id";
+                return false;
             }
             else if (command == "process-for-dtb")
             {
@@ -568,6 +609,23 @@ namespace mpfshost
                 }
                 options.maxHits    = *parsed;
                 options.maxHitsSet = true;
+                continue;
+            }
+            if (argument == "--id")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--id needs a positive integer";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--id needs a positive integer";
+                    return std::nullopt;
+                }
+                options.resourceId    = *parsed;
+                options.resourceIdSet = true;
                 continue;
             }
             if (argument == "--timeout")

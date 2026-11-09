@@ -172,6 +172,62 @@ The host detaches an attachment when its owning session disconnects, when a watc
 is cancelled, and on host shutdown. A closing session only detaches its own attachment; another client's attachment
 is left alone. `VmmHandle` destruction runs the shutdown teardown after every session has ended.
 
+## Persistent breakpoints and watchpoints
+
+`debug-arm-break` and `debug-arm-watch` arm a resource on the attached stub and return an id. Unlike the one-shot
+`debug-break`/`debug-watch` commands, nothing is disarmed until `debug-remove-break`, `debug-remove-watch`,
+`debug-detach` or a teardown. Arming requires an attachment and a paused guest, so attach first; the attach leaves the
+guest paused. `debug-breakpoints` and `debug-watchpoints` list the armed resources.
+
+The four x86 hardware debug slots are shared by hardware breakpoints and watchpoints. Software breakpoints do not use
+a slot, but they still obey the `Z0` address-space limitation documented below. An arm that would exceed the slot
+budget is refused with `InvalidState` instead of silently dropping a resource.
+
+The workflow is attach, arm one or more resources, then wait:
+
+```sh
+./build/mpfshost --client debug-attach <vm>            # hold this connection open
+./build/mpfshost --client debug-arm-break <vm> --pid <pid> --address <hex> --kind hardware
+./build/mpfshost --client debug-arm-watch <vm> --pid <pid> --address <hex> --width 4
+./build/mpfshost --client debug-wait <vm> --timeout 60 --max-hits 4
+./build/mpfshost --client debug-remove-break <vm> --id <id>
+./build/mpfshost --client debug-detach <vm>
+```
+
+`debug-wait` resumes the guest if it is stopped, reports up to `--max-hits` stops from any armed resource, and leaves
+the guest stopped at the last hit. Each hit carries the resource id, the full register record, and the module,
+export and PDB symbol for the hit address. A second `debug-wait` continues from that stop, so several requests can
+report hits without re-arming anything. A wait that times out leaves the guest running; `debug-detach` or
+`debug-remove-*` stops it as needed and then restores the run state.
+
+The host removes every armed resource on detach, host shutdown, session death, and after a stop packet that reports a
+guest exit or a snapshot/reset. A stub close during a wait also clears the bookkeeping, because the debug registers
+went with it. The `watchCount` in `debug-status` counts armed watchpoints only.
+
+### Persistent resource validation record
+
+Run on 2026-11-09 against the `windows` target (12 vCPUs, QEMU 10.2.2) with the rebuilt host installed and
+`guest-probe.exe` pid 2780:
+
+- `debug-attach` paused the guest. `debug-arm-break --pid 4 --address 0xfffff800aa6ac7cf --kind hardware` returned
+  `id=1 ... slot=0`; `debug-arm-watch --pid 2780 --address 0x7ff7850f0040 --width 8` on the exported
+  `GuestProbeCounter` returned `id=2 ... slot=1`. Both list commands reported exactly those records, and
+  `debug-status` reported `watches=1`.
+- The first `debug-wait --max-hits 1` reported `id=1` on vCPU 8/thread `p01.09`, `rip=0xfffff800aa6ac7cf`,
+  `cr3=0x1ae000`, `module=ntoskrnl.exe+0x6ac7cf` and `export=HalProcessorIdle+0xf`, with `skipped=0`. A second wait
+  reported the same breakpoint again, so a wait can be repeated without re-arming.
+- Removing breakpoint `id=1` left watchpoint `id=2` armed and its id unchanged. A wait then reported `id=2` on
+  vCPU 0/thread `p01.01`, `rip=0x7ff7850e1487`, `cr3=0x366454000`,
+  `module=guest-probe.exe+0x1487` and `export=GuestProbeMarker+0x7`, proving a breakpoint and watchpoint can be
+  armed together and attributed by id.
+- Removing watchpoint `id=2` left both lists empty. `debug-detach` reported
+  `stub-stopped=yes foreign-stub=no guest-resumed=yes detached=yes`, and the guest returned to `running`.
+- A second cycle armed a hardware breakpoint (`id=3`, confirming ids are not reused), detached with the resource
+  still armed, and reported `guest-resumed=yes`. Reattaching and listing reported
+  `no breakpoints are armed` and `no watchpoints are armed`, so teardown removed every resource.
+- The wait after a hit leaves QMP reporting `other` (the stub's `debug` state) rather than `running`; detach still
+  restores `running`. That is the documented attached-stub state, not a failure.
+
 ### Attach and detach validation record
 
 Run on 2026-11-09 against the `windows` target (12 vCPUs) with the rebuilt host installed:

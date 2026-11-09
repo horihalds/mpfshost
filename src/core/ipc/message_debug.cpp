@@ -592,4 +592,432 @@ namespace mpfshost
         }
         return message;
     }
+
+    namespace
+    {
+        void writeDebugBreakpointArmResponse(ByteWriter& writer, const DebugBreakpointArmResponse& message)
+        {
+            writer.writeU32(message.id);
+            writer.writeU32(message.pid);
+            writer.writeU64(message.address);
+            writer.writeU8(static_cast<std::uint8_t>(message.kind));
+            writer.writeU32(message.slot);
+        }
+
+        bool readDebugBreakpointArmResponse(ByteReader& reader, DebugBreakpointArmResponse& message)
+        {
+            message.id      = reader.readU32();
+            message.pid     = reader.readU32();
+            message.address = reader.readU64();
+            message.kind    = static_cast<DebugBreakpointKind>(reader.readU8());
+            message.slot    = reader.readU32();
+            return reader.ok()
+                && (message.kind == DebugBreakpointKind::Software || message.kind == DebugBreakpointKind::Hardware);
+        }
+
+        void writeDebugWatchArmResponse(ByteWriter& writer, const DebugWatchArmResponse& message)
+        {
+            writer.writeU32(message.id);
+            writer.writeU32(message.pid);
+            writer.writeU64(message.address);
+            writer.writeU32(message.width);
+            writer.writeU8(static_cast<std::uint8_t>(message.access));
+            writer.writeU32(message.slot);
+        }
+
+        bool readDebugWatchArmResponse(ByteReader& reader, DebugWatchArmResponse& message)
+        {
+            message.id      = reader.readU32();
+            message.pid     = reader.readU32();
+            message.address = reader.readU64();
+            message.width   = reader.readU32();
+            message.access  = static_cast<DebugWatchAccess>(reader.readU8());
+            message.slot    = reader.readU32();
+            return reader.ok() && message.access == DebugWatchAccess::Write;
+        }
+    } // namespace
+
+    std::vector<std::byte> encodeDebugBreakpointArmRequest(const DebugBreakpointArmRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        writer.writeU8(static_cast<std::uint8_t>(message.kind));
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointArmRequest> decodeDebugBreakpointArmRequest(std::span<const std::byte> payload)
+    {
+        ByteReader                reader {payload};
+        DebugBreakpointArmRequest message;
+        message.pid     = reader.readU32();
+        message.address = reader.readU64();
+        message.kind    = static_cast<DebugBreakpointKind>(reader.readU8());
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.kind != DebugBreakpointKind::Software && message.kind != DebugBreakpointKind::Hardware)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointArmResponse(const DebugBreakpointArmResponse& message)
+    {
+        ByteWriter writer;
+        writeDebugBreakpointArmResponse(writer, message);
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointArmResponse> decodeDebugBreakpointArmResponse(std::span<const std::byte> payload)
+    {
+        ByteReader                 reader {payload};
+        DebugBreakpointArmResponse message;
+        if (!readDebugBreakpointArmResponse(reader, message) || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointRemoveRequest(const DebugBreakpointRemoveRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.id);
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointRemoveRequest> decodeDebugBreakpointRemoveRequest(std::span<const std::byte> payload)
+    {
+        ByteReader                   reader {payload};
+        DebugBreakpointRemoveRequest message;
+        message.id = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointListRequest(const DebugBreakpointListRequest&)
+    {
+        return {};
+    }
+
+    std::optional<DebugBreakpointListRequest> decodeDebugBreakpointListRequest(std::span<const std::byte> payload)
+    {
+        if (!payload.empty())
+        {
+            return std::nullopt;
+        }
+        return DebugBreakpointListRequest {};
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointListResponse(const DebugBreakpointListResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(static_cast<std::uint32_t>(message.breakpoints.size()));
+        for (const auto& breakpoint : message.breakpoints)
+        {
+            writeDebugBreakpointArmResponse(writer, breakpoint);
+        }
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointListResponse> decodeDebugBreakpointListResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+        const auto count = reader.readU32();
+        if (!reader.ok() || count > kMaxDebugArmedResources)
+        {
+            return std::nullopt;
+        }
+
+        DebugBreakpointListResponse message;
+        message.breakpoints.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            DebugBreakpointArmResponse breakpoint;
+            if (!readDebugBreakpointArmResponse(reader, breakpoint))
+            {
+                return std::nullopt;
+            }
+            message.breakpoints.push_back(std::move(breakpoint));
+        }
+        if (!reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchArmRequest(const DebugWatchArmRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        writer.writeU32(message.width);
+        writer.writeU8(static_cast<std::uint8_t>(message.access));
+        return writer.take();
+    }
+
+    std::optional<DebugWatchArmRequest> decodeDebugWatchArmRequest(std::span<const std::byte> payload)
+    {
+        ByteReader           reader {payload};
+        DebugWatchArmRequest message;
+        message.pid     = reader.readU32();
+        message.address = reader.readU64();
+        message.width   = reader.readU32();
+        message.access  = static_cast<DebugWatchAccess>(reader.readU8());
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.access != DebugWatchAccess::Write)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchArmResponse(const DebugWatchArmResponse& message)
+    {
+        ByteWriter writer;
+        writeDebugWatchArmResponse(writer, message);
+        return writer.take();
+    }
+
+    std::optional<DebugWatchArmResponse> decodeDebugWatchArmResponse(std::span<const std::byte> payload)
+    {
+        ByteReader            reader {payload};
+        DebugWatchArmResponse message;
+        if (!readDebugWatchArmResponse(reader, message) || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchRemoveRequest(const DebugWatchRemoveRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.id);
+        return writer.take();
+    }
+
+    std::optional<DebugWatchRemoveRequest> decodeDebugWatchRemoveRequest(std::span<const std::byte> payload)
+    {
+        ByteReader              reader {payload};
+        DebugWatchRemoveRequest message;
+        message.id = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWatchListRequest(const DebugWatchListRequest&)
+    {
+        return {};
+    }
+
+    std::optional<DebugWatchListRequest> decodeDebugWatchListRequest(std::span<const std::byte> payload)
+    {
+        if (!payload.empty())
+        {
+            return std::nullopt;
+        }
+        return DebugWatchListRequest {};
+    }
+
+    std::vector<std::byte> encodeDebugWatchListResponse(const DebugWatchListResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(static_cast<std::uint32_t>(message.watches.size()));
+        for (const auto& watch : message.watches)
+        {
+            writeDebugWatchArmResponse(writer, watch);
+        }
+        return writer.take();
+    }
+
+    std::optional<DebugWatchListResponse> decodeDebugWatchListResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+        const auto count = reader.readU32();
+        if (!reader.ok() || count > kMaxDebugArmedResources)
+        {
+            return std::nullopt;
+        }
+
+        DebugWatchListResponse message;
+        message.watches.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            DebugWatchArmResponse watch;
+            if (!readDebugWatchArmResponse(reader, watch))
+            {
+                return std::nullopt;
+            }
+            message.watches.push_back(std::move(watch));
+        }
+        if (!reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugResourceRemoveResponse(const DebugResourceRemoveResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.id);
+        writer.writeU8(message.removed ? 1 : 0);
+        return writer.take();
+    }
+
+    std::optional<DebugResourceRemoveResponse> decodeDebugResourceRemoveResponse(std::span<const std::byte> payload)
+    {
+        ByteReader                  reader {payload};
+        DebugResourceRemoveResponse message;
+        message.id      = reader.readU32();
+        message.removed = reader.readU8() != 0;
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugContinueRequest(const DebugContinueRequest&)
+    {
+        return {};
+    }
+
+    std::optional<DebugContinueRequest> decodeDebugContinueRequest(std::span<const std::byte> payload)
+    {
+        if (!payload.empty())
+        {
+            return std::nullopt;
+        }
+        return DebugContinueRequest {};
+    }
+
+    std::vector<std::byte> encodeDebugContinueResponse(const DebugContinueResponse& message)
+    {
+        return encodeDebugStatus(message);
+    }
+
+    std::optional<DebugContinueResponse> decodeDebugContinueResponse(std::span<const std::byte> payload)
+    {
+        return decodeDebugStatus(payload);
+    }
+
+    std::vector<std::byte> encodeDebugWaitRequest(const DebugWaitRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.timeoutMs);
+        writer.writeU32(message.maxHits);
+        return writer.take();
+    }
+
+    std::optional<DebugWaitRequest> decodeDebugWaitRequest(std::span<const std::byte> payload)
+    {
+        ByteReader       reader {payload};
+        DebugWaitRequest message;
+        message.timeoutMs = reader.readU32();
+        message.maxHits   = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWaitHit(const DebugWaitHit& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.id);
+        writer.writeU8(static_cast<std::uint8_t>(message.kind));
+        writer.writeU8(static_cast<std::uint8_t>(message.breakpointKind));
+        writer.writeU64(message.address);
+        writeDebugRecord(writer, message.record);
+        writer.writeString(message.module);
+        writer.writeU64(message.moduleOffset);
+        writer.writeU8(message.exportFound ? 1 : 0);
+        writer.writeU64(message.exportAddress);
+        writer.writeU64(message.exportOffset);
+        writer.writeString(message.exportName);
+        writer.writeU8(message.pdbFound ? 1 : 0);
+        writer.writeString(message.pdbSymbol);
+        writer.writeU32(message.pdbDisplacement);
+        return writer.take();
+    }
+
+    std::optional<DebugWaitHit> decodeDebugWaitHit(std::span<const std::byte> payload)
+    {
+        ByteReader   reader {payload};
+        DebugWaitHit message;
+        message.id              = reader.readU32();
+        message.kind            = static_cast<DebugResourceKind>(reader.readU8());
+        message.breakpointKind  = static_cast<DebugBreakpointKind>(reader.readU8());
+        message.address         = reader.readU64();
+        message.record          = readDebugRecord(reader);
+        message.module          = reader.readString();
+        message.moduleOffset    = reader.readU64();
+        message.exportFound     = reader.readU8() != 0;
+        message.exportAddress   = reader.readU64();
+        message.exportOffset    = reader.readU64();
+        message.exportName      = reader.readString();
+        message.pdbFound        = reader.readU8() != 0;
+        message.pdbSymbol       = reader.readString();
+        message.pdbDisplacement = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.kind != DebugResourceKind::Breakpoint && message.kind != DebugResourceKind::Watchpoint)
+        {
+            return std::nullopt;
+        }
+        if (message.breakpointKind != DebugBreakpointKind::Software
+            && message.breakpointKind != DebugBreakpointKind::Hardware)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugWaitEnd(const DebugWaitEnd& message)
+    {
+        ByteWriter writer;
+        writer.writeU8(static_cast<std::uint8_t>(message.status));
+        writer.writeU32(message.hitCount);
+        writer.writeU32(message.skippedCount);
+        writer.writeString(message.error);
+        return writer.take();
+    }
+
+    std::optional<DebugWaitEnd> decodeDebugWaitEnd(std::span<const std::byte> payload)
+    {
+        ByteReader   reader {payload};
+        DebugWaitEnd message;
+        message.status       = static_cast<DebugWatchStatus>(reader.readU8());
+        message.hitCount     = reader.readU32();
+        message.skippedCount = reader.readU32();
+        message.error        = reader.readString();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.status != DebugWatchStatus::Completed && message.status != DebugWatchStatus::Timeout
+            && message.status != DebugWatchStatus::Cancelled && message.status != DebugWatchStatus::Error)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
 } // namespace mpfshost

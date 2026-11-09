@@ -255,6 +255,30 @@ namespace mpfshost
         case MessageType::DebugDetachRequest:
             handleDebugDetach(requestId, payload);
             return;
+        case MessageType::DebugBreakpointArmRequest:
+            handleDebugBreakpointArm(requestId, payload);
+            return;
+        case MessageType::DebugBreakpointRemoveRequest:
+            handleDebugBreakpointRemove(requestId, payload);
+            return;
+        case MessageType::DebugBreakpointListRequest:
+            handleDebugBreakpointList(requestId, payload);
+            return;
+        case MessageType::DebugWatchArmRequest:
+            handleDebugWatchArm(requestId, payload);
+            return;
+        case MessageType::DebugWatchRemoveRequest:
+            handleDebugWatchRemove(requestId, payload);
+            return;
+        case MessageType::DebugWatchListRequest:
+            handleDebugWatchList(requestId, payload);
+            return;
+        case MessageType::DebugContinueRequest:
+            handleDebugContinue(requestId, payload);
+            return;
+        case MessageType::DebugWaitRequest:
+            handleDebugWait(requestId, payload);
+            return;
         case MessageType::ConfigSetRequest:
             handleConfigSet(requestId, payload);
             return;
@@ -412,6 +436,14 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugStepRequest),
             static_cast<std::uint16_t>(MessageType::DebugAttachRequest),
             static_cast<std::uint16_t>(MessageType::DebugDetachRequest),
+            static_cast<std::uint16_t>(MessageType::DebugBreakpointArmRequest),
+            static_cast<std::uint16_t>(MessageType::DebugBreakpointRemoveRequest),
+            static_cast<std::uint16_t>(MessageType::DebugBreakpointListRequest),
+            static_cast<std::uint16_t>(MessageType::DebugWatchArmRequest),
+            static_cast<std::uint16_t>(MessageType::DebugWatchRemoveRequest),
+            static_cast<std::uint16_t>(MessageType::DebugWatchListRequest),
+            static_cast<std::uint16_t>(MessageType::DebugContinueRequest),
+            static_cast<std::uint16_t>(MessageType::DebugWaitRequest),
             static_cast<std::uint16_t>(MessageType::VirtualQueryRequest),
             static_cast<std::uint16_t>(MessageType::MemorySearchRequest),
             static_cast<std::uint16_t>(MessageType::PageReadRequest),

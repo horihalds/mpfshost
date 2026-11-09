@@ -771,6 +771,128 @@ namespace mpfshost
         bool        detached {};     // this request ended an attachment
     };
 
+    // Persistent resources stay armed on the attached stub until they are removed or the attachment ends.
+    inline constexpr std::uint32_t kMaxDebugHardwareSlots  = 4;
+    inline constexpr std::uint32_t kNoDebugHardwareSlot    = 0xFFFFFFFFu;
+    inline constexpr std::size_t   kMaxDebugArmedResources = 64;
+    inline constexpr std::uint32_t kMaxDebugWaitHits       = 64;
+
+    enum class DebugResourceKind : std::uint8_t
+    {
+        Breakpoint = 0,
+        Watchpoint = 1,
+    };
+
+    struct DebugBreakpointArmRequest
+    {
+        std::uint32_t       pid {};
+        std::uint64_t       address {};
+        DebugBreakpointKind kind {DebugBreakpointKind::Software};
+    };
+
+    struct DebugBreakpointArmResponse
+    {
+        std::uint32_t       id {};
+        std::uint32_t       pid {};
+        std::uint64_t       address {};
+        DebugBreakpointKind kind {DebugBreakpointKind::Software};
+        std::uint32_t       slot {kNoDebugHardwareSlot}; // hardware slot index, or kNoDebugHardwareSlot
+    };
+
+    struct DebugBreakpointRemoveRequest
+    {
+        std::uint32_t id {};
+    };
+
+    struct DebugBreakpointListRequest
+    {
+        // Empty payload.
+    };
+
+    struct DebugBreakpointListResponse
+    {
+        std::vector<DebugBreakpointArmResponse> breakpoints;
+    };
+
+    struct DebugWatchArmRequest
+    {
+        std::uint32_t    pid {};
+        std::uint64_t    address {};
+        std::uint32_t    width {4};
+        DebugWatchAccess access {DebugWatchAccess::Write};
+    };
+
+    struct DebugWatchArmResponse
+    {
+        std::uint32_t    id {};
+        std::uint32_t    pid {};
+        std::uint64_t    address {};
+        std::uint32_t    width {4};
+        DebugWatchAccess access {DebugWatchAccess::Write};
+        std::uint32_t    slot {kNoDebugHardwareSlot}; // watchpoints always consume a hardware slot
+    };
+
+    struct DebugWatchRemoveRequest
+    {
+        std::uint32_t id {};
+    };
+
+    struct DebugWatchListRequest
+    {
+        // Empty payload.
+    };
+
+    struct DebugWatchListResponse
+    {
+        std::vector<DebugWatchArmResponse> watches;
+    };
+
+    // Shared by both remove requests; the id is the one returned by the matching arm request.
+    struct DebugResourceRemoveResponse
+    {
+        std::uint32_t id {};
+        bool          removed {};
+    };
+
+    struct DebugContinueRequest
+    {
+        // Empty payload; resumes the guest without removing any armed resource.
+    };
+
+    using DebugContinueResponse = DebugStatus;
+
+    struct DebugWaitRequest
+    {
+        std::uint32_t timeoutMs {30000};
+        std::uint32_t maxHits {1};
+    };
+
+    struct DebugWaitHit
+    {
+        std::uint32_t       id {};
+        DebugResourceKind   kind {DebugResourceKind::Breakpoint};
+        DebugBreakpointKind breakpointKind {DebugBreakpointKind::Software};
+        std::uint64_t       address {};
+        DebugRegisterRecord record;
+        std::string         module; // empty when the hit address is outside every module
+        std::uint64_t       moduleOffset {};
+        bool                exportFound {};
+        std::uint64_t       exportAddress {};
+        std::uint64_t       exportOffset {};
+        std::string         exportName; // empty for an ordinal-only export
+        bool                pdbFound {};
+        std::string         pdbSymbol;
+        std::uint32_t       pdbDisplacement {};
+    };
+
+    struct DebugWaitEnd
+    {
+        DebugWatchStatus status {DebugWatchStatus::Completed};
+        std::uint32_t    hitCount {};
+        std::uint32_t    skippedCount {};
+        std::string      error;
+    };
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -2020,6 +2142,52 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugDetachRequest>  decodeDebugDetachRequest(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>             encodeDebugDetachResponse(const DebugDetachResponse& message);
     [[nodiscard]] std::optional<DebugDetachResponse> decodeDebugDetachResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointArmRequest(const DebugBreakpointArmRequest& message);
+    [[nodiscard]] std::optional<DebugBreakpointArmRequest>
+                                         decodeDebugBreakpointArmRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointArmResponse(const DebugBreakpointArmResponse& message);
+    [[nodiscard]] std::optional<DebugBreakpointArmResponse>
+    decodeDebugBreakpointArmResponse(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>
+    encodeDebugBreakpointRemoveRequest(const DebugBreakpointRemoveRequest& message);
+    [[nodiscard]] std::optional<DebugBreakpointRemoveRequest>
+                                         decodeDebugBreakpointRemoveRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointListRequest(const DebugBreakpointListRequest& message);
+    [[nodiscard]] std::optional<DebugBreakpointListRequest>
+                                         decodeDebugBreakpointListRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointListResponse(const DebugBreakpointListResponse& message);
+    [[nodiscard]] std::optional<DebugBreakpointListResponse>
+    decodeDebugBreakpointListResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeDebugWatchArmRequest(const DebugWatchArmRequest& message);
+    [[nodiscard]] std::optional<DebugWatchArmRequest> decodeDebugWatchArmRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>              encodeDebugWatchArmResponse(const DebugWatchArmResponse& message);
+    [[nodiscard]] std::optional<DebugWatchArmResponse> decodeDebugWatchArmResponse(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugWatchRemoveRequest(const DebugWatchRemoveRequest& message);
+    [[nodiscard]] std::optional<DebugWatchRemoveRequest>
+                                         decodeDebugWatchRemoveRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugWatchListRequest(const DebugWatchListRequest& message);
+    [[nodiscard]] std::optional<DebugWatchListRequest> decodeDebugWatchListRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugWatchListResponse(const DebugWatchListResponse& message);
+    [[nodiscard]] std::optional<DebugWatchListResponse>
+    decodeDebugWatchListResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugResourceRemoveResponse(const DebugResourceRemoveResponse& message);
+    [[nodiscard]] std::optional<DebugResourceRemoveResponse>
+    decodeDebugResourceRemoveResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeDebugContinueRequest(const DebugContinueRequest& message);
+    [[nodiscard]] std::optional<DebugContinueRequest> decodeDebugContinueRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>              encodeDebugContinueResponse(const DebugContinueResponse& message);
+    [[nodiscard]] std::optional<DebugContinueResponse> decodeDebugContinueResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>          encodeDebugWaitRequest(const DebugWaitRequest& message);
+    [[nodiscard]] std::optional<DebugWaitRequest> decodeDebugWaitRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>          encodeDebugWaitHit(const DebugWaitHit& message);
+    [[nodiscard]] std::optional<DebugWaitHit>     decodeDebugWaitHit(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>          encodeDebugWaitEnd(const DebugWaitEnd& message);
+    [[nodiscard]] std::optional<DebugWaitEnd>     decodeDebugWaitEnd(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

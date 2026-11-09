@@ -461,6 +461,60 @@ namespace mpfshost::testing
         bool                attachBusy {};
         std::uint32_t       attachCalls {};
         std::uint64_t       lastAttachSession {};
+
+        std::optional<DebugBreakpointArmRequest> lastArmBreakpointRequest;
+        DebugBreakpointArmResponse               armBreakpointResponse;
+        std::string                              armBreakpointFailure;
+        bool                                     armBreakpointInvalidState {};
+        bool                                     armBreakpointBusy {};
+        std::uint32_t                            armBreakpointCalls {};
+
+        std::optional<DebugBreakpointRemoveRequest> lastRemoveBreakpointRequest;
+        DebugResourceRemoveResponse                 removeBreakpointResponse;
+        std::string                                 removeBreakpointFailure;
+        bool                                        removeBreakpointInvalidState {};
+        bool                                        removeBreakpointBusy {};
+        std::uint32_t                               removeBreakpointCalls {};
+
+        DebugBreakpointListResponse listBreakpointsResponse;
+        std::string                 listBreakpointsFailure;
+        bool                        listBreakpointsInvalidState {};
+        bool                        listBreakpointsBusy {};
+        std::uint32_t               listBreakpointsCalls {};
+
+        std::optional<DebugWatchArmRequest> lastArmWatchRequest;
+        DebugWatchArmResponse               armWatchResponse;
+        std::string                         armWatchFailure;
+        bool                                armWatchInvalidState {};
+        bool                                armWatchBusy {};
+        std::uint32_t                       armWatchCalls {};
+
+        std::optional<DebugWatchRemoveRequest> lastRemoveWatchRequest;
+        DebugResourceRemoveResponse            removeWatchResponse;
+        std::string                            removeWatchFailure;
+        bool                                   removeWatchInvalidState {};
+        bool                                   removeWatchBusy {};
+        std::uint32_t                          removeWatchCalls {};
+
+        DebugWatchListResponse listWatchesResponse;
+        std::string            listWatchesFailure;
+        bool                   listWatchesInvalidState {};
+        bool                   listWatchesBusy {};
+        std::uint32_t          listWatchesCalls {};
+
+        DebugContinueResponse continueResponse;
+        std::string           continueFailure;
+        bool                  continueInvalidState {};
+        bool                  continueBusy {};
+        std::uint32_t         continueCalls {};
+
+        DebugWaitEnd              waitEnd;
+        std::vector<DebugWaitHit> waitHits;
+        std::string               waitFailure;
+        bool                      waitInvalidState {};
+        bool                      waitBusy {};
+        std::uint32_t             waitCalls {};
+        std::uint64_t             lastWaitSession {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1764,6 +1818,179 @@ namespace mpfshost::testing
             _debugState->detachSessionCalls.fetch_add(1);
         }
 
+        [[nodiscard]] std::optional<DebugBreakpointArmResponse>
+        debugArmBreakpoint(std::uint64_t                    sessionId,
+                           const DebugBreakpointArmRequest& request,
+                           bool&                            invalidState,
+                           bool&                            busy,
+                           std::string&                     error,
+                           bool&                            unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->armBreakpointCalls;
+            _debugState->lastArmBreakpointRequest = request;
+            if (!_debugState->armBreakpointFailure.empty())
+            {
+                invalidState = _debugState->armBreakpointInvalidState;
+                busy         = _debugState->armBreakpointBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->armBreakpointFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->armBreakpointResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugResourceRemoveResponse>
+        debugRemoveBreakpoint(std::uint64_t                       sessionId,
+                              const DebugBreakpointRemoveRequest& request,
+                              bool&                               invalidState,
+                              bool&                               busy,
+                              std::string&                        error,
+                              bool&                               unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->removeBreakpointCalls;
+            _debugState->lastRemoveBreakpointRequest = request;
+            if (!_debugState->removeBreakpointFailure.empty())
+            {
+                invalidState = _debugState->removeBreakpointInvalidState;
+                busy         = _debugState->removeBreakpointBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->removeBreakpointFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->removeBreakpointResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugBreakpointListResponse> debugListBreakpoints(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->listBreakpointsCalls;
+            if (!_debugState->listBreakpointsFailure.empty())
+            {
+                invalidState = _debugState->listBreakpointsInvalidState;
+                busy         = _debugState->listBreakpointsBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->listBreakpointsFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->listBreakpointsResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugWatchArmResponse> debugArmWatch(std::uint64_t               sessionId,
+                                                                         const DebugWatchArmRequest& request,
+                                                                         bool&                       invalidState,
+                                                                         bool&                       busy,
+                                                                         std::string&                error,
+                                                                         bool& unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->armWatchCalls;
+            _debugState->lastArmWatchRequest = request;
+            if (!_debugState->armWatchFailure.empty())
+            {
+                invalidState = _debugState->armWatchInvalidState;
+                busy         = _debugState->armWatchBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->armWatchFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->armWatchResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugResourceRemoveResponse>
+        debugRemoveWatch(std::uint64_t                  sessionId,
+                         const DebugWatchRemoveRequest& request,
+                         bool&                          invalidState,
+                         bool&                          busy,
+                         std::string&                   error,
+                         bool&                          unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->removeWatchCalls;
+            _debugState->lastRemoveWatchRequest = request;
+            if (!_debugState->removeWatchFailure.empty())
+            {
+                invalidState = _debugState->removeWatchInvalidState;
+                busy         = _debugState->removeWatchBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->removeWatchFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->removeWatchResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugWatchListResponse> debugListWatches(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->listWatchesCalls;
+            if (!_debugState->listWatchesFailure.empty())
+            {
+                invalidState = _debugState->listWatchesInvalidState;
+                busy         = _debugState->listWatchesBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->listWatchesFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->listWatchesResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugContinueResponse> debugContinueGuest(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
+        {
+            (void)sessionId;
+            ++_debugState->continueCalls;
+            if (!_debugState->continueFailure.empty())
+            {
+                invalidState = _debugState->continueInvalidState;
+                busy         = _debugState->continueBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->continueFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->continueResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugWaitEnd> debugWait(const DebugWaitRequest&     request,
+                                                            const DebugWaitHitSink&     onHit,
+                                                            const DebugWatchAbortCheck& aborted,
+                                                            std::uint64_t               sessionId,
+                                                            bool&                       invalidState,
+                                                            bool&                       busy,
+                                                            std::string&                error,
+                                                            bool&                       unavailable) override
+        {
+            (void)request;
+            ++_debugState->waitCalls;
+            _debugState->lastWaitSession = sessionId;
+            if (!_debugState->waitFailure.empty())
+            {
+                invalidState = _debugState->waitInvalidState;
+                busy         = _debugState->waitBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->waitFailure;
+                return std::nullopt;
+            }
+            for (const auto& hit : _debugState->waitHits)
+            {
+                if ((aborted && aborted()) || (onHit && !onHit(hit)))
+                {
+                    break;
+                }
+            }
+            busy = false;
+            return _debugState->waitEnd;
+        }
+
     private:
         std::string                              _name;
         std::shared_ptr<FakeProcessState>        _processState;
@@ -2354,6 +2581,47 @@ namespace mpfshost::testing
             _debugState->attachFailure      = std::move(message);
             _debugState->attachInvalidState = invalidState;
             _debugState->attachBusy         = busy;
+        }
+
+        void setDebugArmBreakpoint(DebugBreakpointArmResponse response)
+        {
+            _debugState->armBreakpointResponse = std::move(response);
+        }
+
+        void setDebugRemoveBreakpoint(DebugResourceRemoveResponse response)
+        {
+            _debugState->removeBreakpointResponse = std::move(response);
+        }
+
+        void setDebugListBreakpoints(DebugBreakpointListResponse response)
+        {
+            _debugState->listBreakpointsResponse = std::move(response);
+        }
+
+        void setDebugArmWatch(DebugWatchArmResponse response)
+        {
+            _debugState->armWatchResponse = std::move(response);
+        }
+
+        void setDebugRemoveWatch(DebugResourceRemoveResponse response)
+        {
+            _debugState->removeWatchResponse = std::move(response);
+        }
+
+        void setDebugListWatches(DebugWatchListResponse response)
+        {
+            _debugState->listWatchesResponse = std::move(response);
+        }
+
+        void setDebugContinue(DebugStatus status)
+        {
+            _debugState->continueResponse = std::move(status);
+        }
+
+        void setDebugWait(std::vector<DebugWaitHit> hits, DebugWaitEnd end)
+        {
+            _debugState->waitHits = std::move(hits);
+            _debugState->waitEnd  = std::move(end);
         }
 
         void setHandlesBare(bool bare)

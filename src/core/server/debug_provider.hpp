@@ -14,6 +14,7 @@ namespace mpfshost
 {
     using DebugWatchHitSink    = std::function<bool(const DebugWatchData&)>;
     using DebugWatchAbortCheck = std::function<bool()>;
+    using DebugWaitHitSink     = std::function<bool(const DebugWaitHit&)>;
 
     // Guest control through QEMU's QMP socket. Every call answers the complete debug status, so a control
     // request does not need a second round trip to report the resulting run state.
@@ -64,6 +65,50 @@ namespace mpfshost
                      debugDetach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable) = 0;
         // Best-effort teardown of an attachment owned by a closing session. Never throws.
         virtual void debugDetachSession(std::uint64_t sessionId) noexcept                                    = 0;
+
+        // Persistent resources. `invalidState` reports a missing attachment, another owner's attachment, a
+        // running guest or an exhausted hardware-slot budget.
+        [[nodiscard]] virtual std::optional<DebugBreakpointArmResponse>
+        debugArmBreakpoint(std::uint64_t                    sessionId,
+                           const DebugBreakpointArmRequest& request,
+                           bool&                            invalidState,
+                           bool&                            busy,
+                           std::string&                     error,
+                           bool&                            unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugResourceRemoveResponse>
+        debugRemoveBreakpoint(std::uint64_t                       sessionId,
+                              const DebugBreakpointRemoveRequest& request,
+                              bool&                               invalidState,
+                              bool&                               busy,
+                              std::string&                        error,
+                              bool&                               unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugBreakpointListResponse> debugListBreakpoints(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugWatchArmResponse> debugArmWatch(std::uint64_t               sessionId,
+                                                                                 const DebugWatchArmRequest& request,
+                                                                                 bool&        invalidState,
+                                                                                 bool&        busy,
+                                                                                 std::string& error,
+                                                                                 bool&        unavailable)  = 0;
+        [[nodiscard]] virtual std::optional<DebugResourceRemoveResponse>
+        debugRemoveWatch(std::uint64_t                  sessionId,
+                         const DebugWatchRemoveRequest& request,
+                         bool&                          invalidState,
+                         bool&                          busy,
+                         std::string&                   error,
+                         bool&                          unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugWatchListResponse> debugListWatches(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugContinueResponse> debugContinueGuest(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)  = 0;
+        [[nodiscard]] virtual std::optional<DebugWaitEnd> debugWait(const DebugWaitRequest&     request,
+                                                                    const DebugWaitHitSink&     onHit,
+                                                                    const DebugWatchAbortCheck& aborted,
+                                                                    std::uint64_t               sessionId,
+                                                                    bool&                       invalidState,
+                                                                    bool&                       busy,
+                                                                    std::string&                error,
+                                                                    bool&                       unavailable) = 0;
     };
 } // namespace mpfshost
 

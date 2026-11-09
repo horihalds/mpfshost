@@ -137,6 +137,14 @@ range.
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
  `DebugAttachRequest` | `0x0042` | `DebugAttachResponse` `0x8066` | single | `debug-attach` |
+ `DebugBreakpointArmRequest` | `0x0043` | `DebugBreakpointArmResponse` `0x8067` | single | `debug-arm-break` |
+ `DebugBreakpointRemoveRequest` | `0x0044` | `DebugResourceRemoveResponse` `0x8068` | single | `debug-remove-break` |
+ `DebugBreakpointListRequest` | `0x0045` | `DebugBreakpointListResponse` `0x8069` | single | `debug-breakpoints` |
+ `DebugWatchArmRequest` | `0x0046` | `DebugWatchArmResponse` `0x806A` | single | `debug-arm-watch` |
+ `DebugWatchRemoveRequest` | `0x0047` | `DebugResourceRemoveResponse` `0x8068` | single | `debug-remove-watch` |
+ `DebugWatchListRequest` | `0x0048` | `DebugWatchListResponse` `0x806B` | single | `debug-watchpoints` |
+ `DebugContinueRequest` | `0x0049` | `DebugContinueResponse` `0x806C` | single | `debug-resume` |
+ `DebugWaitRequest` | `0x004A` | `DebugWaitHit` `0x806D` / `DebugWaitEnd` `0x806E` | stream | `debug-wait` |
 
 ## Address lookups
 
@@ -225,6 +233,39 @@ reported as such; `debug-continue` resumes it.
 
 The host performs the same teardown on a normal shutdown: it stops a stub it owns, removes its socket file, and
 resumes a guest it paused. It never stops a foreign stub during shutdown; use `debug-detach` for that.
+
+## Persistent debug resources
+
+A resource armed with `DebugBreakpointArmRequest` or `DebugWatchArmRequest` stays on the attached stub until it is
+removed, the attachment ends, the host shuts down, or a snapshot/reset removes the stub. Both arm requests require an
+attachment to exist and the guest to be paused; otherwise they answer `InvalidState`. Any client bound to the target
+may manage resources while the attachment exists, the same way register reads work; only the owner session ends the
+attachment when it disconnects. Every resource gets a `u32` id from a counter that is never reused, so ids stay stable
+while other resources are removed.
+
+`DebugBreakpointArmRequest` carries `pid` (`u32`), `address` (`u64`) and `kind` (`u8`: `0` software, `1` hardware).
+`DebugWatchArmRequest` carries `pid`, `address`, `width` (`u32`, 1, 2, 4 or 8) and `access` (`u8`, only `0` write).
+The responses carry the assigned `id`, the original fields, and a `slot` (`u32`): the hardware debug slot index
+0–3, or `0xFFFFFFFF` for a software breakpoint. At most four hardware slots exist and hardware breakpoints and
+watchpoints share them, so arming a fifth answers `InvalidState`. Software breakpoints consume no slot.
+
+`DebugBreakpointRemoveRequest` and `DebugWatchRemoveRequest` carry one `u32` id and share
+`DebugResourceRemoveResponse` (`u32 id`, `u8 removed`); an unknown id is not an error and reports `removed = 0`.
+`DebugBreakpointListRequest` and `DebugWatchListRequest` have no payload and answer a `u32` count followed by the
+same records the arm responses use.
+
+`DebugContinueRequest` has no payload and resumes the attached stub without removing anything; it answers the usual
+`DebugStatus` record. `DebugWaitRequest` carries `timeoutMs` (`u32`, 1–`kMaxDebugWatchTimeoutMs`) and `maxHits`
+(`u32`, 1–`kMaxDebugWaitHits` 64). It resumes a stopped guest, waits for a stop from any armed resource, and streams
+zero or more `DebugWaitHit` records followed by exactly one `DebugWaitEnd`, or one `ErrorResponse` instead of all of
+them. The guest is left stopped at the last reported hit, so a later `DebugWaitRequest` continues to the next one.
+
+A `DebugWaitHit` carries `id` (`u32`), `kind` (`u8`: `0` breakpoint, `1` watchpoint), `breakpointKind` (`u8`),
+`address` (`u64`), one fixed `DebugRegisterRecord`, then `module`, `moduleOffset`, the export fields and the PDB
+symbol fields with the same layout as `DebugBreakpointResponse` below. `DebugWaitEnd` uses the `DebugWatchEnd`
+layout: status (`0` completed, `1` timeout, `2` cancelled, `3` error), hit count, skipped count and an error string.
+A stop that matches no armed resource is skipped and counted; a stub close, guest exit or snapshot while waiting
+clears the resources and ends as `Error`.
 
 ## Debug registers
 

@@ -69,6 +69,77 @@ namespace mpfshost
         _debug.detachSession(sessionId);
     }
 
+    std::optional<DebugBreakpointArmResponse> VmmHandle::debugArmBreakpoint(std::uint64_t                    sessionId,
+                                                                            const DebugBreakpointArmRequest& request,
+                                                                            bool&        invalidState,
+                                                                            bool&        busy,
+                                                                            std::string& error,
+                                                                            bool&        unavailable)
+    {
+        return _debug.armBreakpoint(sessionId, request, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugResourceRemoveResponse>
+    VmmHandle::debugRemoveBreakpoint(std::uint64_t                       sessionId,
+                                     const DebugBreakpointRemoveRequest& request,
+                                     bool&                               invalidState,
+                                     bool&                               busy,
+                                     std::string&                        error,
+                                     bool&                               unavailable)
+    {
+        return _debug.removeBreakpoint(sessionId, request, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugBreakpointListResponse> VmmHandle::debugListBreakpoints(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        return _debug.listBreakpoints(sessionId, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugWatchArmResponse> VmmHandle::debugArmWatch(std::uint64_t               sessionId,
+                                                                  const DebugWatchArmRequest& request,
+                                                                  bool&                       invalidState,
+                                                                  bool&                       busy,
+                                                                  std::string&                error,
+                                                                  bool&                       unavailable)
+    {
+        return _debug.armWatch(sessionId, request, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugResourceRemoveResponse> VmmHandle::debugRemoveWatch(std::uint64_t                  sessionId,
+                                                                           const DebugWatchRemoveRequest& request,
+                                                                           bool&                          invalidState,
+                                                                           bool&                          busy,
+                                                                           std::string&                   error,
+                                                                           bool&                          unavailable)
+    {
+        return _debug.removeWatch(sessionId, request, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugWatchListResponse> VmmHandle::debugListWatches(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        return _debug.listWatches(sessionId, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugContinueResponse> VmmHandle::debugContinueGuest(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        return _debug.continueGuest(sessionId, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugWaitEnd> VmmHandle::debugWait(const DebugWaitRequest&     request,
+                                                     const DebugWaitHitSink&     onHit,
+                                                     const DebugWatchAbortCheck& aborted,
+                                                     std::uint64_t               sessionId,
+                                                     bool&                       invalidState,
+                                                     bool&                       busy,
+                                                     std::string&                error,
+                                                     bool&                       unavailable)
+    {
+        return _debug.wait(request, onHit, aborted, sessionId, invalidState, busy, error, unavailable);
+    }
+
     std::optional<debug::DebugProcessDtbs> VmmHandle::processDtbs(std::uint32_t pid, std::string& error)
     {
         LookupStatus status = LookupStatus::Failed;

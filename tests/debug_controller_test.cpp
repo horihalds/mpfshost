@@ -2218,3 +2218,295 @@ TEST_CASE("an attached stub is reused by a register read", "[core][debug][contro
     REQUIRE(detached->detached);
     REQUIRE_FALSE(qmp->stubActive);
 }
+
+TEST_CASE("persistent breakpoints share four hardware slots and keep their ids", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = false;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+
+    std::vector<std::uint32_t> ids;
+    for (std::uint32_t index = 0; index < mpfshost::kMaxDebugHardwareSlots; ++index)
+    {
+        const auto armed = controller.armBreakpoint(
+            7, {42, 0x1000 + index, mpfshost::DebugBreakpointKind::Hardware}, invalidState, busy, error, unavailable);
+        REQUIRE(armed.has_value());
+        REQUIRE(armed->slot == index);
+        ids.push_back(armed->id);
+    }
+
+    const auto exhausted = controller.armBreakpoint(
+        7, {42, 0x2000, mpfshost::DebugBreakpointKind::Hardware}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(exhausted.has_value());
+    REQUIRE(invalidState);
+    REQUIRE(error.find("hardware debug slots") != std::string::npos);
+
+    const auto software = controller.armBreakpoint(
+        7, {42, 0x3000, mpfshost::DebugBreakpointKind::Software}, invalidState, busy, error, unavailable);
+    REQUIRE(software.has_value());
+    REQUIRE(software->slot == mpfshost::kNoDebugHardwareSlot);
+
+    const auto list = controller.listBreakpoints(7, invalidState, busy, error, unavailable);
+    REQUIRE(list.has_value());
+    REQUIRE(list->breakpoints.size() == mpfshost::kMaxDebugHardwareSlots + 1);
+
+    // Removing the breakpoint that holds slot 1 frees it without renumbering the others.
+    const auto removed = controller.removeBreakpoint(7, {ids[1]}, invalidState, busy, error, unavailable);
+    REQUIRE(removed.has_value());
+    REQUIRE(removed->removed);
+
+    const auto replacement = controller.armBreakpoint(
+        7, {42, 0x4000, mpfshost::DebugBreakpointKind::Hardware}, invalidState, busy, error, unavailable);
+    REQUIRE(replacement.has_value());
+    REQUIRE(replacement->slot == 1);
+    REQUIRE(replacement->id > ids.back());
+
+    // Free the slot the third original breakpoint holds, then arm a watchpoint with that slot.
+    REQUIRE(controller.removeBreakpoint(7, {ids[2]}, invalidState, busy, error, unavailable)->removed);
+    const auto watched = controller.armWatch(
+        7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable);
+    REQUIRE(watched.has_value());
+    REQUIRE(watched->slot == 2);
+
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->detached);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(rsp->breakpointRemoves == 6);
+    REQUIRE(rsp->watchRemoves == 1);
+
+    REQUIRE_FALSE(controller.listBreakpoints(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(invalidState);
+}
+
+TEST_CASE("a wait reports breakpoint and watchpoint hits over repeated requests", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = false;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->threads       = {"1.1", "1.2"};
+    rsp->registerBytes = registerBytes(0x7ff84522b1f1ull);
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x1a2b3000});
+    rsp->stops.push_back({"1.2", 0x7ff84522b200ull, 0x5678, 0x1a2b3000, 0x5000});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+
+    const auto breakpoint = controller.armBreakpoint(
+        7, {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware}, invalidState, busy, error, unavailable);
+    REQUIRE(breakpoint.has_value());
+    const auto watch = controller.armWatch(
+        7, {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable);
+    REQUIRE(watch.has_value());
+    REQUIRE(breakpoint->id != watch->id);
+
+    std::vector<mpfshost::DebugWaitHit> hits;
+    const auto                          first = controller.wait(
+        {5000, 1},
+        [&hits](const mpfshost::DebugWaitHit& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(first.has_value());
+    REQUIRE(first->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(first->hitCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits.front().id == breakpoint->id);
+    REQUIRE(hits.front().kind == mpfshost::DebugResourceKind::Breakpoint);
+    REQUIRE(hits.front().record.rip == 0x7ff84522b1f1ull);
+    REQUIRE(hits.front().module == "msvcrt.dll");
+
+    // The second wait resumes the stopped guest and reports the watchpoint hit with its own id.
+    rsp->registerBytes = registerBytes(0x7ff84522b200ull);
+    const auto second  = controller.wait(
+        {5000, 1},
+        [&hits](const mpfshost::DebugWaitHit& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(second.has_value());
+    REQUIRE(second->hitCount == 1);
+    REQUIRE(hits.size() == 2);
+    REQUIRE(hits.back().id == watch->id);
+    REQUIRE(hits.back().kind == mpfshost::DebugResourceKind::Watchpoint);
+    REQUIRE(hits.back().address == 0x5000);
+
+    const auto removed = controller.removeWatch(7, {watch->id}, invalidState, busy, error, unavailable);
+    REQUIRE(removed.has_value());
+    REQUIRE(removed->removed);
+    REQUIRE(rsp->watchRemoves == 1);
+
+    const auto watches = controller.listWatches(7, invalidState, busy, error, unavailable);
+    REQUIRE(watches.has_value());
+    REQUIRE(watches->watches.empty());
+
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->detached);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("a cancelled wait keeps the armed resources and detach clears them", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = false;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(controller
+                .armWatch(7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable)
+                .has_value());
+
+    std::uint32_t checks = 0;
+    const auto    end    = controller.wait(
+        {30000, 8},
+        {},
+        [&checks]()
+        {
+            return ++checks > 2;
+        },
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
+    REQUIRE(rsp->watchRemoves == 0);
+
+    // The wait left the guest running, although the stub continue does not update QMP's status flag.
+    REQUIRE_FALSE(qmp->running);
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->detached);
+    REQUIRE(detached->guestResumed);
+    REQUIRE(rsp->watchRemoves == 1);
+    REQUIRE(qmp->running);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("resource requests require the owning attachment and a paused guest", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->running               = true;
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+
+    const auto missing = controller.armBreakpoint(
+        7, {42, 0x1000, mpfshost::DebugBreakpointKind::Software}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(missing.has_value());
+    REQUIRE(invalidState);
+    REQUIRE(error.find("attach") != std::string::npos);
+
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    // Attach paused the guest, so arming is allowed.
+    REQUIRE(controller
+                .armWatch(7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable)
+                .has_value());
+
+    // A different client bound to the same target shares the attachment.
+    const auto shared = controller.armBreakpoint(
+        8, {42, 0x7000, mpfshost::DebugBreakpointKind::Software}, invalidState, busy, error, unavailable);
+    REQUIRE(shared.has_value());
+
+    // Further resources are refused only once the guest is running again.
+    REQUIRE(controller.continueGuest(7, invalidState, busy, error, unavailable).has_value());
+    invalidState = false;
+    REQUIRE_FALSE(
+        controller
+            .armWatch(7, {42, 0x6000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable)
+            .has_value());
+    REQUIRE(invalidState);
+    REQUIRE(error.find("pause") != std::string::npos);
+
+    REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}

@@ -679,3 +679,40 @@ TEST_CASE("range sizes take decimal or 0x-hex input", "[util][number]")
     CHECK_FALSE(mpfshost::parseRangeSize("0x100000000").has_value());
     CHECK_FALSE(mpfshost::parseRangeSize("99999999999").has_value());
 }
+
+TEST_CASE("persistent debug commands are parsed and validated", "[cli-options]")
+{
+    const auto armBreak =
+        parse({"--client", "debug-arm-break", "vm1", "--pid", "42", "--address", "0x1000", "--kind", "hardware"});
+    REQUIRE(armBreak.options.has_value());
+    CHECK(armBreak.options->command == "debug-arm-break");
+    CHECK(armBreak.options->pid == 42);
+    CHECK(armBreak.options->address == 0x1000);
+    CHECK(armBreak.options->breakpointKind == mpfshost::DebugBreakpointKind::Hardware);
+
+    const auto missingPid = parse({"--client", "debug-arm-watch", "vm1", "--address", "0x1000"});
+    REQUIRE_FALSE(missingPid.options.has_value());
+    CHECK(missingPid.error.find("--pid") != std::string::npos);
+
+    const auto armWatch =
+        parse({"--client", "debug-arm-watch", "vm1", "--pid", "42", "--address", "0x2000", "--width", "8"});
+    REQUIRE(armWatch.options.has_value());
+    CHECK(armWatch.options->watchWidth == 8);
+
+    const auto remove = parse({"--client", "debug-remove-break", "vm1", "--id", "7"});
+    REQUIRE(remove.options.has_value());
+    CHECK(remove.options->resourceId == 7);
+
+    const auto missingId = parse({"--client", "debug-remove-watch", "vm1"});
+    REQUIRE_FALSE(missingId.options.has_value());
+    CHECK(missingId.error.find("--id") != std::string::npos);
+
+    const auto misplacedId = parse({"--client", "debug-breakpoints", "vm1", "--id", "7"});
+    REQUIRE_FALSE(misplacedId.options.has_value());
+    CHECK(misplacedId.error.find("--id") != std::string::npos);
+
+    const auto wait = parse({"--client", "debug-wait", "vm1", "--max-hits", "4", "--timeout", "10"});
+    REQUIRE(wait.options.has_value());
+    CHECK(wait.options->maxHits == 4);
+    CHECK(wait.options->watchTimeoutSeconds == 10);
+}
