@@ -655,6 +655,60 @@ namespace mpfshost
         std::vector<DebugThreadRecord> threads;
     };
 
+    inline constexpr std::uint32_t kMaxDebugDisassembleInstructions = 128;
+    inline constexpr std::uint32_t kMaxDebugDisassembleBytes        = kMaxDebugDisassembleInstructions * 15;
+    inline constexpr std::uint32_t kMaxDebugBacktraceFrames         = 128;
+    inline constexpr std::uint64_t kMaxDebugBacktraceDepthBytes     = 1024 * 1024;
+
+    struct DebugDisassembleRequest
+    {
+        std::uint32_t pid {};
+        std::uint64_t address {};
+        std::uint32_t count {16}; // number of instructions, 1-kMaxDebugDisassembleInstructions
+    };
+
+    struct DebugInstructionRecord
+    {
+        std::uint64_t          address {};
+        std::vector<std::byte> bytes;
+        std::string            text; // Intel syntax, or ".byte 0xNN" for an unknown encoding
+    };
+
+    struct DebugDisassembleResponse
+    {
+        std::vector<DebugInstructionRecord> instructions;
+    };
+
+    struct DebugBacktraceRequest
+    {
+        std::uint32_t pid {};
+        std::uint32_t vcpu {0};
+        std::string   threadId;       // when set, selects this GDB thread instead of the vCPU index
+        std::uint32_t maxFrames {32}; // 1-kMaxDebugBacktraceFrames
+    };
+
+    struct DebugBacktraceFrame
+    {
+        std::uint64_t address {};      // instruction pointer for this frame
+        std::uint64_t framePointer {}; // rbp used to reach the next frame
+        std::string   module;          // empty when the address is outside every module
+        std::uint64_t moduleOffset {};
+        bool          exportFound {};
+        std::uint64_t exportAddress {};
+        std::uint64_t exportOffset {};
+        std::string   exportName;
+        bool          pdbFound {};
+        std::string   pdbSymbol;
+        std::uint32_t pdbDisplacement {};
+    };
+
+    struct DebugBacktraceResponse
+    {
+        std::vector<DebugBacktraceFrame> frames;
+        bool                             truncated {}; // a limit or a bad frame pointer stopped the walk
+        std::string                      stopReason;   // empty when the chain ended at a null frame pointer
+    };
+
     enum class DebugWatchAccess : std::uint8_t
     {
         Write = 0,
@@ -2172,6 +2226,19 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugThreadsRequest>  decodeDebugThreadsRequest(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>              encodeDebugThreadsResponse(const DebugThreadsResponse& message);
     [[nodiscard]] std::optional<DebugThreadsResponse> decodeDebugThreadsResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugDisassembleRequest(const DebugDisassembleRequest& message);
+    [[nodiscard]] std::optional<DebugDisassembleRequest>
+                                         decodeDebugDisassembleRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugDisassembleResponse(const DebugDisassembleResponse& message);
+    [[nodiscard]] std::optional<DebugDisassembleResponse>
+    decodeDebugDisassembleResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugBacktraceRequest(const DebugBacktraceRequest& message);
+    [[nodiscard]] std::optional<DebugBacktraceRequest> decodeDebugBacktraceRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugBacktraceResponse(const DebugBacktraceResponse& message);
+    [[nodiscard]] std::optional<DebugBacktraceResponse>
+    decodeDebugBacktraceResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>           encodeDebugWatchRequest(const DebugWatchRequest& message);
     [[nodiscard]] std::optional<DebugWatchRequest> decodeDebugWatchRequest(std::span<const std::byte> payload);

@@ -473,8 +473,10 @@ namespace
                "bitsize=\"64\"/><reg name=\"pc\" bitsize=\"64\"/></feature>";
     }
 
-    std::string
-    registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull, std::uint64_t rsp = 0, std::uint64_t cr3 = 0x1a2b3000ull)
+    std::string registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull,
+                              std::uint64_t rsp = 0,
+                              std::uint64_t cr3 = 0x1a2b3000ull,
+                              std::uint64_t rbp = 0)
     {
         std::string bytes(172, '\0');
         const auto  put = [&bytes](std::size_t offset, std::uint64_t value)
@@ -485,6 +487,7 @@ namespace
             }
         };
         put(0, 0x1122334455667788ull); // rax
+        put(48, rbp);                  // rbp
         put(56, rsp);                  // rsp
         put(128, rip);                 // rip
         put(140, 0x2468ace0ull);       // cr0
@@ -517,9 +520,10 @@ namespace
         std::optional<mpfshost::debug::DebugPdbHit> pdb {
             mpfshost::debug::DebugPdbHit {"memcpy", 4}
         };
-        bool                  hasModule {true};
-        std::size_t           memoryReads {0};
-        std::function<void()> onWatchRead;
+        bool                                                                                     hasModule {true};
+        std::size_t                                                                              memoryReads {0};
+        std::function<void()>                                                                    onWatchRead;
+        std::function<bool(std::uint64_t, std::uint32_t, std::vector<std::byte>&, std::string&)> memoryHandler;
 
         struct GuestMapping
         {
@@ -591,6 +595,10 @@ namespace
         {
             ++memoryReads;
             out.clear();
+            if (memoryHandler)
+            {
+                return memoryHandler(address, size, out, error);
+            }
             if (address == watchAddress)
             {
                 if (onWatchRead)
@@ -2905,4 +2913,191 @@ TEST_CASE("resource requests require the owning attachment and a paused guest", 
     REQUIRE(error.find("pause") != std::string::npos);
 
     REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}
+
+namespace
+{
+    std::unique_ptr<DebugController>
+    makeBacktraceController(FakeInspector& inspector, std::uint64_t rip, std::uint64_t rsp, std::uint64_t rbp)
+    {
+        auto qmp                    = std::make_shared<FakeQmpState>();
+        auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+        auto rspTransport           = std::make_unique<FakeRspTransport>();
+        rspTransport->registersXml  = x86RegisterXml();
+        rspTransport->registerBytes = registerBytes(rip, rsp, 0x1a2b3000ull, rbp);
+        return std::make_unique<DebugController>(
+            "/tmp/qmp.sock",
+            "/tmp/stub.sock",
+            [transport = std::move(qmpTransport)]() mutable
+            {
+                return std::move(transport);
+            },
+            [transport = std::move(rspTransport)]() mutable
+            {
+                return std::move(transport);
+            },
+            &inspector);
+    }
+
+    bool readQword(std::uint64_t, std::uint32_t size, std::vector<std::byte>& out, std::uint64_t value)
+    {
+        if (size != 8)
+        {
+            return false;
+        }
+        out.clear();
+        out.reserve(size);
+        for (std::uint32_t index = 0; index < size; ++index)
+        {
+            out.push_back(static_cast<std::byte>((value >> (index * 8)) & 0xFF));
+        }
+        return true;
+    }
+} // namespace
+
+TEST_CASE("the debug controller disassembles a bounded memory window", "[core][debug][controller]")
+{
+    FakeInspector inspector;
+    std::uint64_t readAddress = 0;
+    std::uint32_t readSize    = 0;
+    inspector.memoryHandler = [&](std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string&)
+    {
+        readAddress = address;
+        readSize    = size;
+        out         = {std::byte {0x48}, std::byte {0x89}, std::byte {0xD8}};
+        return true;
+    };
+
+    DebugController controller {"/tmp/qmp.sock", "/tmp/stub.sock", {}, {}, &inspector};
+    std::string     error;
+    const auto      response = controller.disassemble({42, 0x401000, 3}, error);
+    REQUIRE(response.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(readAddress == 0x401000);
+    REQUIRE(readSize == 45);
+    REQUIRE(response->instructions.size() == 1);
+    REQUIRE(response->instructions[0].address == 0x401000);
+    REQUIRE(response->instructions[0].text.find("mov") != std::string::npos);
+
+    inspector.memoryHandler = [](std::uint64_t, std::uint32_t, std::vector<std::byte>&, std::string& errorText)
+    {
+        errorText = "unmapped";
+        return false;
+    };
+    REQUIRE_FALSE(controller.disassemble({42, 0x401000, 3}, error).has_value());
+    REQUIRE(error == "unmapped");
+}
+
+TEST_CASE("the backtrace walks a valid frame chain and stops at a null pointer", "[core][debug][controller]")
+{
+    FakeInspector inspector;
+    inspector.module        = {0x400000, 0x10000, 0x10, "game.exe"};
+    inspector.memoryHandler = [](std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string&)
+    {
+        if (address == 0x1010)
+        {
+            return readQword(address, size, out, 0x1030);
+        }
+        if (address == 0x1018)
+        {
+            return readQword(address, size, out, 0x400100);
+        }
+        if (address == 0x1030)
+        {
+            return readQword(address, size, out, 0);
+        }
+        if (address == 0x1038)
+        {
+            return readQword(address, size, out, 0x400200);
+        }
+        return false;
+    };
+
+    auto        controller   = makeBacktraceController(inspector, 0x400010, 0x1000, 0x1010);
+    bool        invalidState = false;
+    bool        busy         = false;
+    bool        unavailable  = false;
+    std::string error;
+
+    const auto response = controller->backtrace({42, 0, {}, 8}, invalidState, busy, error, unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(error.empty());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE_FALSE(response->truncated);
+    REQUIRE(response->frames.size() == 3);
+    REQUIRE(response->frames[0].address == 0x400010);
+    REQUIRE(response->frames[0].framePointer == 0x1010);
+    REQUIRE(response->frames[1].address == 0x400100);
+    REQUIRE(response->frames[1].framePointer == 0x1030);
+    REQUIRE(response->frames[2].address == 0x400200);
+    REQUIRE(response->frames[2].framePointer == 0);
+    REQUIRE(response->frames[0].module == "game.exe");
+}
+
+TEST_CASE("the backtrace does not follow a corrupt frame pointer", "[core][debug][controller]")
+{
+    FakeInspector inspector;
+    inspector.memoryHandler = [](std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string&)
+    {
+        if (address == 0x1010)
+        {
+            return readQword(address, size, out, 0x1000); // does not advance past the current frame
+        }
+        if (address == 0x1018)
+        {
+            return readQword(address, size, out, 0x400100);
+        }
+        return false;
+    };
+
+    auto        controller   = makeBacktraceController(inspector, 0x400010, 0x1000, 0x1010);
+    bool        invalidState = false;
+    bool        busy         = false;
+    bool        unavailable  = false;
+    std::string error;
+
+    const auto response = controller->backtrace({42, 0, {}, 8}, invalidState, busy, error, unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->frames.size() == 1);
+    REQUIRE(response->truncated);
+    REQUIRE(response->stopReason == "the saved frame pointer did not advance");
+
+    inspector.memoryHandler = [](std::uint64_t, std::uint32_t, std::vector<std::byte>&, std::string&)
+    {
+        return false;
+    };
+    controller            = makeBacktraceController(inspector, 0x400010, 0x1000, 0x1010);
+    const auto unreadable = controller->backtrace({42, 0, {}, 8}, invalidState, busy, error, unavailable);
+    REQUIRE(unreadable.has_value());
+    REQUIRE(unreadable->frames.size() == 1);
+    REQUIRE(unreadable->truncated);
+    REQUIRE(unreadable->stopReason.find("could not be read") != std::string::npos);
+}
+
+TEST_CASE("a backtrace frame keeps its raw address when symbolization fails", "[core][debug][controller]")
+{
+    FakeInspector inspector;
+    inspector.hasModule     = false;
+    inspector.memoryHandler = [](std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string&)
+    {
+        if (address == 0x1018)
+        {
+            return readQword(address, size, out, 0);
+        }
+        return false;
+    };
+
+    auto        controller   = makeBacktraceController(inspector, 0x400010, 0x1000, 0x1010);
+    bool        invalidState = false;
+    bool        busy         = false;
+    bool        unavailable  = false;
+    std::string error;
+
+    const auto response = controller->backtrace({42, 0, {}, 2}, invalidState, busy, error, unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->frames.size() == 1);
+    REQUIRE(response->frames[0].address == 0x400010);
+    REQUIRE(response->frames[0].module.empty());
+    REQUIRE_FALSE(response->frames[0].exportFound);
+    REQUIRE_FALSE(response->frames[0].pdbFound);
 }

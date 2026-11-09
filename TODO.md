@@ -15,26 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 7. Add disassembly and backtrace output
-
-Watch hits currently render one decoded store instruction; there is no way to inspect code around a stop or walk
-the stack.
-
-- Add `DebugDisassembleRequest`/`DebugDisassembleResponse`: read up to a bounded byte count through the inspector at
-  a virtual address and return decoded instructions with address, bytes and Intel-syntax text. Extend
-  `src/core/debug/x86_decoder.cpp` with a small length decoder rather than shelling out; unknown encodings become
-  `.byte` lines instead of guesses.
-- Add `debug-disassemble <vm> --pid <pid> --address <hex> [--count <n>]` and an MCP tool.
-- Add a backtrace command that reads `rip`, `rsp` and `rbp` and walks frame pointers for the selected thread, bounded
-  by a frame and depth limit, with each address symbolized through the existing module/export/PDB path. Do not guess
-  past a corrupt frame.
-- Tests: decoder length/rendering cases including prefixes and unknown bytes, truncation at the requested count,
-  backtrace termination on a null/bad frame pointer, and symbolization failures that leave the address raw.
-- Document both commands in `README.md` and `docs/PROTOCOL.md`.
-
-Acceptance: a stopped thread can be disassembled around its PC and its frame-pointer chain printed with module and
-symbol names, with no unbounded reads.
-
 ### 8. Harden breakpoint attribution for shared user addresses
 
 A hardware breakpoint on a hot system-DLL address traps in every process that maps it. The host currently accepts a

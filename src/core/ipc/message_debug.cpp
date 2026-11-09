@@ -310,6 +310,168 @@ namespace mpfshost
         return message;
     }
 
+    std::vector<std::byte> encodeDebugDisassembleRequest(const DebugDisassembleRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        writer.writeU32(message.count);
+        return writer.take();
+    }
+
+    std::optional<DebugDisassembleRequest> decodeDebugDisassembleRequest(std::span<const std::byte> payload)
+    {
+        ByteReader              reader {payload};
+        DebugDisassembleRequest message;
+        message.pid     = reader.readU32();
+        message.address = reader.readU64();
+        message.count   = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.count == 0 || message.count > kMaxDebugDisassembleInstructions)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugDisassembleResponse(const DebugDisassembleResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(static_cast<std::uint32_t>(message.instructions.size()));
+        for (const auto& instruction : message.instructions)
+        {
+            writer.writeU64(instruction.address);
+            writer.writeBytes(instruction.bytes);
+            writer.writeString(instruction.text);
+        }
+        return writer.take();
+    }
+
+    std::optional<DebugDisassembleResponse> decodeDebugDisassembleResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+        const auto count = reader.readU32();
+        if (!reader.ok() || count > payload.size() || count > kMaxDebugDisassembleInstructions)
+        {
+            return std::nullopt;
+        }
+
+        DebugDisassembleResponse message;
+        message.instructions.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            DebugInstructionRecord instruction;
+            instruction.address = reader.readU64();
+            instruction.bytes   = reader.readBytes();
+            instruction.text    = reader.readString();
+            if (!reader.ok() || instruction.bytes.size() > 15)
+            {
+                return std::nullopt;
+            }
+            message.instructions.push_back(std::move(instruction));
+        }
+        if (!reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBacktraceRequest(const DebugBacktraceRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU32(message.vcpu);
+        writer.writeString(message.threadId);
+        writer.writeU32(message.maxFrames);
+        return writer.take();
+    }
+
+    std::optional<DebugBacktraceRequest> decodeDebugBacktraceRequest(std::span<const std::byte> payload)
+    {
+        ByteReader            reader {payload};
+        DebugBacktraceRequest message;
+        message.pid       = reader.readU32();
+        message.vcpu      = reader.readU32();
+        message.threadId  = reader.readString();
+        message.maxFrames = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.maxFrames == 0 || message.maxFrames > kMaxDebugBacktraceFrames)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBacktraceResponse(const DebugBacktraceResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(static_cast<std::uint32_t>(message.frames.size()));
+        for (const auto& frame : message.frames)
+        {
+            writer.writeU64(frame.address);
+            writer.writeU64(frame.framePointer);
+            writer.writeString(frame.module);
+            writer.writeU64(frame.moduleOffset);
+            writer.writeU8(frame.exportFound ? 1 : 0);
+            writer.writeU64(frame.exportAddress);
+            writer.writeU64(frame.exportOffset);
+            writer.writeString(frame.exportName);
+            writer.writeU8(frame.pdbFound ? 1 : 0);
+            writer.writeString(frame.pdbSymbol);
+            writer.writeU32(frame.pdbDisplacement);
+        }
+        writer.writeU8(message.truncated ? 1 : 0);
+        writer.writeString(message.stopReason);
+        return writer.take();
+    }
+
+    std::optional<DebugBacktraceResponse> decodeDebugBacktraceResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+        const auto count = reader.readU32();
+        if (!reader.ok() || count > payload.size() || count > kMaxDebugBacktraceFrames)
+        {
+            return std::nullopt;
+        }
+
+        DebugBacktraceResponse message;
+        message.frames.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            DebugBacktraceFrame frame;
+            frame.address         = reader.readU64();
+            frame.framePointer    = reader.readU64();
+            frame.module          = reader.readString();
+            frame.moduleOffset    = reader.readU64();
+            frame.exportFound     = reader.readU8() != 0;
+            frame.exportAddress   = reader.readU64();
+            frame.exportOffset    = reader.readU64();
+            frame.exportName      = reader.readString();
+            frame.pdbFound        = reader.readU8() != 0;
+            frame.pdbSymbol       = reader.readString();
+            frame.pdbDisplacement = reader.readU32();
+            if (!reader.ok())
+            {
+                return std::nullopt;
+            }
+            message.frames.push_back(std::move(frame));
+        }
+        message.truncated  = reader.readU8() != 0;
+        message.stopReason = reader.readString();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
     std::string_view debugWatchStatusName(DebugWatchStatus status) noexcept
     {
         switch (status)

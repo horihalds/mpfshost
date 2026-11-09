@@ -55,6 +55,10 @@ namespace mpfshost
         DebugBreakpointKind                 breakpointKind {DebugBreakpointKind::Software};
         std::uint32_t                       maxHits {1};
         std::uint32_t                       watchTimeoutSeconds {30};
+        std::uint32_t                       count {16};
+        bool                                countSet {};
+        std::uint32_t                       maxFrames {32};
+        bool                                maxFramesSet {};
         std::uint32_t                       resourceId {};
         bool                                resourceIdSet {};
         bool                                watchWidthSet {};

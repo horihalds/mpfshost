@@ -84,6 +84,29 @@ namespace mpfshost
     [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>
     debugThreads(const std::filesystem::path& socketPath, const DebugThreadsQuery& query, std::string& error);
 
+    struct DebugDisassembleQuery
+    {
+        std::string   targetName;
+        std::uint32_t pid {};
+        std::uint64_t address {};
+        std::uint32_t count {16};
+    };
+
+    [[nodiscard]] std::optional<DebugDisassembleResponse>
+    debugDisassemble(const std::filesystem::path& socketPath, const DebugDisassembleQuery& query, std::string& error);
+
+    struct DebugBacktraceQuery
+    {
+        std::string   targetName;
+        std::uint32_t pid {};
+        std::uint32_t vcpu {0};
+        std::string   threadId; // when set, selects this GDB thread instead of the vCPU index
+        std::uint32_t maxFrames {32};
+    };
+
+    [[nodiscard]] std::optional<DebugBacktraceResponse>
+    debugBacktrace(const std::filesystem::path& socketPath, const DebugBacktraceQuery& query, std::string& error);
+
     struct DebugWatchQuery
     {
         std::string      targetName;

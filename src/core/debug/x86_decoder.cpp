@@ -1,5 +1,8 @@
 #include "core/debug/x86_decoder.hpp"
 
+#include <Zydis/Decoder.h>
+#include <Zydis/Formatter.h>
+
 #include <array>
 #include <cstdio>
 
@@ -605,6 +608,84 @@ namespace mpfshost::debug
             return candidate;
         }
     } // namespace
+
+    std::vector<DisassembledInstruction>
+    disassemble(std::span<const std::byte> bytes, std::uint64_t address, std::size_t maxInstructions)
+    {
+        std::vector<DisassembledInstruction> instructions;
+        if (bytes.empty() || maxInstructions == 0)
+        {
+            return instructions;
+        }
+        if (maxInstructions > kMaxDisassemblyInstructions)
+        {
+            maxInstructions = kMaxDisassemblyInstructions;
+        }
+
+        ZydisDecoder decoder;
+        if (ZYAN_FAILED(ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64)))
+        {
+            return instructions;
+        }
+
+        ZydisFormatter formatter;
+        if (ZYAN_FAILED(ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL)))
+        {
+            return instructions;
+        }
+
+        std::size_t position = 0;
+        while (position < bytes.size() && instructions.size() < maxInstructions)
+        {
+            ZydisDecodedInstruction                                  instruction {};
+            std::array<ZydisDecodedOperand, ZYDIS_MAX_OPERAND_COUNT> operands {};
+            const auto                                               status = ZydisDecoderDecodeFull(
+                &decoder, bytes.data() + position, bytes.size() - position, &instruction, operands.data());
+
+            DisassembledInstruction decoded;
+            decoded.address = address + position;
+            if (ZYAN_SUCCESS(status) && instruction.length != 0 && instruction.length <= bytes.size() - position)
+            {
+                decoded.bytes.assign(bytes.begin() + static_cast<std::ptrdiff_t>(position),
+                                     bytes.begin() + static_cast<std::ptrdiff_t>(position + instruction.length));
+
+                std::array<char, 256> text {};
+                if (ZYAN_SUCCESS(ZydisFormatterFormatInstruction(&formatter,
+                                                                 &instruction,
+                                                                 operands.data(),
+                                                                 instruction.operand_count_visible,
+                                                                 text.data(),
+                                                                 text.size(),
+                                                                 decoded.address,
+                                                                 nullptr)))
+                {
+                    decoded.text = text.data();
+                }
+                else
+                {
+                    decoded.text = ".byte";
+                    for (const auto value : decoded.bytes)
+                    {
+                        char buffer[8] {};
+                        std::snprintf(buffer, sizeof(buffer), " 0x%02x", std::to_integer<unsigned>(value));
+                        decoded.text += buffer;
+                    }
+                }
+                position += instruction.length;
+            }
+            else
+            {
+                // A byte Zydis cannot decode is emitted verbatim instead of guessing a length or mnemonic.
+                decoded.bytes.push_back(bytes[position]);
+                char buffer[16] {};
+                std::snprintf(buffer, sizeof(buffer), ".byte 0x%02x", std::to_integer<unsigned>(bytes[position]));
+                decoded.text = buffer;
+                ++position;
+            }
+            instructions.push_back(std::move(decoded));
+        }
+        return instructions;
+    }
 
     std::optional<StoreInstruction> decodeStoreBefore(std::span<const std::byte> bytesBefore)
     {

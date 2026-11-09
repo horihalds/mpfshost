@@ -39,20 +39,30 @@ namespace mpfshost
                        bool&                        unavailable) = 0;
         // Lists the stub's threads with their current context and, where possible, the guest pid and tid.
         [[nodiscard]] virtual std::optional<std::vector<DebugThreadRecord>>
-                                                           debugThreads(const DebugThreadsRequest& request,
-                                                                        bool&                      invalidState,
-                                                                        bool&                      busy,
-                                                                        std::string&               error,
-                                                                        bool&                      unavailable) = 0;
+        debugThreads(const DebugThreadsRequest& request,
+                     bool&                      invalidState,
+                     bool&                      busy,
+                     std::string&               error,
+                     bool&                      unavailable) = 0;
+        // Reads a bounded window and decodes it without touching the stub or the guest's run state.
+        [[nodiscard]] virtual std::optional<DebugDisassembleResponse>
+        debugDisassemble(const DebugDisassembleRequest& request, std::string& error)                         = 0;
+        // Reads one stopped thread and walks its frame-pointer chain. `invalidState` reports a running guest,
+        // another owner's stub, or an unknown thread, which the session maps to InvalidState.
+        [[nodiscard]] virtual std::optional<DebugBacktraceResponse> debugBacktrace(const DebugBacktraceRequest& request,
+                                                                                   bool&        invalidState,
+                                                                                   bool&        busy,
+                                                                                   std::string& error,
+                                                                                   bool&        unavailable) = 0;
         // `onHit` sends one data frame and returns false when it could not be written; `aborted` is polled
         // between short stops so cancellation, the request deadline and peer loss all end the watch quickly.
-        [[nodiscard]] virtual std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
-                                                                      const DebugWatchHitSink&    onHit,
-                                                                      const DebugWatchAbortCheck& aborted,
-                                                                      bool&                       busy,
-                                                                      std::string&                error,
-                                                                      bool&                       unavailable,
-                                                                      bool&                       notFound)     = 0;
+        [[nodiscard]] virtual std::optional<DebugWatchEnd>          debugWatch(const DebugWatchRequest&    request,
+                                                                               const DebugWatchHitSink&    onHit,
+                                                                               const DebugWatchAbortCheck& aborted,
+                                                                               bool&                       busy,
+                                                                               std::string&                error,
+                                                                               bool&                       unavailable,
+                                                                               bool&                       notFound) = 0;
         // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
         // `notFound` reports a module or symbol that could not be resolved, which the session maps to NotFound.
         [[nodiscard]] virtual std::optional<DebugBreakpointResponse>

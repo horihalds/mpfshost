@@ -536,6 +536,34 @@ namespace mpfshost::mcp
             return result;
         }
 
+        Json debugInstructionJson(const DebugInstructionRecord& instruction)
+        {
+            return Json {
+                {"address", hexString(instruction.address)},
+                {  "bytes",   bytesJson(instruction.bytes)},
+                {   "text",               instruction.text}
+            };
+        }
+
+        Json debugBacktraceFrameJson(const DebugBacktraceFrame& frame, std::size_t index)
+        {
+            Json result {
+                {           "index",                          index},
+                {         "address",       hexString(frame.address)},
+                {   "frame_pointer",  hexString(frame.framePointer)},
+                {          "module",                   frame.module},
+                {   "module_offset",   hexSmall(frame.moduleOffset)},
+                {    "export_found",              frame.exportFound},
+                {  "export_address", hexString(frame.exportAddress)},
+                {   "export_offset",   hexSmall(frame.exportOffset)},
+                {     "export_name",               frame.exportName},
+                {       "pdb_found",                 frame.pdbFound},
+                {      "pdb_symbol",                frame.pdbSymbol},
+                {"pdb_displacement",          frame.pdbDisplacement}
+            };
+            return result;
+        }
+
         Json debugWatchJson(const DebugWatchData& hit)
         {
             const auto store = debug::decodeStoreBefore(hit.bytesBefore);
@@ -922,6 +950,21 @@ namespace mpfshost::mcp
                  "List vCPU threads",                                             "List each GDB stub thread with its vCPU index, thread id, rip, rsp, CR3 and, "
                                              "when resolvable, the guest pid and tid.",  true,
                  {target}                                                                                                    },
+                {    "debug_disassemble",
+                 "Disassemble memory",                                      "Read a bounded window of process memory and return Intel-syntax instructions. "
+                                      "Undecodable bytes are returned as .byte lines.",  true,
+                 {target,
+                 pid,
+                 {"address", "string", "Virtual address to start at (hex)", true},
+                 {"count", "integer", "Instructions to decode (default 16)", false}}                                         },
+                {      "debug_backtrace",
+                 "Walk the frame-pointer chain",                                                     "Read one stopped thread and walk rbp/rsp, returning each frame with module and "
+                                                     "symbol names when they resolve.",  true,
+                 {target,
+                 pid,
+                 {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false},
+                 {"thread", "string", "GDB thread id from debug_threads, instead of vcpu", false},
+                 {"max_frames", "integer", "Stop after this many frames (default 32)", false}}                               },
                 {           "debug_stop",
                  "Pause the guest",     "Stop the guest through QEMU's QMP socket. Destructive: the guest stays paused until a continue.",
                  false,                                                                                              {target}},
@@ -2544,6 +2587,76 @@ namespace mpfshost::mcp
                 }
                 return success(Json {
                     {"threads", std::move(records)}
+                });
+            }
+
+            if (name == "debug_disassemble")
+            {
+                const auto count = hasArg(args, "count") ? static_cast<std::uint32_t>(numberValue(args, "count", true))
+                                                         : std::uint32_t {16};
+                if (count == 0 || count > kMaxDebugDisassembleInstructions)
+                {
+                    return failure("count must be between 1 and " + std::to_string(kMaxDebugDisassembleInstructions));
+                }
+                const auto targetAddress = parseDebugAddress(requireString(args, "address"));
+                if (!targetAddress.module.empty())
+                {
+                    return failure("address must be a hex value");
+                }
+                const auto response = debugDisassemble(
+                    socket,
+                    {requireString(args, "target"), u32Value(args, "pid", true), targetAddress.address, count},
+                    error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json instructions = Json::array();
+                for (const auto& instruction : response->instructions)
+                {
+                    instructions.push_back(debugInstructionJson(instruction));
+                }
+                return success(Json {
+                    {     "address", hexString(targetAddress.address)},
+                    {"instructions",          std::move(instructions)}
+                });
+            }
+
+            if (name == "debug_backtrace")
+            {
+                const auto vcpu =
+                    hasArg(args, "vcpu") ? static_cast<std::uint32_t>(numberValue(args, "vcpu", true)) : 0;
+                const auto thread = optionalString(args, "thread", "");
+                if (!thread.empty() && hasArg(args, "vcpu"))
+                {
+                    return failure("thread and vcpu cannot be combined");
+                }
+                const auto maxFrames =
+                    hasArg(args, "max_frames") ? numberValue(args, "max_frames", false) : std::uint64_t {32};
+                if (maxFrames == 0 || maxFrames > kMaxDebugBacktraceFrames)
+                {
+                    return failure("max_frames must be between 1 and " + std::to_string(kMaxDebugBacktraceFrames));
+                }
+                const auto response = debugBacktrace(socket,
+                                                     {requireString(args, "target"),
+                                                      u32Value(args, "pid", true),
+                                                      vcpu,
+                                                      thread,
+                                                      static_cast<std::uint32_t>(maxFrames)},
+                                                     error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json frames = Json::array();
+                for (std::size_t index = 0; index < response->frames.size(); ++index)
+                {
+                    frames.push_back(debugBacktraceFrameJson(response->frames[index], index));
+                }
+                return success(Json {
+                    {     "frames",    std::move(frames)},
+                    {  "truncated",  response->truncated},
+                    {"stop_reason", response->stopReason}
                 });
             }
 

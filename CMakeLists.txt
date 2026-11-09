@@ -3,6 +3,14 @@ project(mpfshost VERSION 0.1.0 LANGUAGES C CXX)
 
 find_package(Threads REQUIRED)
 
+# Zydis decodes and renders x86-64 instructions for the debugger. It is a runtime library, not a header-only
+# dependency, so locate both halves explicitly instead of pulling it through FetchContent.
+find_path(ZYDIS_INCLUDE_DIR NAMES Zydis/Zydis.h REQUIRED)
+find_library(ZYDIS_LIBRARY NAMES Zydis REQUIRED)
+add_library(mpfshost_zydis INTERFACE)
+target_include_directories(mpfshost_zydis SYSTEM INTERFACE "${ZYDIS_INCLUDE_DIR}")
+target_link_libraries(mpfshost_zydis INTERFACE "${ZYDIS_LIBRARY}")
+
 include(FetchContent)
 include(GNUInstallDirs)
 
@@ -105,7 +113,7 @@ add_library(mpfshost_core STATIC
 mpfshost_set_common_flags(mpfshost_core)
 target_compile_definitions(mpfshost_core PRIVATE MPFSHOST_VERSION="${PROJECT_VERSION}")
 target_include_directories(mpfshost_core PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(mpfshost_core PUBLIC Threads::Threads PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(mpfshost_core PUBLIC Threads::Threads PRIVATE nlohmann_json::nlohmann_json mpfshost_zydis)
 
 add_library(mpfshost_host STATIC
     src/host/device_string.cpp

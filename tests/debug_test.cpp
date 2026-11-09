@@ -286,6 +286,63 @@ TEST_CASE("debug thread requests and responses round trip", "[core][debug][codec
     REQUIRE_FALSE(mpfshost::decodeDebugThreadsResponse({}).has_value());
 }
 
+TEST_CASE("debug disassemble and backtrace messages round trip", "[core][debug][codec]")
+{
+    const auto disassembleRequest =
+        mpfshost::decodeDebugDisassembleRequest(mpfshost::encodeDebugDisassembleRequest({7, 0x401000, 12}));
+    REQUIRE(disassembleRequest.has_value());
+    REQUIRE(disassembleRequest->pid == 7);
+    REQUIRE(disassembleRequest->address == 0x401000);
+    REQUIRE(disassembleRequest->count == 12);
+    REQUIRE_FALSE(mpfshost::decodeDebugDisassembleRequest({}).has_value());
+
+    mpfshost::DebugInstructionRecord instruction;
+    instruction.address = 0x401000;
+    instruction.bytes   = {std::byte {0x48}, std::byte {0x89}, std::byte {0xD8}};
+    instruction.text    = "mov rax, rbx";
+    const auto decodedInstructions =
+        mpfshost::decodeDebugDisassembleResponse(mpfshost::encodeDebugDisassembleResponse({{instruction}}));
+    REQUIRE(decodedInstructions.has_value());
+    REQUIRE(decodedInstructions->instructions.size() == 1);
+    REQUIRE(decodedInstructions->instructions[0].address == 0x401000);
+    REQUIRE(decodedInstructions->instructions[0].bytes.size() == 3);
+    REQUIRE(decodedInstructions->instructions[0].text == "mov rax, rbx");
+    REQUIRE_FALSE(mpfshost::decodeDebugDisassembleResponse({}).has_value());
+
+    const auto backtraceRequest =
+        mpfshost::decodeDebugBacktraceRequest(mpfshost::encodeDebugBacktraceRequest({9, 1, "p01.02", 16}));
+    REQUIRE(backtraceRequest.has_value());
+    REQUIRE(backtraceRequest->pid == 9);
+    REQUIRE(backtraceRequest->vcpu == 1);
+    REQUIRE(backtraceRequest->threadId == "p01.02");
+    REQUIRE(backtraceRequest->maxFrames == 16);
+
+    mpfshost::DebugBacktraceFrame frame;
+    frame.address               = 0x401000;
+    frame.framePointer          = 0x5000;
+    frame.module                = "ntdll.dll";
+    frame.moduleOffset          = 0x100;
+    frame.exportFound           = true;
+    frame.exportAddress         = 0x400000;
+    frame.exportOffset          = 0x1000;
+    frame.exportName            = "RtlEnterCriticalSection";
+    frame.pdbFound              = true;
+    frame.pdbSymbol             = "RtlEnterCriticalSection";
+    frame.pdbDisplacement       = 8;
+    const auto decodedBacktrace = mpfshost::decodeDebugBacktraceResponse(
+        mpfshost::encodeDebugBacktraceResponse({{frame}, true, "the frame limit was reached"}));
+    REQUIRE(decodedBacktrace.has_value());
+    REQUIRE(decodedBacktrace->frames.size() == 1);
+    REQUIRE(decodedBacktrace->frames[0].address == 0x401000);
+    REQUIRE(decodedBacktrace->frames[0].framePointer == 0x5000);
+    REQUIRE(decodedBacktrace->frames[0].module == "ntdll.dll");
+    REQUIRE(decodedBacktrace->frames[0].exportFound);
+    REQUIRE(decodedBacktrace->frames[0].pdbFound);
+    REQUIRE(decodedBacktrace->truncated);
+    REQUIRE(decodedBacktrace->stopReason == "the frame limit was reached");
+    REQUIRE_FALSE(mpfshost::decodeDebugBacktraceResponse({}).has_value());
+}
+
 TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec]")
 {
     const auto request = mpfshost::decodeDebugWatchRequest(mpfshost::encodeDebugWatchRequest(
@@ -498,6 +555,8 @@ TEST_CASE("debug capabilities are listed", "[core][debug][session]")
     REQUIRE(has(mpfshost::MessageType::DebugStepRequest));
     REQUIRE(has(mpfshost::MessageType::DebugAttachRequest));
     REQUIRE(has(mpfshost::MessageType::DebugDetachRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugDisassembleRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugBacktraceRequest));
 }
 
 TEST_CASE("a handle without the debug provider reports a capability error", "[core][debug][session]")
@@ -602,6 +661,46 @@ TEST_CASE("debug threads are delivered through the fake backend", "[core][debug]
     REQUIRE((*threads)[0].pid == 42);
     REQUIRE((*threads)[0].tid == 100);
     REQUIRE(fixture.backend().debugState()->threadsCalls == 1);
+}
+
+TEST_CASE("debug disassembly and backtrace are delivered through the fake backend", "[core][debug][session]")
+{
+    DebugFixture fixture;
+
+    mpfshost::DebugInstructionRecord instruction;
+    instruction.address = 0x401000;
+    instruction.bytes   = {std::byte {0x90}};
+    instruction.text    = "nop";
+    fixture.backend().setDebugDisassemble({{instruction}});
+
+    mpfshost::DebugBacktraceFrame frame;
+    frame.address      = 0x401000;
+    frame.framePointer = 0x5000;
+    frame.module       = "ntdll.dll";
+    frame.moduleOffset = 0x100;
+    fixture.backend().setDebugBacktrace({{frame}, false, {}});
+
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  disassembled = mpfshost::debugDisassemble(fixture.socketPath(), {"vm1", 7, 0x401000, 4}, error);
+    REQUIRE(disassembled.has_value());
+    REQUIRE(disassembled->instructions.size() == 1);
+    REQUIRE(disassembled->instructions[0].text == "nop");
+    REQUIRE(fixture.backend().debugState()->disassembleCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastDisassembleRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastDisassembleRequest->pid == 7);
+    REQUIRE(fixture.backend().debugState()->lastDisassembleRequest->count == 4);
+
+    const auto backtrace = mpfshost::debugBacktrace(fixture.socketPath(), {"vm1", 7, 2, "", 8}, error);
+    REQUIRE(backtrace.has_value());
+    REQUIRE(backtrace->frames.size() == 1);
+    REQUIRE(backtrace->frames[0].module == "ntdll.dll");
+    REQUIRE(fixture.backend().debugState()->backtraceCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastBacktraceRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastBacktraceRequest->pid == 7);
+    REQUIRE(fixture.backend().debugState()->lastBacktraceRequest->vcpu == 2);
+    REQUIRE(fixture.backend().debugState()->lastBacktraceRequest->maxFrames == 8);
 }
 
 TEST_CASE("an invalid debug state is reported as InvalidState", "[core][debug][session]")

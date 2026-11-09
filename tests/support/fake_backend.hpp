@@ -431,6 +431,18 @@ namespace mpfshost::testing
         bool                           threadsInvalidState {};
         std::uint32_t                  threadsCalls {};
 
+        std::optional<DebugDisassembleRequest> lastDisassembleRequest;
+        DebugDisassembleResponse               disassembleResponse;
+        std::string                            disassembleFailure;
+        std::uint32_t                          disassembleCalls {};
+
+        std::optional<DebugBacktraceRequest> lastBacktraceRequest;
+        DebugBacktraceResponse               backtraceResponse;
+        std::string                          backtraceFailure;
+        bool                                 backtraceInvalidState {};
+        bool                                 backtraceBusy {};
+        std::uint32_t                        backtraceCalls {};
+
         std::optional<DebugWatchRequest> lastWatchRequest;
         std::vector<DebugWatchData>      watchHits;
         DebugWatchEnd                    watchEnd;
@@ -1729,6 +1741,39 @@ namespace mpfshost::testing
             return _debugState->threads;
         }
 
+        [[nodiscard]] std::optional<DebugDisassembleResponse> debugDisassemble(const DebugDisassembleRequest& request,
+                                                                               std::string& error) override
+        {
+            ++_debugState->disassembleCalls;
+            _debugState->lastDisassembleRequest = request;
+            if (!_debugState->disassembleFailure.empty())
+            {
+                error = _debugState->disassembleFailure;
+                return std::nullopt;
+            }
+            return _debugState->disassembleResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugBacktraceResponse> debugBacktrace(const DebugBacktraceRequest& request,
+                                                                           bool&                        invalidState,
+                                                                           bool&                        busy,
+                                                                           std::string&                 error,
+                                                                           bool& unavailable) override
+        {
+            ++_debugState->backtraceCalls;
+            _debugState->lastBacktraceRequest = request;
+            if (!_debugState->backtraceFailure.empty())
+            {
+                invalidState = _debugState->backtraceInvalidState;
+                busy         = _debugState->backtraceBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->backtraceFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->backtraceResponse;
+        }
+
         [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
                                                               const DebugWatchHitSink&    onHit,
                                                               const DebugWatchAbortCheck& aborted,
@@ -2559,6 +2604,28 @@ namespace mpfshost::testing
         {
             _debugState->threadsFailure      = std::move(message);
             _debugState->threadsInvalidState = invalidState;
+        }
+
+        void setDebugDisassemble(DebugDisassembleResponse response)
+        {
+            _debugState->disassembleResponse = std::move(response);
+        }
+
+        void failDebugDisassembleWith(std::string message)
+        {
+            _debugState->disassembleFailure = std::move(message);
+        }
+
+        void setDebugBacktrace(DebugBacktraceResponse response)
+        {
+            _debugState->backtraceResponse = std::move(response);
+        }
+
+        void failDebugBacktraceWith(std::string message, bool invalidState = false, bool busy = false)
+        {
+            _debugState->backtraceFailure      = std::move(message);
+            _debugState->backtraceInvalidState = invalidState;
+            _debugState->backtraceBusy         = busy;
         }
 
         void setDebugWatch(std::vector<DebugWatchData> hits, DebugWatchEnd end)

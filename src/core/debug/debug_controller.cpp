@@ -1,5 +1,6 @@
 #include "core/debug/debug_controller.hpp"
 
+#include "core/debug/x86_decoder.hpp"
 #include "core/log/log.hpp"
 #include "core/server/process_info_provider.hpp"
 #include "core/server/request_deadline.hpp"
@@ -9,6 +10,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -1142,6 +1144,226 @@ namespace mpfshost::debug
             threads.push_back(std::move(thread));
         }
         return threads;
+    }
+
+    std::optional<DebugDisassembleResponse> DebugController::disassemble(const DebugDisassembleRequest& request,
+                                                                         std::string&                   error)
+    {
+        if (_inspector == nullptr)
+        {
+            error = "the disassembly service is unavailable";
+            return std::nullopt;
+        }
+        if (request.count == 0 || request.count > kMaxDebugDisassembleInstructions)
+        {
+            error = "the disassembly instruction count is out of range";
+            return std::nullopt;
+        }
+
+        const auto             wanted = request.count * 15u;
+        const auto             size   = wanted < kMaxDebugDisassembleBytes ? wanted : kMaxDebugDisassembleBytes;
+        std::vector<std::byte> bytes;
+        if (!_inspector->readMemory(request.pid, request.address, size, bytes, error))
+        {
+            return std::nullopt;
+        }
+        if (bytes.empty())
+        {
+            error = "the requested memory is empty";
+            return std::nullopt;
+        }
+
+        const auto               decoded = mpfshost::debug::disassemble(bytes, request.address, request.count);
+        DebugDisassembleResponse response;
+        response.instructions.reserve(decoded.size());
+        for (const auto& instruction : decoded)
+        {
+            response.instructions.push_back({instruction.address, instruction.bytes, instruction.text});
+        }
+        return response;
+    }
+
+    std::optional<DebugBacktraceResponse> DebugController::backtrace(
+        const DebugBacktraceRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        invalidState = false;
+        busy         = false;
+        unavailable  = false;
+        if (_inspector == nullptr)
+        {
+            error = "the backtrace service is unavailable";
+            return std::nullopt;
+        }
+        if (request.maxFrames == 0 || request.maxFrames > kMaxDebugBacktraceFrames)
+        {
+            error = "the backtrace frame limit is out of range";
+            return std::nullopt;
+        }
+
+        // Reuse the register reader's stub lifecycle and paused-guest checks. A thread id selects one thread
+        // out of the full list; otherwise the vCPU index selects the record directly.
+        DebugRegistersRequest registersRequest;
+        registersRequest.vcpu = request.threadId.empty() ? request.vcpu : kDebugAllVcpus;
+        const auto records    = registers(registersRequest, invalidState, busy, error, unavailable);
+        if (!records)
+        {
+            return std::nullopt;
+        }
+        if (records->empty())
+        {
+            error = "the GDB stub returned no registers";
+            return std::nullopt;
+        }
+
+        const DebugRegisterRecord* selected = nullptr;
+        if (request.threadId.empty())
+        {
+            selected = &records->front();
+        }
+        else
+        {
+            for (const auto& record : *records)
+            {
+                if (record.threadId == request.threadId)
+                {
+                    selected = &record;
+                    break;
+                }
+            }
+        }
+        if (selected == nullptr)
+        {
+            invalidState = true;
+            error        = "thread " + request.threadId + " is not present in the stub's thread list";
+            return std::nullopt;
+        }
+
+        const auto makeFrame = [this, &request](std::uint64_t address, std::uint64_t framePointer)
+        {
+            DebugBacktraceFrame frame;
+            frame.address      = address;
+            frame.framePointer = framePointer;
+
+            DebugLocation location;
+            resolveLocation(_inspector, request.pid, address, location);
+            frame.module          = std::move(location.module);
+            frame.moduleOffset    = location.moduleOffset;
+            frame.exportFound     = location.exportFound;
+            frame.exportAddress   = location.exportAddress;
+            frame.exportOffset    = location.exportOffset;
+            frame.exportName      = std::move(location.exportName);
+            frame.pdbFound        = location.pdbFound;
+            frame.pdbSymbol       = std::move(location.pdbSymbol);
+            frame.pdbDisplacement = location.pdbDisplacement;
+            return frame;
+        };
+
+        const auto readStackValue = [this, &request](std::uint64_t address, std::uint64_t& value, std::string& why)
+        {
+            std::vector<std::byte> raw;
+            std::string            readError;
+            if (!_inspector->readMemory(request.pid, address, 8, raw, readError))
+            {
+                char buffer[24] {};
+                std::snprintf(buffer, sizeof(buffer), "%llx", static_cast<unsigned long long>(address));
+                why = "the frame at 0x" + std::string {buffer} + " could not be read";
+                return false;
+            }
+            if (raw.size() < 8)
+            {
+                why = "the frame ended before a saved pointer and return address";
+                return false;
+            }
+            value = 0;
+            for (std::size_t index = 0; index < 8; ++index)
+            {
+                value |= static_cast<std::uint64_t>(std::to_integer<unsigned char>(raw[index])) << (index * 8);
+            }
+            return true;
+        };
+
+        DebugBacktraceResponse response;
+        response.frames.push_back(makeFrame(selected->rip, selected->rbp));
+
+        std::uint64_t rbp = selected->rbp;
+        while (response.frames.size() < request.maxFrames)
+        {
+            if (rbp == 0)
+            {
+                break;
+            }
+            const auto stopTruncated = [&response](std::string reason)
+            {
+                response.truncated  = true;
+                response.stopReason = std::move(reason);
+            };
+
+            if ((rbp & 0x7) != 0)
+            {
+                stopTruncated("the frame pointer is not 8-byte aligned");
+                break;
+            }
+            if (rbp < selected->rsp || rbp - selected->rsp > kMaxDebugBacktraceDepthBytes)
+            {
+                stopTruncated("the frame pointer is outside the stack depth limit");
+                break;
+            }
+            if (rbp > std::numeric_limits<std::uint64_t>::max() - 8)
+            {
+                stopTruncated("the frame pointer overflows the address space");
+                break;
+            }
+
+            std::uint64_t nextRbp       = 0;
+            std::uint64_t returnAddress = 0;
+            std::string   why;
+            if (!readStackValue(rbp, nextRbp, why) || !readStackValue(rbp + 8, returnAddress, why))
+            {
+                stopTruncated(why);
+                break;
+            }
+
+            // A null saved frame pointer is the normal end of a frame chain. A nonzero pointer that does not
+            // advance is corrupt, and is not followed.
+            if (nextRbp != 0)
+            {
+                if (nextRbp <= rbp)
+                {
+                    stopTruncated("the saved frame pointer did not advance");
+                    break;
+                }
+                if ((nextRbp & 0x7) != 0)
+                {
+                    stopTruncated("the saved frame pointer is not 8-byte aligned");
+                    break;
+                }
+                if (nextRbp < selected->rsp || nextRbp - selected->rsp > kMaxDebugBacktraceDepthBytes)
+                {
+                    stopTruncated("the saved frame pointer is outside the stack depth limit");
+                    break;
+                }
+            }
+            if (returnAddress == 0)
+            {
+                stopTruncated("the return address is zero");
+                break;
+            }
+
+            response.frames.push_back(makeFrame(returnAddress, nextRbp));
+            rbp = nextRbp;
+            if (nextRbp == 0)
+            {
+                break;
+            }
+        }
+
+        if (!response.truncated && response.frames.size() >= request.maxFrames
+            && response.frames.back().framePointer != 0)
+        {
+            response.truncated  = true;
+            response.stopReason = "the frame limit was reached";
+        }
+        return response;
     }
 
     std::optional<DebugWatchEnd> DebugController::watch(DebugWatchRequest           request,

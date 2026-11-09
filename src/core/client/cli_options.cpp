@@ -67,7 +67,8 @@ namespace mpfshost
                 || command == "debug-attach" || command == "debug-detach" || command == "debug-arm-break"
                 || command == "debug-arm-watch" || command == "debug-remove-break" || command == "debug-remove-watch"
                 || command == "debug-breakpoints" || command == "debug-watchpoints" || command == "debug-wait"
-                || command == "debug-resume" || command == "debug-threads";
+                || command == "debug-resume" || command == "debug-threads" || command == "debug-disassemble"
+                || command == "debug-backtrace";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -88,25 +89,48 @@ namespace mpfshost
                 error = "--repeat and --clear are only valid for --client scatter";
                 return false;
             }
-            if (command != "debug-registers" && command != "debug-step" && options.vcpuSet)
+            if (command != "debug-registers" && command != "debug-step" && command != "debug-backtrace"
+                && options.vcpuSet)
             {
-                error = "--vcpu is only valid for --client debug-registers and debug-step";
+                error = "--vcpu is only valid for --client debug-registers, debug-step and debug-backtrace";
                 return false;
             }
-            if ((command == "debug-registers" || command == "debug-step") && options.vcpuSet
-                && options.vcpu >= kMaxDebugVcpuRecords)
+            if ((command == "debug-registers" || command == "debug-step" || command == "debug-backtrace")
+                && options.vcpuSet && options.vcpu >= kMaxDebugVcpuRecords)
             {
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
-            if (command != "debug-step" && options.threadSet)
+            if (command != "debug-step" && command != "debug-backtrace" && options.threadSet)
             {
-                error = "--thread is only valid for --client debug-step";
+                error = "--thread is only valid for --client debug-step and debug-backtrace";
                 return false;
             }
-            if (command == "debug-step" && options.threadSet && options.vcpuSet)
+            if ((command == "debug-step" || command == "debug-backtrace") && options.threadSet && options.vcpuSet)
             {
                 error = "--thread and --vcpu cannot be combined";
+                return false;
+            }
+            if (command != "debug-disassemble" && options.countSet)
+            {
+                error = "--count is only valid for --client debug-disassemble";
+                return false;
+            }
+            if (command == "debug-disassemble"
+                && (options.count == 0 || options.count > kMaxDebugDisassembleInstructions))
+            {
+                error = "--count must be between 1 and " + std::to_string(kMaxDebugDisassembleInstructions);
+                return false;
+            }
+            if (command != "debug-backtrace" && options.maxFramesSet)
+            {
+                error = "--max-frames is only valid for --client debug-backtrace";
+                return false;
+            }
+            if (command == "debug-backtrace"
+                && (options.maxFrames == 0 || options.maxFrames > kMaxDebugBacktraceFrames))
+            {
+                error = "--max-frames must be between 1 and " + std::to_string(kMaxDebugBacktraceFrames);
                 return false;
             }
             if (command != "debug-watch" && command != "debug-arm-watch"
@@ -196,6 +220,22 @@ namespace mpfshost
                 if (options.pid == 0 || !options.addressSet)
                 {
                     error = "--client resolve needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "debug-disassemble")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client debug-disassemble needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "debug-backtrace")
+            {
+                if (options.pid == 0)
+                {
+                    error = "--client debug-backtrace needs --pid";
                     return false;
                 }
             }
@@ -631,6 +671,40 @@ namespace mpfshost
                 }
                 options.maxHits    = *parsed;
                 options.maxHitsSet = true;
+                continue;
+            }
+            if (argument == "--max-frames")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--max-frames needs a positive integer";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--max-frames needs a positive integer";
+                    return std::nullopt;
+                }
+                options.maxFrames    = *parsed;
+                options.maxFramesSet = true;
+                continue;
+            }
+            if (argument == "--count")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--count needs a positive integer";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--count needs a positive integer";
+                    return std::nullopt;
+                }
+                options.count    = *parsed;
+                options.countSet = true;
                 continue;
             }
             if (argument == "--id")

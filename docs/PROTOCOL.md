@@ -65,7 +65,7 @@ verifies the `*End` status and that the number of delivered entries equals the c
 
 ## Message types
 
-Requests are `0x0001`–`0x003D`; responses are `0x8001`–`0x8060` plus `ErrorResponse` = `0x8FFF`. Values
+Requests are `0x0001`–`0x004D`; responses are `0x8001`–`0x8071` plus `ErrorResponse` = `0x8FFF`. Values
 `0x8030`–`0x8035` are unused; do not reuse them silently, and always take the next free value at the end of each
 range.
 
@@ -133,6 +133,8 @@ range.
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
  `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
  `DebugThreadsRequest` | `0x004B` | `DebugThreadsResponse` `0x806F` | single | `debug-threads` |
+ `DebugDisassembleRequest` | `0x004C` | `DebugDisassembleResponse` `0x8070` | single | `debug-disassemble` |
+ `DebugBacktraceRequest` | `0x004D` | `DebugBacktraceResponse` `0x8071` | single | `debug-backtrace` |
  `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
@@ -323,6 +325,68 @@ stable name QEMU prints (for example `p01.03`) and is what `DebugStepRequest.thr
 resolved through the CR3 and the process thread stack ranges; they are informational and do not change which thread
 a request operates on.
 
+## Debug disassembly
+
+`DebugDisassembleRequest` asks the host to read process memory at `address` and decode instructions. It does not
+touch the GDB stub or the guest's run state, so it works while the guest is running.
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `pid` | `u32` | Process whose address space is read; zero is `MalformedPayload` |
+ `address` | `u64` | Virtual address of the first instruction |
+ `count` | `u32` | Instructions to decode, 1–`kMaxDebugDisassembleInstructions` (128); zero is `MalformedPayload` |
+
+The host reads at most `count * 15` bytes, capped at `kMaxDebugDisassembleBytes` (1920), through the debug
+inspector, so a request never causes an unbounded read. The decoder is x86-64 only. An encoding it cannot decode is
+reported as one `.byte 0xNN` record and consumes exactly one byte rather than guessing a length.
+
+`DebugDisassembleResponse` is a `u32` count followed by records:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `address` | `u64` | Address of this instruction |
+ `bytes` | bytes | Up to 15 instruction bytes |
+ `text` | string | Intel-syntax text, or `.byte 0xNN` for an unknown encoding |
+
+## Debug backtrace
+
+`DebugBacktraceRequest` reads one stopped thread's registers and walks its frame-pointer chain. It requires a paused
+guest and follows the same architecture and stub-ownership rules as `debug-registers`; an attached stub is reused,
+otherwise a temporary stub is started and stopped before answering.
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `pid` | `u32` | Process used to read the stack and symbolize frames; zero is `MalformedPayload` |
+ `vcpu` | `u32` | 0-based stub thread index; ignored when `threadId` is set |
+ `threadId` | string | Optional GDB thread id; when set it selects the thread and an unknown id is `InvalidState` |
+ `maxFrames` | `u32` | Frame limit, 1–`kMaxDebugBacktraceFrames` (128); zero is `MalformedPayload` |
+
+The first frame is the selected thread's `rip` with its current `rbp`. For each frame the host reads the saved frame
+pointer and return address at `[rbp]` and `[rbp+8]` from the requested process. A null saved frame pointer is the
+normal end of the chain; the return address read from that frame is still reported, then the walk stops. A nonzero
+saved pointer that does not advance, is not 8-byte aligned, or lies more than
+`kMaxDebugBacktraceDepthBytes` (1 MiB) above the starting `rsp` is corrupt and is not followed. A failed stack read
+also ends the walk. Every read is therefore bounded, and a corrupt chain cannot loop or run away.
+
+Each frame is symbolized through the same module, nearest-export and already-loaded-PDB path as a watch hit.
+Symbolization is best effort: a frame outside every module, or with no matching export or PDB symbol, keeps its raw
+`address` with the empty symbol fields.
+
+`DebugBacktraceResponse` is a `u32` frame count, the frames, a `u8 truncated` flag and a trailing `string stopReason`:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `address` | `u64` | Instruction pointer for the frame |
+ `framePointer` | `u64` | `rbp` value used to reach the next frame |
+ `module` | string | Module containing `address`, empty when none |
+ `moduleOffset` | `u64` | `address - module base` |
+ `exportFound`, `exportAddress`, `exportOffset`, `exportName` | `u8`, `u64`, `u64`, string | Nearest export at or below the address |
+ `pdbFound`, `pdbSymbol`, `pdbDisplacement` | `u8`, string, `u32` | Symbol from an already-loaded PDB, when present |
+
+`truncated` is false only when the chain ended at a null saved frame pointer. It is true when the frame limit, the
+depth limit, an unreadable frame, a zero return address or a corrupt saved pointer stopped the walk, and
+`stopReason` explains which.
+
 ## Debug watch
 
 `DebugWatchRequest` is streamed: zero or more `DebugWatchData` frames followed by exactly one `DebugWatchEnd`, or one
@@ -476,7 +540,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
- 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, or a step selects an unknown thread |
+ 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, or a step/backtrace selects an unknown thread |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.
@@ -500,7 +564,9 @@ All in `src/core/ipc/frame.hpp` unless noted. Validate against them in the sessi
   PFN `0x8000`.
 - Pages: `kMaxPageCount` 4096, `kMaxPrefetchPages` `0x10000`. Search: pattern ≤ 32 bytes, hits ≤ `0x10000`,
   alignment a power of two ≤ 4096. Vad-ex: `pageCount` 1–`kMaxPageCount`. Debug registers: at most
-  `kMaxDebugVcpuRecords` 256 records.
+  `kMaxDebugVcpuRecords` 256 records. Disassembly: at most `kMaxDebugDisassembleInstructions` 128 instructions and
+  `kMaxDebugDisassembleBytes` 1920 read bytes. Backtrace: at most `kMaxDebugBacktraceFrames` 128 frames and
+  `kMaxDebugBacktraceDepthBytes` 1 MiB above the starting `rsp`.
 - In `message.hpp`: `kMaxModuleSections` 96, `kMaxCallstackFrames` 64, `kModuleDataDirectoryCount` 16.
 
 A cap that cuts a stream short is reported through the `*End` frame's `truncated` flag, not as an error.

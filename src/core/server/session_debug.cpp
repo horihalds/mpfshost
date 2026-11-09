@@ -211,6 +211,107 @@ namespace mpfshost
         sendPayload(requestId, MessageType::DebugThreadsResponse, encodeDebugThreadsResponse({*threads}));
     }
 
+    void Session::handleDebugDisassemble(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugDisassembleRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug disassemble request");
+            return;
+        }
+        if (request->pid == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug disassemble request needs a process id");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot disassemble memory");
+            return;
+        }
+
+        std::string error;
+        const auto  response = provider->debugDisassemble(*request, error);
+        if (!response.has_value())
+        {
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug disassembly failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugDisassembleResponse, encodeDebugDisassembleResponse(*response));
+    }
+
+    void Session::handleDebugBacktrace(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugBacktraceRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug backtrace request");
+            return;
+        }
+        if (request->pid == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug backtrace request needs a process id");
+            return;
+        }
+        if (request->threadId.empty() && request->vcpu >= kMaxDebugVcpuRecords)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the vCPU index is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot walk a backtrace");
+            return;
+        }
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        bool        unavailable = false;
+        const auto  response    = provider->debugBacktrace(*request, invalidState, busy, error, unavailable);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug backtrace failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugBacktraceResponse, encodeDebugBacktraceResponse(*response));
+    }
+
     void Session::handleDebugWatch(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

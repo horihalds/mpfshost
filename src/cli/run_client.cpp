@@ -1801,6 +1801,86 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-disassemble")
+        {
+            const auto response = mpfshost::debugDisassemble(
+                options.socketPath, {options.target, options.pid, options.address, options.count}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            for (const auto& instruction : response->instructions)
+            {
+                std::printf("0x%016llx  ", static_cast<unsigned long long>(instruction.address));
+                std::size_t width = 0;
+                for (const auto value : instruction.bytes)
+                {
+                    width += 3;
+                    std::printf("%02x ", std::to_integer<unsigned>(value));
+                }
+                while (width < 47)
+                {
+                    std::putchar(' ');
+                    ++width;
+                }
+                std::printf("%s\n", instruction.text.c_str());
+            }
+            return 0;
+        }
+
+        if (options.command == "debug-backtrace")
+        {
+            const auto response = mpfshost::debugBacktrace(options.socketPath,
+                                                           {options.target,
+                                                            options.pid,
+                                                            options.vcpuSet ? options.vcpu : 0,
+                                                            options.threadSet ? options.threadId : std::string {},
+                                                            options.maxFrames},
+                                                           error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            if (response->frames.empty())
+            {
+                std::printf("no frames were returned\n");
+                return 0;
+            }
+
+            for (std::size_t index = 0; index < response->frames.size(); ++index)
+            {
+                const auto& frame = response->frames[index];
+                std::printf("#%-2zu  0x%016llx  rbp=0x%016llx\n",
+                            index,
+                            static_cast<unsigned long long>(frame.address),
+                            static_cast<unsigned long long>(frame.framePointer));
+                if (!frame.module.empty())
+                {
+                    std::printf("     module=%s+0x%llx\n",
+                                frame.module.c_str(),
+                                static_cast<unsigned long long>(frame.moduleOffset));
+                }
+                if (frame.exportFound)
+                {
+                    std::printf("     export=%s+0x%llx\n",
+                                frame.exportName.empty() ? "?" : frame.exportName.c_str(),
+                                static_cast<unsigned long long>(frame.exportOffset));
+                }
+                if (frame.pdbFound)
+                {
+                    std::printf("     symbol=%s+0x%x\n", frame.pdbSymbol.c_str(), frame.pdbDisplacement);
+                }
+            }
+            if (response->truncated)
+            {
+                std::printf("truncated: %s\n",
+                            response->stopReason.empty() ? "the frame walk stopped" : response->stopReason.c_str());
+            }
+            return 0;
+        }
+
         if (options.command == "debug-watch")
         {
             const std::string requestText =

@@ -95,6 +95,60 @@ TEST_CASE("store decoder keeps the operand width", "[core][debug][decoder]")
     }
 }
 
+TEST_CASE("disassembler renders lengths and Intel text", "[core][debug][decoder]")
+{
+    SECTION("a register move")
+    {
+        const auto instructions = mpfshost::debug::disassemble(bytes({0x48, 0x89, 0xD8}), 0x1000, 8);
+        REQUIRE(instructions.size() == 1);
+        REQUIRE(instructions[0].address == 0x1000);
+        REQUIRE(instructions[0].bytes.size() == 3);
+        REQUIRE(instructions[0].text.find("mov") != std::string::npos);
+        REQUIRE(instructions[0].text.find("rax") != std::string::npos);
+        REQUIRE(instructions[0].text.find("rbx") != std::string::npos);
+    }
+
+    SECTION("a prefix is part of the instruction")
+    {
+        const auto instructions = mpfshost::debug::disassemble(bytes({0xF3, 0x90}), 0x2000, 8);
+        REQUIRE(instructions.size() == 1);
+        REQUIRE(instructions[0].address == 0x2000);
+        REQUIRE(instructions[0].bytes.size() == 2);
+        REQUIRE(instructions[0].text == "pause");
+    }
+
+    SECTION("several instructions advance the address")
+    {
+        const auto instructions = mpfshost::debug::disassemble(bytes({0x90, 0x48, 0x89, 0xD8}), 0x3000, 8);
+        REQUIRE(instructions.size() == 2);
+        REQUIRE(instructions[0].text == "nop");
+        REQUIRE(instructions[1].address == 0x3001);
+        REQUIRE(instructions[1].bytes.size() == 3);
+    }
+}
+
+TEST_CASE("disassembler emits unknown bytes instead of guessing", "[core][debug][decoder]")
+{
+    const auto instructions = mpfshost::debug::disassemble(bytes({0x06, 0x90}), 0x4000, 8);
+    REQUIRE(instructions.size() == 2);
+    REQUIRE(instructions[0].address == 0x4000);
+    REQUIRE(instructions[0].bytes.size() == 1);
+    REQUIRE(instructions[0].text == ".byte 0x06");
+    REQUIRE(instructions[1].address == 0x4001);
+    REQUIRE(instructions[1].text == "nop");
+}
+
+TEST_CASE("disassembler truncates at the requested instruction count", "[core][debug][decoder]")
+{
+    const auto instructions = mpfshost::debug::disassemble(bytes({0x90, 0x90, 0x90, 0x90}), 0x5000, 2);
+    REQUIRE(instructions.size() == 2);
+    REQUIRE(instructions[0].address == 0x5000);
+    REQUIRE(instructions[1].address == 0x5001);
+
+    REQUIRE(mpfshost::debug::disassemble(bytes({0x90}), 0x5000, 0).empty());
+    REQUIRE(mpfshost::debug::disassemble(std::span<const std::byte> {}, 0x5000, 4).empty());
+}
+
 TEST_CASE("store decoder rejects loads, comparisons and truncation", "[core][debug][decoder]")
 {
     SECTION("register destination")

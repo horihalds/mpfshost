@@ -280,6 +280,8 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "debug_status",
         "debug_registers",
         "debug_threads",
+        "debug_disassemble",
+        "debug_backtrace",
         "debug_list_breaks",
         "debug_list_watches",
     };

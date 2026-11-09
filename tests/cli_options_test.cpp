@@ -670,6 +670,28 @@ TEST_CASE("debug breakpoint and step options are parsed and validated", "[cli-op
     const auto threads = parse({"--client", "debug-threads", "vm1"});
     REQUIRE(threads.options.has_value());
     CHECK(threads.options->command == "debug-threads");
+
+    const auto disassemble =
+        parse({"--client", "debug-disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "8"});
+    REQUIRE(disassemble.options.has_value());
+    CHECK(disassemble.options->command == "debug-disassemble");
+    CHECK(disassemble.options->count == 8);
+
+    const auto badCount =
+        parse({"--client", "debug-disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "0"});
+    REQUIRE_FALSE(badCount.options.has_value());
+    CHECK(badCount.error.find("--count") != std::string::npos);
+
+    const auto backtrace =
+        parse({"--client", "debug-backtrace", "vm1", "--pid", "42", "--thread", "p01.02", "--max-frames", "12"});
+    REQUIRE(backtrace.options.has_value());
+    CHECK(backtrace.options->command == "debug-backtrace");
+    CHECK(backtrace.options->threadId == "p01.02");
+    CHECK(backtrace.options->maxFrames == 12);
+
+    const auto badFrames = parse({"--client", "debug-backtrace", "vm1", "--pid", "42", "--max-frames", "0"});
+    REQUIRE_FALSE(badFrames.options.has_value());
+    CHECK(badFrames.error.find("--max-frames") != std::string::npos);
 }
 
 TEST_CASE("decimal u32 values are parsed strictly", "[util][number]")
