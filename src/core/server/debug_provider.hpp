@@ -37,6 +37,15 @@ namespace mpfshost
                                                                       const DebugWatchAbortCheck& aborted,
                                                                       bool&                       busy,
                                                                       std::string&                error)         = 0;
+        // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
+        [[nodiscard]] virtual std::optional<DebugBreakpointResponse>
+        debugBreakpoint(const DebugBreakpointRequest& request,
+                        const DebugWatchAbortCheck&   aborted,
+                        bool&                         invalidState,
+                        bool&                         busy,
+                        std::string&                  error) = 0;
+        [[nodiscard]] virtual std::optional<DebugStepResponse>
+        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) = 0;
     };
 } // namespace mpfshost
 

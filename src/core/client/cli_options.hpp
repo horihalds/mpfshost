@@ -47,10 +47,12 @@ namespace mpfshost
         bool                                vcpuSet {};
         std::uint32_t                       watchWidth {4};
         DebugWatchAccess                    watchAccess {DebugWatchAccess::Write};
+        DebugBreakpointKind                 breakpointKind {DebugBreakpointKind::Software};
         std::uint32_t                       maxHits {1};
         std::uint32_t                       watchTimeoutSeconds {30};
         bool                                watchWidthSet {};
         bool                                watchAccessSet {};
+        bool                                breakpointKindSet {};
         bool                                maxHitsSet {};
         bool                                watchTimeoutSet {};
         std::string                         path {"\\"};

@@ -683,6 +683,65 @@ namespace mpfshost
         std::string      error;
     };
 
+    enum class DebugBreakpointKind : std::uint8_t
+    {
+        Software = 0,
+        Hardware = 1,
+    };
+
+    enum class DebugBreakpointStatus : std::uint8_t
+    {
+        Hit       = 0,
+        Timeout   = 1,
+        Cancelled = 2,
+        Error     = 3,
+    };
+
+    [[nodiscard]] std::string_view debugBreakpointStatusName(DebugBreakpointStatus status) noexcept;
+
+    inline constexpr std::size_t kDebugBreakpointBytes = 16;
+
+    struct DebugBreakpointRequest
+    {
+        std::uint32_t       pid {};
+        std::uint64_t       address {};
+        DebugBreakpointKind kind {DebugBreakpointKind::Software};
+        std::uint32_t       timeoutMs {30000};
+    };
+
+    struct DebugBreakpointResponse
+    {
+        DebugBreakpointStatus  status {DebugBreakpointStatus::Hit};
+        std::uint32_t          skippedCount {};
+        std::string            error;
+        std::uint32_t          vcpu {};
+        std::string            threadId;
+        std::uint64_t          rip {};
+        std::uint64_t          rsp {};
+        std::uint64_t          cr3 {};
+        std::uint64_t          address {}; // the breakpoint's linear address
+        std::vector<std::byte> bytesAtRip; // up to kDebugBreakpointBytes bytes starting at rip
+        std::string            module;     // empty when rip is outside every module
+        std::uint64_t          moduleOffset {};
+        bool                   exportFound {};
+        std::uint64_t          exportAddress {};
+        std::uint64_t          exportOffset {};
+        std::string            exportName; // empty for an ordinal-only export
+        bool                   pdbFound {};
+        std::string            pdbSymbol;
+        std::uint32_t          pdbDisplacement {};
+    };
+
+    struct DebugStepRequest
+    {
+        std::uint32_t vcpu {0};
+    };
+
+    struct DebugStepResponse
+    {
+        DebugRegisterRecord record;
+    };
+
     struct SymbolLookupRequest
     {
         std::uint32_t pid {};
@@ -1910,6 +1969,18 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugWatchData>    decodeDebugWatchData(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>           encodeDebugWatchEnd(const DebugWatchEnd& message);
     [[nodiscard]] std::optional<DebugWatchEnd>     decodeDebugWatchEnd(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointRequest(const DebugBreakpointRequest& message);
+    [[nodiscard]] std::optional<DebugBreakpointRequest>
+                                         decodeDebugBreakpointRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugBreakpointResponse(const DebugBreakpointResponse& message);
+    [[nodiscard]] std::optional<DebugBreakpointResponse>
+    decodeDebugBreakpointResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>           encodeDebugStepRequest(const DebugStepRequest& message);
+    [[nodiscard]] std::optional<DebugStepRequest>  decodeDebugStepRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>           encodeDebugStepResponse(const DebugStepResponse& message);
+    [[nodiscard]] std::optional<DebugStepResponse> decodeDebugStepResponse(std::span<const std::byte> payload);
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_IPC_MESSAGE_HPP

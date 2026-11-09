@@ -431,6 +431,20 @@ namespace mpfshost::testing
         std::string                      watchFailure;
         bool                             watchBusy {};
         std::uint32_t                    watchCalls {};
+
+        std::optional<DebugBreakpointRequest> lastBreakpointRequest;
+        DebugBreakpointResponse               breakpointResponse;
+        std::string                           breakpointFailure;
+        bool                                  breakpointInvalidState {};
+        bool                                  breakpointBusy {};
+        std::uint32_t                         breakpointCalls {};
+
+        std::optional<DebugStepRequest> lastStepRequest;
+        DebugStepResponse               stepResponse;
+        std::string                     stepFailure;
+        bool                            stepInvalidState {};
+        bool                            stepBusy {};
+        std::uint32_t                   stepCalls {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1641,6 +1655,45 @@ namespace mpfshost::testing
             return _debugState->watchEnd;
         }
 
+        [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                             const DebugWatchAbortCheck&   aborted,
+                                                                             bool&                         invalidState,
+                                                                             bool&                         busy,
+                                                                             std::string& error) override
+        {
+            ++_debugState->breakpointCalls;
+            _debugState->lastBreakpointRequest = request;
+            if (!_debugState->breakpointFailure.empty())
+            {
+                invalidState = _debugState->breakpointInvalidState;
+                busy         = _debugState->breakpointBusy;
+                error        = _debugState->breakpointFailure;
+                return std::nullopt;
+            }
+            if (aborted && aborted())
+            {
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->breakpointResponse;
+        }
+
+        [[nodiscard]] std::optional<DebugStepResponse>
+        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) override
+        {
+            ++_debugState->stepCalls;
+            _debugState->lastStepRequest = request;
+            if (!_debugState->stepFailure.empty())
+            {
+                invalidState = _debugState->stepInvalidState;
+                busy         = _debugState->stepBusy;
+                error        = _debugState->stepFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->stepResponse;
+        }
+
     private:
         std::string                              _name;
         std::shared_ptr<FakeProcessState>        _processState;
@@ -2184,6 +2237,30 @@ namespace mpfshost::testing
         {
             _debugState->watchFailure = std::move(message);
             _debugState->watchBusy    = busy;
+        }
+
+        void setDebugBreakpoint(DebugBreakpointResponse response)
+        {
+            _debugState->breakpointResponse = std::move(response);
+        }
+
+        void failDebugBreakpointWith(std::string message, bool invalidState = false, bool busy = false)
+        {
+            _debugState->breakpointFailure      = std::move(message);
+            _debugState->breakpointInvalidState = invalidState;
+            _debugState->breakpointBusy         = busy;
+        }
+
+        void setDebugStep(DebugStepResponse response)
+        {
+            _debugState->stepResponse = std::move(response);
+        }
+
+        void failDebugStepWith(std::string message, bool invalidState = false, bool busy = false)
+        {
+            _debugState->stepFailure      = std::move(message);
+            _debugState->stepInvalidState = invalidState;
+            _debugState->stepBusy         = busy;
         }
 
         void setHandlesBare(bool bare)

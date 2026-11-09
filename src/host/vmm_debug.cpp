@@ -34,6 +34,21 @@ namespace mpfshost
         return _debug.watch(request, onHit, aborted, busy, error);
     }
 
+    std::optional<DebugBreakpointResponse> VmmHandle::debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                      const DebugWatchAbortCheck&   aborted,
+                                                                      bool&                         invalidState,
+                                                                      bool&                         busy,
+                                                                      std::string&                  error)
+    {
+        return _debug.breakpoint(request, aborted, invalidState, busy, error);
+    }
+
+    std::optional<DebugStepResponse>
+    VmmHandle::debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error)
+    {
+        return _debug.step(request, invalidState, busy, error);
+    }
+
     std::optional<debug::DebugProcessDtbs> VmmHandle::processDtbs(std::uint32_t pid, std::string& error)
     {
         LookupStatus status = LookupStatus::Failed;

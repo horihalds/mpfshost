@@ -153,6 +153,34 @@ TEST_CASE("RSP falls back to c when vCont is not advertised", "[core][debug][rsp
     REQUIRE(packets[1].find("$c#") == 0);
 }
 
+TEST_CASE("RSP formats breakpoint and step packets", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("OK") + acked("OK") + acked("OK") + acked("OK")};
+    std::string error;
+    REQUIRE(rsp.client->insertBreakpoint(0x401000, false, 100ms, error));
+    REQUIRE(rsp.client->removeBreakpoint(0x401000, false, 100ms, error));
+    REQUIRE(rsp.client->insertBreakpoint(0x401000, true, 100ms, error));
+    REQUIRE(rsp.client->removeBreakpoint(0x401000, true, 100ms, error));
+
+    const auto packets = packetWrites(*rsp.raw);
+    REQUIRE(packets.size() == 4);
+    REQUIRE(packets[0].find("$Z0,401000,1#") == 0);
+    REQUIRE(packets[1].find("$z0,401000,1#") == 0);
+    REQUIRE(packets[2].find("$Z1,401000,1#") == 0);
+    REQUIRE(packets[3].find("$z1,401000,1#") == 0);
+}
+
+TEST_CASE("RSP names the thread in a vCont single step", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("PacketSize=20020;vContSupported+")};
+    std::string error;
+    REQUIRE(rsp.client->negotiate(100ms, error));
+    REQUIRE(rsp.client->stepExecution("p01.03", 100ms, error));
+    const auto packets = packetWrites(*rsp.raw);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(packets[1].find("$vCont;s:p01.03#") == 0);
+}
+
 TEST_CASE("RSP stays in ack mode when no-ack is not advertised", "[core][debug][rsp]")
 {
     FakeRsp     rsp {acked("PacketSize=1000;qXfer:features:read+")};

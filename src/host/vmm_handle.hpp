@@ -259,11 +259,18 @@ namespace mpfshost
         debugControl(DebugControlAction action, bool& busy, std::string& error) override;
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> debugRegisters(
             const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error) override;
-        [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
-                                                              const DebugWatchHitSink&    onHit,
-                                                              const DebugWatchAbortCheck& aborted,
-                                                              bool&                       busy,
-                                                              std::string&                error) override;
+        [[nodiscard]] std::optional<DebugWatchEnd>           debugWatch(const DebugWatchRequest&    request,
+                                                                        const DebugWatchHitSink&    onHit,
+                                                                        const DebugWatchAbortCheck& aborted,
+                                                                        bool&                       busy,
+                                                                        std::string&                error) override;
+        [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                             const DebugWatchAbortCheck&   aborted,
+                                                                             bool&                         invalidState,
+                                                                             bool&                         busy,
+                                                                             std::string& error) override;
+        [[nodiscard]] std::optional<DebugStepResponse>
+        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) override;
 
         [[nodiscard]] std::optional<debug::DebugProcessDtbs> processDtbs(std::uint32_t pid,
                                                                          std::string&  error) override;

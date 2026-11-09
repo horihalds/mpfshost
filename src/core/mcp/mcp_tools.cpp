@@ -512,6 +512,31 @@ namespace mpfshost::mcp
             };
         }
 
+        Json debugBreakpointJson(const DebugBreakpointResponse& response)
+        {
+            return Json {
+                {          "status", std::string {debugBreakpointStatusName(response.status)}},
+                {   "skipped_count",                                    response.skippedCount},
+                {           "error",                                           response.error},
+                {            "vcpu",                                            response.vcpu},
+                {       "thread_id",                                        response.threadId},
+                {             "rip",                                  hexString(response.rip)},
+                {             "rsp",                                  hexString(response.rsp)},
+                {             "cr3",                                  hexString(response.cr3)},
+                {         "address",                              hexString(response.address)},
+                {           "bytes",                           bytesJson(response.bytesAtRip)},
+                {          "module",                                          response.module},
+                {   "module_offset",                          hexSmall(response.moduleOffset)},
+                {    "export_found",                                     response.exportFound},
+                {  "export_address",                        hexString(response.exportAddress)},
+                {   "export_offset",                          hexSmall(response.exportOffset)},
+                {     "export_name",                                      response.exportName},
+                {       "pdb_found",                                        response.pdbFound},
+                {      "pdb_symbol",                                       response.pdbSymbol},
+                {"pdb_displacement",                                 response.pdbDisplacement}
+            };
+        }
+
         ToolOutcome success(Json structured)
         {
             ToolOutcome outcome;
@@ -798,6 +823,16 @@ namespace mpfshost::mcp
                  {"access", "string", "Access to watch; only write is supported", false},
                  {"max_hits", "integer", "Stop after this many hits (default 1)", false},
                  {"timeout", "integer", "Seconds to wait for a write (default 30)", false}}                                  },
+                {          "debug_break",
+                 "Break on an address",                                   "Arm one software or hardware breakpoint and return its first hit.",
+                 false,    {target,
+    pid,
+    {"address", "string", "Breakpoint linear address (hex)", true},
+    {"kind", "string", "Breakpoint kind: software or hardware (default software)", false},
+    {"timeout", "integer", "Seconds to wait for the breakpoint (default 30)", false}}                 },
+                {           "debug_step",
+                 "Single-step a vCPU",                                    "Single-step one vCPU of a paused guest and return its registers.",
+                 false,                   {target, {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false}}},
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -2394,6 +2429,54 @@ namespace mpfshost::mcp
                     {        "error",                                      end->error},
                     {         "hits",                                 std::move(hits)}
                 });
+            }
+
+            if (name == "debug_break")
+            {
+                const auto          kindText = optionalString(args, "kind", "software");
+                DebugBreakpointKind kind {};
+                if (kindText == "software")
+                {
+                    kind = DebugBreakpointKind::Software;
+                }
+                else if (kindText == "hardware")
+                {
+                    kind = DebugBreakpointKind::Hardware;
+                }
+                else
+                {
+                    return failure("kind only accepts software or hardware");
+                }
+                const auto timeout = hasArg(args, "timeout") ? numberValue(args, "timeout", false) : 30;
+                if (timeout == 0 || timeout > kMaxDebugWatchTimeoutMs / 1000)
+                {
+                    return failure("timeout is out of range");
+                }
+
+                const auto response = debugBreakpoint(socket,
+                                                      {requireString(args, "target"),
+                                                       u32Value(args, "pid", true),
+                                                       hexValue(args, "address", true),
+                                                       kind,
+                                                       static_cast<std::uint32_t>(timeout * 1000)},
+                                                      error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(debugBreakpointJson(*response));
+            }
+
+            if (name == "debug_step")
+            {
+                const auto vcpu =
+                    hasArg(args, "vcpu") ? static_cast<std::uint32_t>(numberValue(args, "vcpu", true)) : 0;
+                const auto response = debugStep(socket, {requireString(args, "target"), vcpu}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(debugRecordJson(response->record));
             }
 
             if (name == "write_memory")

@@ -185,7 +185,10 @@ namespace
         std::uint64_t            currentCr3 {};
         std::size_t              watchInserts {0};
         std::size_t              watchRemoves {0};
+        std::size_t              breakpointInserts {0};
+        std::size_t              breakpointRemoves {0};
         std::size_t              continues {0};
+        std::size_t              steps {0};
 
         [[nodiscard]] bool open(const RspEndpoint&, std::chrono::milliseconds, std::string&) override
         {
@@ -295,9 +298,32 @@ namespace
                 ++watchRemoves;
                 quoteAck("OK");
             }
+            else if (body.starts_with("Z0,") || body.starts_with("Z1,"))
+            {
+                ++breakpointInserts;
+                quoteAck("OK");
+            }
+            else if (body.starts_with("z0,") || body.starts_with("z1,"))
+            {
+                ++breakpointRemoves;
+                quoteAck("OK");
+            }
             else if (body == "vCont;c" || body == "c")
             {
                 ++continues;
+                if (!stops.empty())
+                {
+                    const auto stop = stops.front();
+                    stops.pop_front();
+                    currentRip = stop.rip;
+                    currentRsp = stop.rsp;
+                    currentCr3 = stop.cr3;
+                    quoteAck("T05thread:" + stop.thread + ";");
+                }
+            }
+            else if (body.starts_with("vCont;s") || body == "s")
+            {
+                ++steps;
                 if (!stops.empty())
                 {
                     const auto stop = stops.front();
@@ -364,7 +390,7 @@ namespace
         return xml;
     }
 
-    std::string registerBytes()
+    std::string registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull)
     {
         std::string bytes(172, '\0');
         const auto  put = [&bytes](std::size_t offset, std::uint64_t value)
@@ -374,12 +400,12 @@ namespace
                 bytes[offset + index] = static_cast<char>((value >> (index * 8)) & 0xFF);
             }
         };
-        put(0, 0x1122334455667788ull);   // rax
-        put(128, 0xffffffffae89ab1bull); // rip
-        put(140, 0x2468ace0ull);         // cr0
-        put(148, 0x1a2b3000ull);         // cr3
-        put(156, 0x0000f00eull);         // cr4
-        put(164, 0x2ull);                // cr8
+        put(0, 0x1122334455667788ull); // rax
+        put(128, rip);                 // rip
+        put(140, 0x2468ace0ull);       // cr0
+        put(148, 0x1a2b3000ull);       // cr3
+        put(156, 0x0000f00eull);       // cr4
+        put(164, 0x2ull);              // cr8
 
         static constexpr char digits[] = "0123456789abcdef";
         std::string           hex;
@@ -996,4 +1022,227 @@ TEST_CASE("a memory read failure during a watchpoint ends it as an error", "[cor
     REQUIRE(rsp->watchRemoves == 1);
     REQUIRE_FALSE(qmp->stubActive);
     REQUIRE(qmp->running);
+}
+
+TEST_CASE("the debug controller arms and tears down software and hardware breakpoints", "[core][debug][controller]")
+{
+    SECTION("software")
+    {
+        auto qmp           = std::make_shared<FakeQmpState>();
+        qmp->running       = true;
+        auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+        auto  rspTransport = std::make_unique<FakeRspTransport>();
+        auto* rsp          = rspTransport.get();
+        rsp->registersXml  = x86RegisterXml();
+        rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+        FakeInspector inspector;
+
+        DebugController controller {"/tmp/qmp.sock",
+                                    "/tmp/stub.sock",
+                                    [transport = std::move(qmpTransport)]() mutable
+                                    {
+                                        return std::move(transport);
+                                    },
+                                    [transport = std::move(rspTransport)]() mutable
+                                    {
+                                        return std::move(transport);
+                                    },
+                                    &inspector};
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        const auto  response = controller.breakpoint(
+            {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5000}, {}, invalidState, busy, error);
+        REQUIRE(response.has_value());
+        REQUIRE_FALSE(invalidState);
+        REQUIRE_FALSE(busy);
+        REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+        REQUIRE(response->rip == 0x7ff84522b1f1ull);
+        REQUIRE(response->rsp == 0x1234);
+        REQUIRE(response->cr3 == 0x200123);
+        REQUIRE(response->address == 0x7ff84522b1f1ull);
+        REQUIRE(response->module == "msvcrt.dll");
+        REQUIRE(response->exportName == "memcpy");
+        REQUIRE(response->bytesAtRip.size() == mpfshost::kDebugBreakpointBytes);
+        REQUIRE(rsp->breakpointInserts == 1);
+        REQUIRE(rsp->breakpointRemoves == 1);
+        REQUIRE_FALSE(qmp->stubActive);
+        REQUIRE(qmp->running);
+    }
+
+    SECTION("hardware")
+    {
+        auto qmp           = std::make_shared<FakeQmpState>();
+        qmp->running       = true;
+        auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+        auto  rspTransport = std::make_unique<FakeRspTransport>();
+        auto* rsp          = rspTransport.get();
+        rsp->registersXml  = x86RegisterXml();
+        rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+        FakeInspector inspector;
+
+        DebugController controller {"/tmp/qmp.sock",
+                                    "/tmp/stub.sock",
+                                    [transport = std::move(qmpTransport)]() mutable
+                                    {
+                                        return std::move(transport);
+                                    },
+                                    [transport = std::move(rspTransport)]() mutable
+                                    {
+                                        return std::move(transport);
+                                    },
+                                    &inspector};
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        const auto  response = controller.breakpoint(
+            {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+        REQUIRE(response.has_value());
+        REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+        REQUIRE(rsp->breakpointInserts == 1);
+        REQUIRE(rsp->breakpointRemoves == 1);
+        REQUIRE_FALSE(qmp->stubActive);
+        REQUIRE(qmp->running);
+    }
+}
+
+TEST_CASE("a breakpoint skips a stop that belongs to another process", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0xfffff800aa6ac7cfull, 0x1234, 0x999123});
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    const auto  response = controller.breakpoint(
+        {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(response->skippedCount == 1);
+    REQUIRE(rsp->continues == 2);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    const auto  response = controller.breakpoint(
+        {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5}, {}, invalidState, busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Timeout);
+    REQUIRE(rsp->breakpointRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("the debug controller single-steps a paused guest", "[core][debug][controller]")
+{
+    auto  qmp          = std::make_shared<FakeQmpState>();
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->registerBytes = registerBytes(0x7ff84522b1f1ull);
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    const auto  response = controller.step({0}, invalidState, busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE_FALSE(busy);
+    REQUIRE(response->record.vcpu == 0);
+    REQUIRE(response->record.threadId == "1.1");
+    REQUIRE(response->record.rip == 0x7ff84522b1f1ull);
+    REQUIRE(rsp->steps == 1);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE_FALSE(qmp->running);
+}
+
+TEST_CASE("a single step refuses a running guest", "[core][debug][controller]")
+{
+    auto qmp          = std::make_shared<FakeQmpState>();
+    qmp->running      = true;
+    auto qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport = std::make_unique<FakeRspTransport>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    const auto  response = controller.step({0}, invalidState, busy, error);
+    REQUIRE_FALSE(response.has_value());
+    REQUIRE(invalidState);
+    REQUIRE(error.find("paused") != std::string::npos);
+    REQUIRE(qmp->count("gdbserver") == 0);
 }

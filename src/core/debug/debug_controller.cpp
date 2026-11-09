@@ -152,33 +152,62 @@ namespace mpfshost::debug
             return true;
         }
 
-        void resolveHitSymbols(DebugInspector* inspector, std::uint32_t pid, DebugWatchData& hit)
+        struct DebugLocation
+        {
+            std::string   module;
+            std::uint64_t moduleOffset {};
+            bool          exportFound {};
+            std::uint64_t exportAddress {};
+            std::uint64_t exportOffset {};
+            std::string   exportName;
+            bool          pdbFound {};
+            std::string   pdbSymbol;
+            std::uint32_t pdbDisplacement {};
+        };
+
+        void
+        resolveLocation(DebugInspector* inspector, std::uint32_t pid, std::uint64_t address, DebugLocation& location)
         {
             std::string error;
-            const auto  module = inspector->moduleForAddress(pid, hit.rip, error);
+            const auto  module = inspector->moduleForAddress(pid, address, error);
             if (!module)
             {
                 return;
             }
-            hit.module       = module->name;
-            hit.moduleOffset = module->offset;
+            location.module       = module->name;
+            location.moduleOffset = module->offset;
 
-            const auto exportHit = inspector->nearestExport(pid, module->name, hit.rip, error);
+            const auto exportHit = inspector->nearestExport(pid, module->name, address, error);
             if (exportHit.found)
             {
-                hit.exportFound   = true;
-                hit.exportAddress = exportHit.address;
-                hit.exportOffset  = exportHit.offset;
-                hit.exportName    = exportHit.name;
+                location.exportFound   = true;
+                location.exportAddress = exportHit.address;
+                location.exportOffset  = exportHit.offset;
+                location.exportName    = exportHit.name;
             }
 
             const auto symbol = inspector->pdbSymbol(pid, module->name, module->offset, error);
             if (symbol)
             {
-                hit.pdbFound        = true;
-                hit.pdbSymbol       = symbol->symbol;
-                hit.pdbDisplacement = symbol->displacement;
+                location.pdbFound        = true;
+                location.pdbSymbol       = symbol->symbol;
+                location.pdbDisplacement = symbol->displacement;
             }
+        }
+
+        void resolveHitSymbols(DebugInspector* inspector, std::uint32_t pid, DebugWatchData& hit)
+        {
+            DebugLocation location;
+            resolveLocation(inspector, pid, hit.rip, location);
+            hit.module          = std::move(location.module);
+            hit.moduleOffset    = location.moduleOffset;
+            hit.exportFound     = location.exportFound;
+            hit.exportAddress   = location.exportAddress;
+            hit.exportOffset    = location.exportOffset;
+            hit.exportName      = std::move(location.exportName);
+            hit.pdbFound        = location.pdbFound;
+            hit.pdbSymbol       = std::move(location.pdbSymbol);
+            hit.pdbDisplacement = location.pdbDisplacement;
         }
     } // namespace
 
@@ -512,50 +541,64 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
 
-            std::vector<std::byte> raw;
-            if (!rsp.readAllRegisters(raw, kRspTimeout, error))
+            auto record = readRecord(rsp, description, static_cast<std::uint32_t>(index), thread, error);
+            if (!record)
             {
                 return std::nullopt;
             }
-
-            DebugRegisterRecord record;
-            record.vcpu     = static_cast<std::uint32_t>(index);
-            record.threadId = thread;
-
-            const auto readRegister = [&](std::string_view name, std::uint64_t& value) -> bool
-            {
-                if (const auto info = findRspRegister(description, name))
-                {
-                    if (const auto found = readRspRegisterValue(raw, *info))
-                    {
-                        value = *found;
-                        return true;
-                    }
-                }
-                if (const auto fallback = fallbackRspRegister(name))
-                {
-                    return rsp.readRegister(fallback->number, value, kRspTimeout, error);
-                }
-                error = "the GDB stub does not expose " + std::string {name};
-                return false;
-            };
-
-            const bool complete =
-                readRegister("rip", record.rip) && readRegister("rsp", record.rsp) && readRegister("rbp", record.rbp)
-                && readRegister("eflags", record.eflags) && readRegister("cr0", record.cr0)
-                && readRegister("cr3", record.cr3) && readRegister("cr4", record.cr4) && readRegister("cr8", record.cr8)
-                && readRegister("rax", record.rax) && readRegister("rbx", record.rbx) && readRegister("rcx", record.rcx)
-                && readRegister("rdx", record.rdx) && readRegister("rsi", record.rsi) && readRegister("rdi", record.rdi)
-                && readRegister("r8", record.r8) && readRegister("r9", record.r9) && readRegister("r10", record.r10)
-                && readRegister("r11", record.r11) && readRegister("r12", record.r12) && readRegister("r13", record.r13)
-                && readRegister("r14", record.r14) && readRegister("r15", record.r15);
-            if (!complete)
-            {
-                return std::nullopt;
-            }
-            records.push_back(std::move(record));
+            records.push_back(std::move(*record));
         }
         return records;
+    }
+
+    std::optional<DebugRegisterRecord> DebugController::readRecord(RspClient&                  rsp,
+                                                                   const RspTargetDescription& description,
+                                                                   std::uint32_t               vcpu,
+                                                                   const std::string&          thread,
+                                                                   std::string&                error)
+    {
+        std::vector<std::byte> raw;
+        if (!rsp.readAllRegisters(raw, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        DebugRegisterRecord record;
+        record.vcpu     = vcpu;
+        record.threadId = thread;
+
+        const auto readRegister = [&](std::string_view name, std::uint64_t& value) -> bool
+        {
+            if (const auto info = findRspRegister(description, name))
+            {
+                if (const auto found = readRspRegisterValue(raw, *info))
+                {
+                    value = *found;
+                    return true;
+                }
+            }
+            if (const auto fallback = fallbackRspRegister(name))
+            {
+                return rsp.readRegister(fallback->number, value, kRspTimeout, error);
+            }
+            error = "the GDB stub does not expose " + std::string {name};
+            return false;
+        };
+
+        const bool complete =
+            readRegister("rip", record.rip) && readRegister("rsp", record.rsp) && readRegister("rbp", record.rbp)
+            && readRegister("eflags", record.eflags) && readRegister("cr0", record.cr0)
+            && readRegister("cr3", record.cr3) && readRegister("cr4", record.cr4) && readRegister("cr8", record.cr8)
+            && readRegister("rax", record.rax) && readRegister("rbx", record.rbx) && readRegister("rcx", record.rcx)
+            && readRegister("rdx", record.rdx) && readRegister("rsi", record.rsi) && readRegister("rdi", record.rdi)
+            && readRegister("r8", record.r8) && readRegister("r9", record.r9) && readRegister("r10", record.r10)
+            && readRegister("r11", record.r11) && readRegister("r12", record.r12) && readRegister("r13", record.r13)
+            && readRegister("r14", record.r14) && readRegister("r15", record.r15);
+        if (!complete)
+        {
+            return std::nullopt;
+        }
+        return record;
     }
 
     std::optional<std::vector<DebugRegisterRecord>>
@@ -1020,5 +1063,524 @@ namespace mpfshost::debug
 
         end.hitCount = hits;
         return end;
+    }
+
+    std::optional<DebugBreakpointResponse> DebugController::breakpoint(const DebugBreakpointRequest& request,
+                                                                       const DebugWatchAbortCheck&   aborted,
+                                                                       bool&                         invalidState,
+                                                                       bool&                         busy,
+                                                                       std::string&                  error)
+    {
+        busy         = false;
+        invalidState = false;
+        std::unique_lock lock {_mutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (_inspector == nullptr)
+        {
+            error = "the breakpoint service is unavailable";
+            return std::nullopt;
+        }
+
+        auto client = makeQmp();
+        if (!connectQmp(client, error))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!client->queryStatus(current, kQmpTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        bool stoppedByUs = false;
+        if (current.status == "running")
+        {
+            std::string ignored;
+            if (!client->execute("stop", ignored, kQmpTimeout, error))
+            {
+                return std::nullopt;
+            }
+            _hostPaused = true;
+            stoppedByUs = true;
+            log::info("host", "paused the guest for a breakpoint");
+        }
+
+        if (_stubActive)
+        {
+            std::string ignored;
+            if (!stopStub(*client, ignored))
+            {
+                error = ignored.empty() ? "the previous GDB stub could not be stopped" : ignored;
+                return std::nullopt;
+            }
+        }
+
+        bool active = false;
+        if (!hasActiveStub(*client, active, error))
+        {
+            return std::nullopt;
+        }
+        if (active)
+        {
+            invalidState = true;
+            error        = "another GDB stub owns the debug channel";
+            return std::nullopt;
+        }
+
+        auto        rsp = makeRsp();
+        RspEndpoint endpoint;
+        if (!startStub(*client, *rsp, endpoint, error))
+        {
+            return std::nullopt;
+        }
+
+        const bool hardware = request.kind == DebugBreakpointKind::Hardware;
+        bool       armed    = false;
+
+        struct Cleanup
+        {
+            DebugController&              self;
+            QmpClient&                    client;
+            RspClient&                    rsp;
+            const DebugBreakpointRequest& request;
+            bool                          armed;
+            bool                          stoppedByUs;
+
+            ~Cleanup()
+            {
+                std::string   ignored;
+                // Removing a breakpoint needs the target stopped, just like removing a watchpoint.
+                QmpStatusInfo beforeRemove;
+                if (client.queryStatus(beforeRemove, kQmpTimeout, ignored) && beforeRemove.status == "running")
+                {
+                    std::string ignoredStop;
+                    if (!client.execute("stop", ignoredStop, kQmpTimeout, ignored))
+                    {
+                        log::warn("host", "could not pause the guest to remove the breakpoint: ", ignored);
+                    }
+                }
+                rsp.drainPending();
+                if (armed)
+                {
+                    const bool hardwareKind = request.kind == DebugBreakpointKind::Hardware;
+                    // Retry once after dropping a stale reply: a debug register left set breaks the next
+                    // debug operation.
+                    if (!rsp.removeBreakpoint(request.address, hardwareKind, kRspTimeout, ignored))
+                    {
+                        rsp.drainPending();
+                        if (!rsp.removeBreakpoint(request.address, hardwareKind, kRspTimeout, ignored))
+                        {
+                            log::warn("host", "could not remove the breakpoint: ", ignored);
+                        }
+                    }
+                }
+
+                rsp.disconnect();
+                if (self._stubActive && !self.stopStub(client, ignored))
+                {
+                    log::warn("host", "could not stop the GDB stub during breakpoint teardown: ", ignored);
+                }
+                std::error_code removeError;
+                std::filesystem::remove(self._stubSocket, removeError);
+
+                QmpStatusInfo after;
+                if (stoppedByUs)
+                {
+                    if (client.queryStatus(after, kQmpTimeout, ignored) && after.status != "running")
+                    {
+                        if (!client.execute("cont", ignored, kQmpTimeout, ignored))
+                        {
+                            log::warn("host", "could not resume the guest after a breakpoint: ", ignored);
+                        }
+                    }
+                    QmpStatusInfo verified;
+                    if (client.queryStatus(verified, kQmpTimeout, ignored) && verified.status != "running")
+                    {
+                        log::warn("host", "the guest is still not running after a breakpoint");
+                    }
+                    self._hostPaused = false;
+                }
+                else if (client.queryStatus(after, kQmpTimeout, ignored) && after.status == "running")
+                {
+                    if (!client.execute("stop", ignored, kQmpTimeout, ignored))
+                    {
+                        log::warn("host", "could not restore the paused guest after a breakpoint: ", ignored);
+                    }
+                }
+            }
+        } cleanup {*this, *client, *rsp, request, armed, stoppedByUs};
+
+        if (!rsp->negotiate(kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        RspTargetDescription description;
+        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        std::vector<std::string> threads;
+        if (!rsp->queryThreads(threads, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            error = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+
+        const auto dtbs = _inspector->processDtbs(request.pid, error);
+        if (!dtbs)
+        {
+            if (error.empty())
+            {
+                error = "process " + std::to_string(request.pid) + " is not available";
+            }
+            return std::nullopt;
+        }
+
+        if (!rsp->selectThread(threads.front(), kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (!rsp->insertBreakpoint(request.address, hardware, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        armed         = true;
+        cleanup.armed = true;
+        log::info("host", "armed a ", hardware ? "hardware" : "software", " breakpoint");
+
+        // A stop reply queued before this client attached must not be mistaken for a breakpoint hit.
+        rsp->drainPending();
+        if (!rsp->continueExecution(kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        DebugBreakpointResponse response;
+        response.address = request.address;
+        const auto breakpointDeadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds {request.timeoutMs};
+
+        while (true)
+        {
+            if (aborted && aborted())
+            {
+                response.status = DebugBreakpointStatus::Cancelled;
+                response.error  = "the breakpoint was cancelled";
+                break;
+            }
+            if (requestExpired())
+            {
+                response.status = DebugBreakpointStatus::Timeout;
+                response.error  = "the request deadline expired";
+                break;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= breakpointDeadline)
+            {
+                response.status = DebugBreakpointStatus::Timeout;
+                response.error  = "the breakpoint timed out";
+                break;
+            }
+            const auto slice = std::min(std::chrono::duration_cast<std::chrono::milliseconds>(breakpointDeadline - now),
+                                        std::chrono::milliseconds {100});
+
+            std::string stopPacket;
+            const auto  polled = rsp->pollPacket(stopPacket, slice, error);
+            if (polled == RspPollResult::Timeout)
+            {
+                continue;
+            }
+            if (polled == RspPollResult::Closed)
+            {
+                response.status = DebugBreakpointStatus::Error;
+                response.error  = error.empty() ? "the GDB stub closed the connection" : error;
+                break;
+            }
+            if (!stopPacket.empty() && (stopPacket.front() == 'W' || stopPacket.front() == 'X'))
+            {
+                response.status = DebugBreakpointStatus::Error;
+                response.error  = "the guest stopped before the breakpoint fired";
+                break;
+            }
+
+            bool       stopped = false;
+            const auto thread  = stopThreadId(stopPacket, stopped);
+            if (!stopped)
+            {
+                continue;
+            }
+            if (thread && !thread->empty() && !rsp->selectThread(*thread, kRspTimeout, error))
+            {
+                response.status = DebugBreakpointStatus::Error;
+                response.error  = error;
+                break;
+            }
+
+            std::uint64_t rip      = 0;
+            std::uint64_t rspValue = 0;
+            std::uint64_t cr3      = 0;
+            if (!readNamedRegister(*rsp, description, "rip", rip, kRspTimeout, error)
+                || !readNamedRegister(*rsp, description, "rsp", rspValue, kRspTimeout, error)
+                || !readNamedRegister(*rsp, description, "cr3", cr3, kRspTimeout, error))
+            {
+                response.status = DebugBreakpointStatus::Error;
+                response.error  = error;
+                break;
+            }
+
+            // The stub's breakpoint is global to the VM. A CR3 mismatch normally means another process maps
+            // the same linear address; accept it only when control stopped at the requested address inside one
+            // of the target's modules, which covers a user CR3 that MemProcFS does not report as the process DTB.
+            const auto hitDtb  = canonicalDtb(cr3);
+            bool       matches = hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser);
+            if (!matches && rip == request.address)
+            {
+                std::string moduleError;
+                matches = _inspector->moduleForAddress(request.pid, request.address, moduleError).has_value();
+            }
+            if (!matches)
+            {
+                ++response.skippedCount;
+                if (!rsp->continueExecution(kRspTimeout, error))
+                {
+                    response.status = DebugBreakpointStatus::Error;
+                    response.error  = error;
+                    break;
+                }
+                continue;
+            }
+
+            response.status   = DebugBreakpointStatus::Hit;
+            response.vcpu     = 0;
+            response.rip      = rip;
+            response.rsp      = rspValue;
+            response.cr3      = cr3;
+            response.threadId = thread ? *thread : std::string {};
+            if (!response.threadId.empty())
+            {
+                const auto found = std::find(threads.begin(), threads.end(), response.threadId);
+                if (found != threads.end())
+                {
+                    response.vcpu = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
+                }
+            }
+
+            std::string readError;
+            if (!_inspector->readMemory(request.pid, rip, kDebugBreakpointBytes, response.bytesAtRip, readError))
+            {
+                response.bytesAtRip.clear();
+            }
+
+            DebugLocation location;
+            resolveLocation(_inspector, request.pid, rip, location);
+            response.module          = std::move(location.module);
+            response.moduleOffset    = location.moduleOffset;
+            response.exportFound     = location.exportFound;
+            response.exportAddress   = location.exportAddress;
+            response.exportOffset    = location.exportOffset;
+            response.exportName      = std::move(location.exportName);
+            response.pdbFound        = location.pdbFound;
+            response.pdbSymbol       = std::move(location.pdbSymbol);
+            response.pdbDisplacement = location.pdbDisplacement;
+            break;
+        }
+
+        return response;
+    }
+
+    std::optional<DebugStepResponse>
+    DebugController::step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error)
+    {
+        busy         = false;
+        invalidState = false;
+        std::unique_lock lock {_mutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+
+        auto client = makeQmp();
+        if (!connectQmp(client, error))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!client->queryStatus(current, kQmpTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (current.status == "running")
+        {
+            invalidState = true;
+            error        = "the guest must be paused before it can be single-stepped";
+            return std::nullopt;
+        }
+
+        if (_stubActive)
+        {
+            std::string ignored;
+            if (!stopStub(*client, ignored))
+            {
+                error = ignored.empty() ? "the previous GDB stub could not be stopped" : ignored;
+                return std::nullopt;
+            }
+        }
+
+        bool active = false;
+        if (!hasActiveStub(*client, active, error))
+        {
+            return std::nullopt;
+        }
+        if (active)
+        {
+            invalidState = true;
+            error        = "another GDB stub owns the debug channel";
+            return std::nullopt;
+        }
+
+        auto        rsp = makeRsp();
+        RspEndpoint endpoint;
+        if (!startStub(*client, *rsp, endpoint, error))
+        {
+            return std::nullopt;
+        }
+
+        struct Cleanup
+        {
+            DebugController& self;
+            QmpClient&       client;
+
+            ~Cleanup()
+            {
+                std::string ignored;
+                if (self._stubActive && !self.stopStub(client, ignored))
+                {
+                    log::warn("host", "could not stop the GDB stub during single-step teardown: ", ignored);
+                }
+                std::error_code removeError;
+                std::filesystem::remove(self._stubSocket, removeError);
+
+                // A single step is only valid from a paused guest and leaves it paused.
+                QmpStatusInfo after;
+                if (client.queryStatus(after, kQmpTimeout, ignored) && after.status == "running")
+                {
+                    std::string restore;
+                    if (!client.execute("stop", restore, kQmpTimeout, ignored))
+                    {
+                        log::warn("host", "could not restore the paused guest after a single step: ", ignored);
+                    }
+                }
+            }
+        } cleanup {*this, *client};
+
+        if (!rsp->negotiate(kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        RspTargetDescription description;
+        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        std::vector<std::string> threads;
+        if (!rsp->queryThreads(threads, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            error = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+        if (request.vcpu >= threads.size())
+        {
+            error = "vCPU " + std::to_string(request.vcpu) + " is not present";
+            return std::nullopt;
+        }
+
+        const auto& thread = threads[request.vcpu];
+        if (!rsp->selectThread(thread, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        rsp->drainPending();
+        if (!rsp->stepExecution(thread, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        const auto stepDeadline = std::chrono::steady_clock::now() + kRspTimeout;
+        while (true)
+        {
+            if (requestExpired())
+            {
+                error = "the request deadline expired";
+                return std::nullopt;
+            }
+            if (std::chrono::steady_clock::now() >= stepDeadline)
+            {
+                error = "the guest did not stop after a single step";
+                return std::nullopt;
+            }
+
+            std::string stopPacket;
+            const auto  polled = rsp->pollPacket(stopPacket, std::chrono::milliseconds {100}, error);
+            if (polled == RspPollResult::Timeout)
+            {
+                continue;
+            }
+            if (polled == RspPollResult::Closed)
+            {
+                error = error.empty() ? "the GDB stub closed the connection" : error;
+                return std::nullopt;
+            }
+            if (!stopPacket.empty() && (stopPacket.front() == 'W' || stopPacket.front() == 'X'))
+            {
+                error = "the guest stopped before the single step completed";
+                return std::nullopt;
+            }
+
+            bool       stopped    = false;
+            const auto stopThread = stopThreadId(stopPacket, stopped);
+            if (!stopped)
+            {
+                continue;
+            }
+            if (stopThread && !stopThread->empty() && !rsp->selectThread(*stopThread, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+
+            auto index = request.vcpu;
+            if (stopThread && !stopThread->empty())
+            {
+                const auto found = std::find(threads.begin(), threads.end(), *stopThread);
+                if (found != threads.end())
+                {
+                    index = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
+                }
+            }
+
+            auto record = readRecord(*rsp, description, index, threads[index], error);
+            if (!record)
+            {
+                return std::nullopt;
+            }
+            return DebugStepResponse {std::move(*record)};
+        }
     }
 } // namespace mpfshost::debug

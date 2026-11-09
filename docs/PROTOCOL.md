@@ -133,6 +133,8 @@ range.
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
  `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
  `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
+ `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
+ `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
 
 ## Address lookups
 
@@ -233,6 +235,45 @@ the guest if this request paused it (an already-paused guest is left paused) and
 `query-status`. `Busy` (`19`) means another debug operation holds the target; `InvalidState` means another owner holds
 the GDB stub.
 
+## Debug breakpoints
+
+`DebugBreakpointRequest` is a one-shot request. It arms one breakpoint, resumes the guest, and answers with exactly
+one `DebugBreakpointResponse` after the first matching hit, a timeout, a cancellation or an error. The breakpoint is
+always removed during teardown, so a caller that wants to keep stopping repeats the request.
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `pid` | `u32` | Process used to scope and symbolize the hit; zero is `MalformedPayload` |
+ `address` | `u64` | Breakpoint linear address; zero is `MalformedPayload` |
+ `kind` | `u8` | `0` software (`Z0`), `1` hardware (`Z1`); other values are `MalformedPayload` |
+ `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
+
+The host pauses the guest if needed, starts a stub it owns, reads the process DTBs, selects one thread and arms the
+breakpoint once (QEMU's debug registers are global). It then resumes execution and polls with short timeouts so
+cancellation, the request deadline and peer loss are observed. A stop reply whose CR3 does not match either process
+DTB is skipped and execution resumes; as with a watchpoint, a hit at the requested address inside one of the target's
+modules is accepted because a user CR3 may be a shadow table that MemProcFS does not report.
+
+`DebugBreakpointResponse` carries a `u8` status (`0` hit, `1` timeout, `2` cancelled, `3` error), the `u32` skipped
+count, an error string, then the hit fields: `vcpu`, `threadId`, `rip`, `rsp`, `cr3`, `address`, `bytesAtRip` (up to
+`kDebugBreakpointBytes` 16 bytes), `module`, `moduleOffset`, `exportFound/exportAddress/exportOffset/exportName` and
+`pdbFound/pdbSymbol/pdbDisplacement`. Teardown removes the breakpoint, closes the RSP connection, stops a stub the
+host started, then resumes a guest it paused or re-pauses an already-paused one.
+
+A hardware breakpoint uses one of the four debug-register slots, so it competes with an active watchpoint; the host
+already refuses concurrent debug operations with `Busy`, which keeps the slot budget simple. A software breakpoint
+patches guest memory instead and can fail on a read-only page. Snapshots, `system_reset` and migration drop both the
+breakpoint and the stub; a request must not span one of those operations.
+
+## Debug single step
+
+`DebugStepRequest` carries one `u32` vCPU index (default `0`) and is valid only while the guest is paused and no other
+owner holds the debug channel; otherwise the host answers `InvalidState`. It starts a stub, selects that thread,
+executes one instruction with `vCont;s` (`s` when `vCont` is unavailable), captures the resulting registers and tears
+the stub down while leaving the guest paused. `DebugStepResponse` is one fixed `DebugRegisterRecord`, the same layout
+as one entry of `DebugRegistersResponse`. An index that is not present in the stub's thread list is reported as
+`Internal` with the reason, like `debug-registers`.
+
 ## Physical memory variants
 
 `PageReadRequest`, `PrefetchRequest` and `MemorySearchRequest` carry a `pid` field. Sending `kPhysicalPid`
@@ -281,7 +322,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
- 20 | `InvalidState` | `DebugRegistersRequest` while the guest is running or another stub owns the debug channel |
+ 20 | `InvalidState` | `DebugRegistersRequest` or `DebugStepRequest` while the guest is running, or another stub owns the debug channel |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.

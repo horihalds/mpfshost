@@ -82,6 +82,8 @@ namespace
         "debug-continue",
         "debug-registers",
         "debug-watch",
+        "debug-break",
+        "debug-step",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)
@@ -615,6 +617,41 @@ TEST_CASE("debug watch options are parsed and validated", "[cli-options]")
         parse({"--client", "read", "vm1", "--pid", "42", "--address", "0x5000", "--size", "16", "--width", "2"});
     REQUIRE_FALSE(misplaced.options.has_value());
     CHECK(misplaced.error.find("only valid") != std::string::npos);
+}
+
+TEST_CASE("debug breakpoint and step options are parsed and validated", "[cli-options]")
+{
+    const auto parsed = parse({"--client",
+                               "debug-break",
+                               "vm1",
+                               "--pid",
+                               "42",
+                               "--address",
+                               "0x5000",
+                               "--kind",
+                               "hardware",
+                               "--timeout",
+                               "5"});
+    REQUIRE(parsed.options.has_value());
+    CHECK(parsed.options->breakpointKind == mpfshost::DebugBreakpointKind::Hardware);
+    CHECK(parsed.options->watchTimeoutSeconds == 5);
+
+    const auto badKind =
+        parse({"--client", "debug-break", "vm1", "--pid", "42", "--address", "0x5000", "--kind", "firmware"});
+    REQUIRE_FALSE(badKind.options.has_value());
+    CHECK(badKind.error.find("--kind") != std::string::npos);
+
+    const auto misplacedKind = parse({"--client", "debug-step", "vm1", "--vcpu", "1", "--kind", "software"});
+    REQUIRE_FALSE(misplacedKind.options.has_value());
+    CHECK(misplacedKind.error.find("--kind") != std::string::npos);
+
+    const auto step = parse({"--client", "debug-step", "vm1", "--vcpu", "3"});
+    REQUIRE(step.options.has_value());
+    CHECK(step.options->vcpu == 3);
+
+    const auto stepRange = parse({"--client", "debug-step", "vm1", "--vcpu", "256"});
+    REQUIRE_FALSE(stepRange.options.has_value());
+    CHECK(stepRange.error.find("--vcpu") != std::string::npos);
 }
 
 TEST_CASE("decimal u32 values are parsed strictly", "[util][number]")

@@ -189,6 +189,8 @@ to it automatically.
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
  `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Prints the trapped store when it can be decoded. Destructive. |
+ `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). Reports the first hit and removes it. Destructive. |
+ `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0). Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
  `--client scatter <vm>` | Several process ranges in one batch; repeat `--range`; `--repeat <n>` re-reads the prepared ranges, `--clear` clears the handle before closing. |
  `--client vquery <vm>` | Region, protection and type of a virtual address. |
@@ -257,13 +259,14 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
-- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers` and `debug-watch` use the QMP socket that the
-  target scan already pairs with each QEMU process. `debug-stop` pauses the guest and `debug-continue` resumes it;
-  the host remembers whether **it** paused the VM. `debug-registers` only works on a paused guest. Both it and
-  `debug-watch` start a temporary GDB stub on a Unix socket under `/tmp`; registers leave the guest paused, while a
-  watch resumes the guest it paused, reports each write hit with the trap PC and nearest symbol, and always removes
-  the watch and stops the stub afterwards. These commands are destructive: a paused guest stops executing until it
-  is resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
+- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers`, `debug-watch`, `debug-break` and `debug-step`
+  use the QMP socket that the target scan already pairs with each QEMU process. `debug-stop` pauses the guest and
+  `debug-continue` resumes it; the host remembers whether **it** paused the VM. `debug-registers` and `debug-step`
+  only work on a paused guest and leave it paused. They start a temporary GDB stub on a Unix socket under `/tmp`, as
+  do `debug-watch` and `debug-break`; a watch reports each write hit and a breakpoint reports its first hit, both with
+  the trap PC and nearest symbol, and always remove the trap and stop the stub afterwards. A breakpoint is one-shot:
+  repeat the command to stop again. These commands are destructive: a paused guest stops executing until it is
+  resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md).
 
 ### Using MCP mode
 
@@ -307,8 +310,9 @@ preview, and list tools accept `limit` (1-1000, default 100) and `offset` plus r
 physical-memory and VFS reads default to a small size (256 bytes, 4096 for VFS) and are capped at 1 MiB per call.
 
 Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`, `debug_stop`, `debug_continue`,
-`debug_watch`) are exposed alongside the read tools and annotated `destructiveHint: true`. They can modify or pause the
-guest; use them deliberately. The host's own `--allow-vfs-write` check still applies to `write_vfs`.
+`debug_watch`, `debug_break`, `debug_step`) are exposed alongside the read tools and annotated
+`destructiveHint: true`. They can modify or pause the guest; use them deliberately. The host's own
+`--allow-vfs-write` check still applies to `write_vfs`.
 
  Tool | Description |
 ------|-------------|
@@ -355,6 +359,8 @@ guest; use them deliberately. The host's own `--allow-vfs-write` check still app
  `debug_stop` | **Write:** pause the guest. |
  `debug_continue` | **Write:** resume a paused guest. |
  `debug_watch` | **Write:** arm a process write watchpoint and return each hit. |
+ `debug_break` | **Write:** arm one software or hardware breakpoint and return its first hit. |
+ `debug_step` | **Write:** single-step a vCPU of a paused guest. |
  `write_memory` | **Write:** write process virtual memory. |
  `write_vfs` | **Write:** write a virtual file (host `--allow-vfs-write` also required). |
  `write_physical_memory` | **Write:** write guest physical memory. |

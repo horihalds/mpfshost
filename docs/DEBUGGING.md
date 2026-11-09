@@ -15,11 +15,11 @@ connection again.
 | vCPU count | QMP | `query-cpus-fast` |
 | Pause / resume | QMP | `stop` / `cont` |
 | GDB stub lifecycle | HMP through QMP | `human-monitor-command` with `gdbserver ...` |
-| Registers, watchpoints, stepping | GDB remote serial protocol | see later slices |
+| Registers, breakpoints, watchpoints, stepping | GDB remote serial protocol | see later slices |
 
 `gdbserver` is **HMP-only** in the QEMU versions tested; there is no QMP-native equivalent. The host therefore has to
-start and stop a stub through `human-monitor-command`. `debug-registers` and `debug-watch` start a stub; the
-host records that it owns it and stops it during teardown.
+start and stop a stub through `human-monitor-command`. `debug-registers`, `debug-watch`, `debug-break` and `debug-step`
+start a stub; the host records that it owns it and stops it during teardown.
 
 The QMP socket is root-equivalent over the guest: anyone who can connect can reset it, read all RAM, inject input and
 hotplug devices. The host's Unix-socket access policy is the gate. Do not expose the QMP socket to broader groups than
@@ -211,6 +211,63 @@ process DTB, the host now also requires a value change **and** a RIP inside one 
 change alone accepted one stale idle-loop stop (`CR3=0x1ae000`, kernel `rip`). The stricter path was installed and
 re-run successfully after this record was written.
 
+## Manual check: breakpoint and single-step
+
+This procedure needs a live Windows guest and root. Breakpoints are one-shot: each request arms one, reports the
+first hit, and removes it again.
+
+1. Pick a frequently executed address in a process, such as an export confirmed with `resolve`. Note the pid and the
+   address.
+2. Run the breakpoint with a dedicated connection:
+
+   ```sh
+   ./build/mpfshost --client debug-break <vm> --pid <pid> --address <hex> --kind hardware --timeout 30
+   ```
+
+   Expect one hit with `rip` equal to the address, the per-vCPU registers, `module`/`export`/`symbol` when they
+   resolve, and `skipped=0`. Repeat with `--kind software`; a read-only page may reject the software form. Confirm
+   the guest is running again and the stub is gone:
+
+   ```sh
+   ./build/mpfshost --client debug-status <vm>
+   ```
+
+3. For a single step, pause the guest, then step once per call:
+
+   ```sh
+   ./build/mpfshost --client debug-stop <vm>
+   ./build/mpfshost --client debug-registers <vm> --vcpu 0
+   ./build/mpfshost --client debug-step <vm> --vcpu 0
+   ```
+
+   Expect the full register record with a new `rip`; the guest stays paused. A `debug-step` while running must fail
+   with `InvalidState`. Finish with `debug-continue`.
+
+4. Run the same sequence through MCP `debug_break` and `debug_step`. Confirm both are marked destructive, and that
+   cancelling `debug_break` with Ctrl-C still leaves the VM running and the stub stopped.
+
+### Breakpoint limits and interactions
+
+- A hardware breakpoint (`Z1`) consumes one of the four debug-register slots. The host refuses concurrent debug
+  operations with `Busy`, so a watchpoint and a breakpoint cannot compete for a slot in the same request, but a
+  guest kernel debugger or a guest driver can still own the register the host tries to use; arming then fails
+  instead of silently missing the breakpoint.
+- A software breakpoint (`Z0`) patches the instruction byte. It needs a writable page and is removed on every exit
+  path; a page that rejects the patch makes the request fail.
+- A breakpoint is scoped by CR3 after the hit. A hit in another process that maps the same address is skipped, unless
+  the hit is at the requested address inside one of the target's modules, which covers a shadow user CR3. The same
+  caveat as a watchpoint applies: reallocation or relocation of executable memory invalidates the address.
+- Snapshots, `system_reset` and migration drop debug registers and the stub. Treat every breakpoint, watchpoint and
+  step as ephemeral and tear it down before one of those operations.
+- Single-step requires a paused guest. It selects one thread, executes one instruction, captures registers and leaves
+  the guest paused. Other vCPUs are not stepped.
+
+### Breakpoint and step validation record
+
+Record the live results here after the next run: the vCPU and thread of the hit, whether `rip` matched the requested
+address for both kinds, whether a software breakpoint survived the target page's permissions, and whether the guest
+was running and the stub gone afterwards.
+
 ## Checks still owed to a live guest
 
 - ~~Whether `Z2` watchpoints must be armed per vCPU.~~ Answered on 2026-11-09 against `windows` (12 vCPU): a first
@@ -226,8 +283,8 @@ Record the remaining answers here after the next live run.
 Any future slice that starts a stub or arms a watchpoint must:
 
 - remember whether the host started the stub and never stop one it did not start;
-- remove the watchpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its gdb stop
-  state and ignore the resume;
+- remove the watchpoint or breakpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its
+  gdb stop state and ignore the resume;
 - stop the stub on success, timeout, cancellation, error and client death;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
 - refuse concurrent debug operations with `Busy`;

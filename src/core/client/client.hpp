@@ -93,6 +93,29 @@ namespace mpfshost
                                                           const std::function<void(const DebugWatchData&)>& onHit,
                                                           std::string&                                      error);
 
+    struct DebugBreakpointQuery
+    {
+        std::string         targetName;
+        std::uint32_t       pid {};
+        std::uint64_t       address {};
+        DebugBreakpointKind kind {DebugBreakpointKind::Software};
+        std::uint32_t       timeoutMs {30000};
+    };
+
+    // Arms one breakpoint, runs to its first hit or a timeout, and always tears the breakpoint down.
+    [[nodiscard]] std::optional<DebugBreakpointResponse>
+    debugBreakpoint(const std::filesystem::path& socketPath, const DebugBreakpointQuery& query, std::string& error);
+
+    struct DebugStepQuery
+    {
+        std::string   targetName;
+        std::uint32_t vcpu {0};
+    };
+
+    // Executes one instruction on a paused guest and returns the resulting registers.
+    [[nodiscard]] std::optional<DebugStepResponse>
+    debugStep(const std::filesystem::path& socketPath, const DebugStepQuery& query, std::string& error);
+
     struct VirtualQueryQuery
     {
         std::string   targetName;

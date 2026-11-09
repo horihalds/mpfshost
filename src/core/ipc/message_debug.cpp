@@ -349,4 +349,147 @@ namespace mpfshost
         }
         return message;
     }
+
+    std::string_view debugBreakpointStatusName(DebugBreakpointStatus status) noexcept
+    {
+        switch (status)
+        {
+        case DebugBreakpointStatus::Hit:
+            return "hit";
+        case DebugBreakpointStatus::Timeout:
+            return "timeout";
+        case DebugBreakpointStatus::Cancelled:
+            return "cancelled";
+        case DebugBreakpointStatus::Error:
+            return "error";
+        }
+        return "error";
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointRequest(const DebugBreakpointRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.pid);
+        writer.writeU64(message.address);
+        writer.writeU8(static_cast<std::uint8_t>(message.kind));
+        writer.writeU32(message.timeoutMs);
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointRequest> decodeDebugBreakpointRequest(std::span<const std::byte> payload)
+    {
+        ByteReader             reader {payload};
+        DebugBreakpointRequest message;
+        message.pid       = reader.readU32();
+        message.address   = reader.readU64();
+        message.kind      = static_cast<DebugBreakpointKind>(reader.readU8());
+        message.timeoutMs = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        if (message.kind != DebugBreakpointKind::Software && message.kind != DebugBreakpointKind::Hardware)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugBreakpointResponse(const DebugBreakpointResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU8(static_cast<std::uint8_t>(message.status));
+        writer.writeU32(message.skippedCount);
+        writer.writeString(message.error);
+        writer.writeU32(message.vcpu);
+        writer.writeString(message.threadId);
+        writer.writeU64(message.rip);
+        writer.writeU64(message.rsp);
+        writer.writeU64(message.cr3);
+        writer.writeU64(message.address);
+        writer.writeBytes(message.bytesAtRip);
+        writer.writeString(message.module);
+        writer.writeU64(message.moduleOffset);
+        writer.writeU8(message.exportFound ? 1 : 0);
+        writer.writeU64(message.exportAddress);
+        writer.writeU64(message.exportOffset);
+        writer.writeString(message.exportName);
+        writer.writeU8(message.pdbFound ? 1 : 0);
+        writer.writeString(message.pdbSymbol);
+        writer.writeU32(message.pdbDisplacement);
+        return writer.take();
+    }
+
+    std::optional<DebugBreakpointResponse> decodeDebugBreakpointResponse(std::span<const std::byte> payload)
+    {
+        ByteReader              reader {payload};
+        DebugBreakpointResponse message;
+        message.status          = static_cast<DebugBreakpointStatus>(reader.readU8());
+        message.skippedCount    = reader.readU32();
+        message.error           = reader.readString();
+        message.vcpu            = reader.readU32();
+        message.threadId        = reader.readString();
+        message.rip             = reader.readU64();
+        message.rsp             = reader.readU64();
+        message.cr3             = reader.readU64();
+        message.address         = reader.readU64();
+        message.bytesAtRip      = reader.readBytes();
+        message.module          = reader.readString();
+        message.moduleOffset    = reader.readU64();
+        message.exportFound     = reader.readU8() != 0;
+        message.exportAddress   = reader.readU64();
+        message.exportOffset    = reader.readU64();
+        message.exportName      = reader.readString();
+        message.pdbFound        = reader.readU8() != 0;
+        message.pdbSymbol       = reader.readString();
+        message.pdbDisplacement = reader.readU32();
+        if (!reader.ok() || !reader.atEnd() || message.bytesAtRip.size() > kDebugBreakpointBytes)
+        {
+            return std::nullopt;
+        }
+        if (message.status != DebugBreakpointStatus::Hit && message.status != DebugBreakpointStatus::Timeout
+            && message.status != DebugBreakpointStatus::Cancelled && message.status != DebugBreakpointStatus::Error)
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugStepRequest(const DebugStepRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.vcpu);
+        return writer.take();
+    }
+
+    std::optional<DebugStepRequest> decodeDebugStepRequest(std::span<const std::byte> payload)
+    {
+        ByteReader       reader {payload};
+        DebugStepRequest message;
+        message.vcpu = reader.readU32();
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugStepResponse(const DebugStepResponse& message)
+    {
+        ByteWriter writer;
+        writeDebugRecord(writer, message.record);
+        return writer.take();
+    }
+
+    std::optional<DebugStepResponse> decodeDebugStepResponse(std::span<const std::byte> payload)
+    {
+        ByteReader        reader {payload};
+        DebugStepResponse message;
+        message.record = readDebugRecord(reader);
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
 } // namespace mpfshost

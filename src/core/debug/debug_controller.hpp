@@ -47,11 +47,21 @@ namespace mpfshost::debug
         registers(const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error);
         // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
         // returns nullopt; once the watch is armed, an error is reported through the end record instead.
-        [[nodiscard]] std::optional<DebugWatchEnd> watch(const DebugWatchRequest&    request,
-                                                         const DebugWatchHitSink&    onHit,
-                                                         const DebugWatchAbortCheck& aborted,
-                                                         bool&                       busy,
-                                                         std::string&                error);
+        [[nodiscard]] std::optional<DebugWatchEnd>           watch(const DebugWatchRequest&    request,
+                                                                   const DebugWatchHitSink&    onHit,
+                                                                   const DebugWatchAbortCheck& aborted,
+                                                                   bool&                       busy,
+                                                                   std::string&                error);
+        // Runs one breakpoint to its first hit or a timeout. Once the breakpoint is armed an error is
+        // reported through the response; only setup failures return nullopt.
+        [[nodiscard]] std::optional<DebugBreakpointResponse> breakpoint(const DebugBreakpointRequest& request,
+                                                                        const DebugWatchAbortCheck&   aborted,
+                                                                        bool&                         invalidState,
+                                                                        bool&                         busy,
+                                                                        std::string&                  error);
+        // Executes one instruction on a paused guest and returns the resulting registers.
+        [[nodiscard]] std::optional<DebugStepResponse>
+        step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error);
 
         void setInspector(DebugInspector* inspector) noexcept
         {
@@ -71,6 +81,11 @@ namespace mpfshost::debug
         [[nodiscard]] bool connectRsp(RspClient& rsp, const RspEndpoint& endpoint, std::string& error);
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
         readRecords(RspClient& rsp, const DebugRegistersRequest& request, std::string& error);
+        [[nodiscard]] std::optional<DebugRegisterRecord> readRecord(RspClient&                  rsp,
+                                                                    const RspTargetDescription& description,
+                                                                    std::uint32_t               vcpu,
+                                                                    const std::string&          thread,
+                                                                    std::string&                error);
 
         std::mutex            _mutex;
         std::filesystem::path _qmpSocket;

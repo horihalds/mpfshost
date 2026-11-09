@@ -234,4 +234,142 @@ namespace mpfshost
         }
         sendPayload(requestId, MessageType::DebugWatchEnd, encodeDebugWatchEnd(*end));
     }
+
+    void Session::handleDebugBreakpoint(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugBreakpointRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug breakpoint request");
+            return;
+        }
+        if (request->pid == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug breakpoint needs a process id");
+            return;
+        }
+        if (request->address == 0)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "a debug breakpoint needs a nonzero address");
+            return;
+        }
+        if (request->timeoutMs == 0 || request->timeoutMs > kMaxDebugWatchTimeoutMs)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the breakpoint timeout is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot set a debug breakpoint");
+            return;
+        }
+
+        bool                       aborted    = false;
+        const DebugWatchAbortCheck abortCheck = [&]()
+        {
+            if (aborted)
+            {
+                return true;
+            }
+            ErrorCode code {};
+            if (requestAborted(requestId, code))
+            {
+                aborted = true;
+                return true;
+            }
+            if (peerGone())
+            {
+                aborted      = true;
+                _writeFailed = true;
+                return true;
+            }
+            return false;
+        };
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        const auto  response = provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "the debug breakpoint failed" : error);
+            return;
+        }
+        if (aborted)
+        {
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugBreakpointResponse, encodeDebugBreakpointResponse(*response));
+    }
+
+    void Session::handleDebugStep(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugStepRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug step request");
+            return;
+        }
+        if (request->vcpu >= kMaxDebugVcpuRecords)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the vCPU index is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot single-step the guest");
+            return;
+        }
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        const auto  response = provider->debugStep(*request, invalidState, busy, error);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "the single step failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugStepResponse, encodeDebugStepResponse(*response));
+    }
 } // namespace mpfshost

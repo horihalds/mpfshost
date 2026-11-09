@@ -118,12 +118,15 @@ events, and bounded waits. `QmpTransport` is injectable, so tests script replies
 
 `src/core/debug/rsp_client.{hpp,cpp}` speaks the GDB remote serial protocol: packet framing and checksums, ack and
 no-ack modes, `qSupported`, thread enumeration and selection, `qXfer` feature reads (following `xi:include`),
-`target.xml` register numbering, and `g`/`p` register reads. `RspTransport` is injectable too.
+`target.xml` register numbering, `g`/`p` register reads, `Z0`/`Z1` breakpoints, `Z2` watchpoints, and `vCont`-based
+continue and single step. `RspTransport` is injectable too.
 
 `src/core/debug/debug_controller.{hpp,cpp}` owns the per-VM debug bookkeeping and the stub lifecycle. It starts a
 `gdbserver` over HMP only after the guest is paused, prefers a Unix chardev under `/tmp`, falls back to
 `tcp:127.0.0.1:<port>`, and tracks whether this host owns the stub. It never stops a stub it did not start, and it
-tears its stub down on every exit path. The guest stays paused across `debug-registers`.
+tears its stub down on every exit path. The guest stays paused across `debug-registers` and `debug-step`; a watchpoint
+or breakpoint resumes a guest it paused but leaves an already-paused guest paused. A breakpoint is one-shot: it is
+armed once, reported on its first matching hit, and removed in the same teardown that stops the stub.
 
 The host side is `src/host/vmm_debug.cpp`: `VmmHandle` owns one `debug::DebugController`, constructed from
 `VmTarget.qmpSocket` and a stub socket path derived from the QEMU pid. The controller serialises requests with its
@@ -256,7 +259,8 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   - `BareHandle` — implements no provider; use it to test `CapabilityUnavailable`.
   - `CountingBackend` — counts and blocks `acquire`; used by the handle-cache tests.
 - `FakeHandle` does **not** implement `PteProvider`, `PoolProvider` or `PfnProvider`; those session paths have no test
-  yet (see `TODO.md`). It implements `DebugProvider` through `FakeDebugState`, including fake register records.
+  yet (see `TODO.md`). It implements `DebugProvider` through `FakeDebugState`, including fake register records,
+  breakpoints and single steps.
 - Server and client tests start a real `Server` on a socket under `MPFSHOST_TEST_TMP_DIR` (`./tmp`) and call the
   real client functions against it. No test touches MemProcFS, `/run` or `/var`.
 - `tests/mcp_protocol_test.cpp` drives `mcp::McpServer` over in-memory streams for version negotiation, ordering,

@@ -62,7 +62,7 @@ namespace mpfshost
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
                 || command == "resolve" || command == "process-for-dtb" || command == "debug-status"
                 || command == "debug-stop" || command == "debug-continue" || command == "debug-registers"
-                || command == "debug-watch";
+                || command == "debug-watch" || command == "debug-break" || command == "debug-step";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -83,20 +83,30 @@ namespace mpfshost
                 error = "--repeat and --clear are only valid for --client scatter";
                 return false;
             }
-            if (command != "debug-registers" && options.vcpuSet)
+            if (command != "debug-registers" && command != "debug-step" && options.vcpuSet)
             {
-                error = "--vcpu is only valid for --client debug-registers";
+                error = "--vcpu is only valid for --client debug-registers and debug-step";
                 return false;
             }
-            if (command == "debug-registers" && options.vcpuSet && options.vcpu >= kMaxDebugVcpuRecords)
+            if ((command == "debug-registers" || command == "debug-step") && options.vcpuSet
+                && options.vcpu >= kMaxDebugVcpuRecords)
             {
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
-            if (command != "debug-watch"
-                && (options.watchWidthSet || options.watchAccessSet || options.maxHitsSet || options.watchTimeoutSet))
+            if (command != "debug-watch" && (options.watchWidthSet || options.watchAccessSet || options.maxHitsSet))
             {
-                error = "--width, --access, --max-hits and --timeout are only valid for --client debug-watch";
+                error = "--width, --access and --max-hits are only valid for --client debug-watch";
+                return false;
+            }
+            if (command != "debug-watch" && command != "debug-break" && options.watchTimeoutSet)
+            {
+                error = "--timeout is only valid for --client debug-watch and debug-break";
+                return false;
+            }
+            if (command != "debug-break" && options.breakpointKindSet)
+            {
+                error = "--kind is only valid for --client debug-break";
                 return false;
             }
             if (command == "debug-watch")
@@ -112,12 +122,13 @@ namespace mpfshost
                     error = "--max-hits must be between 1 and " + std::to_string(kMaxDebugWatchHits);
                     return false;
                 }
-                if (options.watchTimeoutSeconds == 0 || options.watchTimeoutSeconds > kMaxDebugWatchTimeoutMs / 1000)
-                {
-                    error = "--timeout must be between 1 and " + std::to_string(kMaxDebugWatchTimeoutMs / 1000)
-                          + " seconds";
-                    return false;
-                }
+            }
+            if ((command == "debug-watch" || command == "debug-break")
+                && (options.watchTimeoutSeconds == 0 || options.watchTimeoutSeconds > kMaxDebugWatchTimeoutMs / 1000))
+            {
+                error =
+                    "--timeout must be between 1 and " + std::to_string(kMaxDebugWatchTimeoutMs / 1000) + " seconds";
+                return false;
             }
             if (options.pid == kPhysicalPid && !commandSupportsPhysicalMemory(command))
             {
@@ -161,6 +172,14 @@ namespace mpfshost
                 if (options.pid == 0 || !options.addressSet)
                 {
                     error = "--client debug-watch needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "debug-break")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client debug-break needs --pid and --address";
                     return false;
                 }
             }
@@ -507,6 +526,30 @@ namespace mpfshost
                 }
                 options.watchAccess    = mpfshost::DebugWatchAccess::Write;
                 options.watchAccessSet = true;
+                continue;
+            }
+            if (argument == "--kind")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--kind only accepts software or hardware";
+                    return std::nullopt;
+                }
+                const std::string_view value {args[++index]};
+                if (value == "software")
+                {
+                    options.breakpointKind = mpfshost::DebugBreakpointKind::Software;
+                }
+                else if (value == "hardware")
+                {
+                    options.breakpointKind = mpfshost::DebugBreakpointKind::Hardware;
+                }
+                else
+                {
+                    error = "--kind only accepts software or hardware";
+                    return std::nullopt;
+                }
+                options.breakpointKindSet = true;
                 continue;
             }
             if (argument == "--max-hits")

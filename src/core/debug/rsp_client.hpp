@@ -109,8 +109,15 @@ namespace mpfshost::debug
                                             std::uint32_t             size,
                                             std::chrono::milliseconds timeout,
                                             std::string&              error);
+        [[nodiscard]] bool
+        insertBreakpoint(std::uint64_t address, bool hardware, std::chrono::milliseconds timeout, std::string& error);
+        [[nodiscard]] bool
+        removeBreakpoint(std::uint64_t address, bool hardware, std::chrono::milliseconds timeout, std::string& error);
         // Writes the continue packet and returns at once; pollPacket then waits for the stop reply.
         [[nodiscard]] bool continueExecution(std::chrono::milliseconds timeout, std::string& error);
+        // Writes the single-step packet and returns at once; pollPacket then waits for the stop reply.
+        [[nodiscard]] bool
+        stepExecution(std::string_view thread, std::chrono::milliseconds timeout, std::string& error);
         // Reads whatever the stub has sent without blocking past the timeout. A partial packet is kept for the
         // next call, so a short poll does not lose a stop reply that arrives in pieces.
         [[nodiscard]] RspPollResult

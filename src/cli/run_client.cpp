@@ -34,6 +34,39 @@ namespace mpfshost::cli
                 }
             }
         }
+
+        void printDebugRecord(const mpfshost::DebugRegisterRecord& record)
+        {
+            std::printf("vcpu %u  thread %s\n", static_cast<unsigned>(record.vcpu), record.threadId.c_str());
+            std::printf("  rip=0x%016llx  rsp=0x%016llx  rbp=0x%016llx  eflags=0x%08llx\n",
+                        static_cast<unsigned long long>(record.rip),
+                        static_cast<unsigned long long>(record.rsp),
+                        static_cast<unsigned long long>(record.rbp),
+                        static_cast<unsigned long long>(record.eflags));
+            std::printf("  cr0=0x%016llx  cr3=0x%016llx  cr4=0x%016llx  cr8=0x%016llx\n",
+                        static_cast<unsigned long long>(record.cr0),
+                        static_cast<unsigned long long>(record.cr3),
+                        static_cast<unsigned long long>(record.cr4),
+                        static_cast<unsigned long long>(record.cr8));
+            std::printf("  rax=0x%016llx  rbx=0x%016llx  rcx=0x%016llx  rdx=0x%016llx\n",
+                        static_cast<unsigned long long>(record.rax),
+                        static_cast<unsigned long long>(record.rbx),
+                        static_cast<unsigned long long>(record.rcx),
+                        static_cast<unsigned long long>(record.rdx));
+            std::printf("  rsi=0x%016llx  rdi=0x%016llx  r8 =0x%016llx  r9 =0x%016llx\n",
+                        static_cast<unsigned long long>(record.rsi),
+                        static_cast<unsigned long long>(record.rdi),
+                        static_cast<unsigned long long>(record.r8),
+                        static_cast<unsigned long long>(record.r9));
+            std::printf("  r10=0x%016llx  r11=0x%016llx  r12=0x%016llx  r13=0x%016llx\n",
+                        static_cast<unsigned long long>(record.r10),
+                        static_cast<unsigned long long>(record.r11),
+                        static_cast<unsigned long long>(record.r12),
+                        static_cast<unsigned long long>(record.r13));
+            std::printf("  r14=0x%016llx  r15=0x%016llx\n",
+                        static_cast<unsigned long long>(record.r14),
+                        static_cast<unsigned long long>(record.r15));
+        }
     } // namespace
 
     int runClient(const ClientOptions& options)
@@ -1624,35 +1657,7 @@ namespace mpfshost::cli
 
             for (const auto& record : *records)
             {
-                std::printf("vcpu %u  thread %s\n", static_cast<unsigned>(record.vcpu), record.threadId.c_str());
-                std::printf("  rip=0x%016llx  rsp=0x%016llx  rbp=0x%016llx  eflags=0x%08llx\n",
-                            static_cast<unsigned long long>(record.rip),
-                            static_cast<unsigned long long>(record.rsp),
-                            static_cast<unsigned long long>(record.rbp),
-                            static_cast<unsigned long long>(record.eflags));
-                std::printf("  cr0=0x%016llx  cr3=0x%016llx  cr4=0x%016llx  cr8=0x%016llx\n",
-                            static_cast<unsigned long long>(record.cr0),
-                            static_cast<unsigned long long>(record.cr3),
-                            static_cast<unsigned long long>(record.cr4),
-                            static_cast<unsigned long long>(record.cr8));
-                std::printf("  rax=0x%016llx  rbx=0x%016llx  rcx=0x%016llx  rdx=0x%016llx\n",
-                            static_cast<unsigned long long>(record.rax),
-                            static_cast<unsigned long long>(record.rbx),
-                            static_cast<unsigned long long>(record.rcx),
-                            static_cast<unsigned long long>(record.rdx));
-                std::printf("  rsi=0x%016llx  rdi=0x%016llx  r8 =0x%016llx  r9 =0x%016llx\n",
-                            static_cast<unsigned long long>(record.rsi),
-                            static_cast<unsigned long long>(record.rdi),
-                            static_cast<unsigned long long>(record.r8),
-                            static_cast<unsigned long long>(record.r9));
-                std::printf("  r10=0x%016llx  r11=0x%016llx  r12=0x%016llx  r13=0x%016llx\n",
-                            static_cast<unsigned long long>(record.r10),
-                            static_cast<unsigned long long>(record.r11),
-                            static_cast<unsigned long long>(record.r12),
-                            static_cast<unsigned long long>(record.r13));
-                std::printf("  r14=0x%016llx  r15=0x%016llx\n",
-                            static_cast<unsigned long long>(record.r14),
-                            static_cast<unsigned long long>(record.r15));
+                printDebugRecord(record);
             }
             return 0;
         }
@@ -1727,6 +1732,78 @@ namespace mpfshost::cli
                 mpfshost::log::error("client", end->error);
             }
             return end->status == mpfshost::DebugWatchStatus::Completed ? 0 : 1;
+        }
+
+        if (options.command == "debug-break")
+        {
+            const auto response = mpfshost::debugBreakpoint(options.socketPath,
+                                                            {options.target,
+                                                             options.pid,
+                                                             options.address,
+                                                             options.breakpointKind,
+                                                             options.watchTimeoutSeconds * 1000},
+                                                            error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            if (response->status == mpfshost::DebugBreakpointStatus::Hit)
+            {
+                std::printf(
+                    "hit  vcpu %u  thread %s\n", static_cast<unsigned>(response->vcpu), response->threadId.c_str());
+                std::printf("  address=0x%016llx  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
+                            static_cast<unsigned long long>(response->address),
+                            static_cast<unsigned long long>(response->rip),
+                            static_cast<unsigned long long>(response->rsp),
+                            static_cast<unsigned long long>(response->cr3));
+                if (!response->module.empty())
+                {
+                    std::printf("  module=%s+0x%llx\n",
+                                response->module.c_str(),
+                                static_cast<unsigned long long>(response->moduleOffset));
+                }
+                if (response->exportFound)
+                {
+                    std::printf("  export=%s+0x%llx\n",
+                                response->exportName.empty() ? "?" : response->exportName.c_str(),
+                                static_cast<unsigned long long>(response->exportOffset));
+                }
+                if (response->pdbFound)
+                {
+                    std::printf("  symbol=%s+0x%x\n", response->pdbSymbol.c_str(), response->pdbDisplacement);
+                }
+                if (!response->bytesAtRip.empty())
+                {
+                    std::printf("  bytes=");
+                    for (const auto value : response->bytesAtRip)
+                    {
+                        std::printf("%02x", std::to_integer<unsigned>(value));
+                    }
+                    std::printf("\n");
+                }
+            }
+            std::printf("%s  skipped=%u\n",
+                        std::string {mpfshost::debugBreakpointStatusName(response->status)}.c_str(),
+                        static_cast<unsigned>(response->skippedCount));
+            if (!response->error.empty())
+            {
+                mpfshost::log::error("client", response->error);
+            }
+            return response->status == mpfshost::DebugBreakpointStatus::Hit ? 0 : 1;
+        }
+
+        if (options.command == "debug-step")
+        {
+            const auto response =
+                mpfshost::debugStep(options.socketPath, {options.target, options.vcpuSet ? options.vcpu : 0}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            printDebugRecord(response->record);
+            return 0;
         }
 
         if (options.command == "search")

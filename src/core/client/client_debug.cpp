@@ -185,4 +185,69 @@ namespace mpfshost
             return std::nullopt;
         }
     }
+
+    std::optional<DebugBreakpointResponse>
+    debugBreakpoint(const std::filesystem::path& socketPath, const DebugBreakpointQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(),
+                     MessageType::DebugBreakpointRequest,
+                     encodeDebugBreakpointRequest({query.pid, query.address, query.kind, query.timeoutMs}),
+                     error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugBreakpointResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugBreakpointResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug breakpoint response";
+        }
+        return decoded;
+    }
+
+    std::optional<DebugStepResponse>
+    debugStep(const std::filesystem::path& socketPath, const DebugStepQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(), MessageType::DebugStepRequest, encodeDebugStepRequest({query.vcpu}), error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugStepResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugStepResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug step response";
+        }
+        return decoded;
+    }
 } // namespace mpfshost

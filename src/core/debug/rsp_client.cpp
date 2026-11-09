@@ -33,6 +33,30 @@ namespace mpfshost::debug
             return left > std::chrono::milliseconds::zero() ? left : std::chrono::milliseconds::zero();
         }
 
+        std::string hexAddress(std::uint64_t address)
+        {
+            static constexpr char digits[] = "0123456789abcdef";
+            std::string           text;
+            bool                  started = false;
+            for (int shift = 60; shift >= 0; shift -= 4)
+            {
+                const auto digit = (address >> shift) & 0x0F;
+                if (digit != 0)
+                {
+                    started = true;
+                }
+                if (started)
+                {
+                    text.push_back(digits[digit]);
+                }
+            }
+            if (!started)
+            {
+                text.push_back('0');
+            }
+            return text;
+        }
+
         bool
         waitForDescriptor(int fd, short events, std::chrono::milliseconds timeout, bool& closed, std::string& error)
         {
@@ -821,11 +845,41 @@ namespace mpfshost::debug
         return checkAccepted(command, timeout, error);
     }
 
+    bool RspClient::insertBreakpoint(std::uint64_t             address,
+                                     bool                      hardware,
+                                     std::chrono::milliseconds timeout,
+                                     std::string&              error)
+    {
+        const auto command = (hardware ? "Z1," : "Z0,") + hexAddress(address) + ",1";
+        return checkAccepted(command, timeout, error);
+    }
+
+    bool RspClient::removeBreakpoint(std::uint64_t             address,
+                                     bool                      hardware,
+                                     std::chrono::milliseconds timeout,
+                                     std::string&              error)
+    {
+        const auto command = (hardware ? "z1," : "z0,") + hexAddress(address) + ",1";
+        return checkAccepted(command, timeout, error);
+    }
+
     bool RspClient::continueExecution(std::chrono::milliseconds timeout, std::string& error)
     {
         // QEMU advertises `vContSupported+` rather than listing each vCont action. Plain `c` is not enough for
         // its all-stop gdbstub to run every vCPU, so prefer vCont whenever the stub mentions it.
         const auto command = _supported.find("vCont") != std::string::npos ? "vCont;c" : "c";
+        return writePacketOnly(command, timeout, error);
+    }
+
+    bool RspClient::stepExecution(std::string_view thread, std::chrono::milliseconds timeout, std::string& error)
+    {
+        // A bare vCont action applies to every thread, so name the selected vCPU explicitly. Plain `s` remains
+        // the fallback for a stub that does not advertise vCont and honours the Hg selection instead.
+        std::string command {"s"};
+        if (_supported.find("vCont") != std::string::npos)
+        {
+            command = "vCont;s:" + std::string {thread};
+        }
         return writePacketOnly(command, timeout, error);
     }
 

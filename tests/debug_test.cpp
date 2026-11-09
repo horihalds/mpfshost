@@ -235,6 +235,70 @@ TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec
     REQUIRE_FALSE(mpfshost::decodeDebugWatchEnd({}).has_value());
 }
 
+TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]")
+{
+    const auto request = mpfshost::decodeDebugBreakpointRequest(
+        mpfshost::encodeDebugBreakpointRequest({9, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 2500}));
+    REQUIRE(request.has_value());
+    REQUIRE(request->pid == 9);
+    REQUIRE(request->address == 0x7ff84522b1f1ull);
+    REQUIRE(request->kind == mpfshost::DebugBreakpointKind::Hardware);
+    REQUIRE(request->timeoutMs == 2500);
+
+    mpfshost::DebugBreakpointResponse response;
+    response.status          = mpfshost::DebugBreakpointStatus::Hit;
+    response.skippedCount    = 1;
+    response.error           = "none";
+    response.vcpu            = 3;
+    response.threadId        = "p01.04";
+    response.rip             = 0x7ff84522b1f1ull;
+    response.rsp             = 0x1234;
+    response.cr3             = 0x200123;
+    response.address         = 0x7ff84522b1f1ull;
+    response.bytesAtRip      = {std::byte {0x90}, std::byte {0xC3}};
+    response.module          = "msvcrt.dll";
+    response.moduleOffset    = 0x7b1f1;
+    response.exportFound     = true;
+    response.exportAddress   = 0x7ff84522b180;
+    response.exportOffset    = 0x71;
+    response.exportName      = "memcpy";
+    response.pdbFound        = true;
+    response.pdbSymbol       = "memcpy";
+    response.pdbDisplacement = 4;
+
+    const auto decoded = mpfshost::decodeDebugBreakpointResponse(mpfshost::encodeDebugBreakpointResponse(response));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(decoded->skippedCount == 1);
+    REQUIRE(decoded->threadId == "p01.04");
+    REQUIRE(decoded->rip == response.rip);
+    REQUIRE(decoded->bytesAtRip.size() == 2);
+    REQUIRE(decoded->module == "msvcrt.dll");
+    REQUIRE(decoded->exportFound);
+    REQUIRE(decoded->pdbFound);
+
+    const auto stepRequest = mpfshost::decodeDebugStepRequest(mpfshost::encodeDebugStepRequest({2}));
+    REQUIRE(stepRequest.has_value());
+    REQUIRE(stepRequest->vcpu == 2);
+
+    mpfshost::DebugStepResponse step;
+    step.record.vcpu       = 2;
+    step.record.threadId   = "p01.03";
+    step.record.rip        = 0x1234;
+    step.record.cr3        = 0x200123;
+    step.record.r15        = 0x55;
+    const auto decodedStep = mpfshost::decodeDebugStepResponse(mpfshost::encodeDebugStepResponse(step));
+    REQUIRE(decodedStep.has_value());
+    REQUIRE(decodedStep->record.vcpu == 2);
+    REQUIRE(decodedStep->record.rip == 0x1234);
+    REQUIRE(decodedStep->record.r15 == 0x55);
+
+    REQUIRE_FALSE(mpfshost::decodeDebugBreakpointRequest({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugBreakpointResponse({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugStepRequest({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugStepResponse({}).has_value());
+}
+
 TEST_CASE("debug requests report the fake status and control action", "[core][debug][session]")
 {
     DebugFixture  fixture;
@@ -291,6 +355,8 @@ TEST_CASE("debug capabilities are listed", "[core][debug][session]")
     REQUIRE(has(mpfshost::MessageType::DebugStateRequest));
     REQUIRE(has(mpfshost::MessageType::DebugControlRequest));
     REQUIRE(has(mpfshost::MessageType::DebugWatchRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugBreakpointRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugStepRequest));
 }
 
 TEST_CASE("a handle without the debug provider reports a capability error", "[core][debug][session]")
@@ -420,6 +486,55 @@ TEST_CASE("debug watch hits stream through the fake backend", "[core][debug][ses
     REQUIRE(fixture.backend().debugState()->lastWatchRequest.has_value());
     REQUIRE(fixture.backend().debugState()->lastWatchRequest->pid == 42);
     REQUIRE(fixture.backend().debugState()->lastWatchRequest->maxHits == 2);
+}
+
+TEST_CASE("debug breakpoints and single steps are delivered through the fake backend", "[core][debug][session]")
+{
+    DebugFixture fixture;
+
+    mpfshost::DebugBreakpointResponse response;
+    response.status   = mpfshost::DebugBreakpointStatus::Hit;
+    response.vcpu     = 1;
+    response.threadId = "p01.02";
+    response.rip      = 0x1000;
+    response.address  = 0x1000;
+    fixture.backend().setDebugBreakpoint(response);
+
+    mpfshost::DebugStepResponse step;
+    step.record.vcpu     = 1;
+    step.record.threadId = "p01.02";
+    step.record.rip      = 0x1004;
+    fixture.backend().setDebugStep(step);
+
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  breakpoint = mpfshost::debugBreakpoint(
+        fixture.socketPath(), {"vm1", 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 5000}, error);
+    REQUIRE(breakpoint.has_value());
+    REQUIRE(breakpoint->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(fixture.backend().debugState()->breakpointCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastBreakpointRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastBreakpointRequest->kind == mpfshost::DebugBreakpointKind::Hardware);
+
+    const auto singleStep = mpfshost::debugStep(fixture.socketPath(), {"vm1", 1}, error);
+    REQUIRE(singleStep.has_value());
+    REQUIRE(singleStep->record.rip == 0x1004);
+    REQUIRE(fixture.backend().debugState()->stepCalls == 1);
+    REQUIRE(fixture.backend().debugState()->lastStepRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastStepRequest->vcpu == 1);
+}
+
+TEST_CASE("a running guest is reported as an invalid state for a single step", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().failDebugStepWith("the guest must be paused before it can be single-stepped", true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  response = mpfshost::debugStep(fixture.socketPath(), {"vm1", 0}, error);
+    REQUIRE_FALSE(response.has_value());
+    REQUIRE(error.find("must be paused") != std::string::npos);
 }
 
 TEST_CASE("a handle without the debug provider cannot run a watch", "[core][debug][session]")
