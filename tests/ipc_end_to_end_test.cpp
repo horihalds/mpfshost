@@ -1140,6 +1140,69 @@ TEST_CASE("client resolves a module by address through the host", "[ipc][client]
     REQUIRE(backend.moduleLookupState()->lastAddressRequest->pid == 4321);
 }
 
+TEST_CASE("client resolves an address to module, export and pdb symbol", "[ipc][client][module]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+
+    mpfshost::ModuleByAddressResponse module;
+    module.base      = 0x7ff8451b0000ull;
+    module.entry     = 0x7ff8451b1000ull;
+    module.imageSize = 0x200000;
+    module.offset    = 0x7b1f1;
+    module.kind      = 2;
+    module.name      = "msvcrt.dll";
+    module.fullName  = "C:\\Windows\\System32\\msvcrt.dll";
+    backend.setModuleByAddressResponse(module);
+    backend.moduleTableState()->exports = {
+        {0x7ff84522b180ull, 1, 0, 0, "memcpy", {}},
+        {0x7ff84522b100ull, 2, 0, 0, "memset", {}},
+    };
+    backend.setPdbSymbolNameResponse({"memcpy_internal", 0x71});
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    std::string error;
+    const auto  resolved = mpfshost::resolveAddress(fixture.socketPath(), {"vm-alpha", 4321, 0x7ff84522b1f1ull}, error);
+
+    REQUIRE(resolved.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(resolved->moduleFound);
+    REQUIRE(resolved->module == "msvcrt.dll");
+    REQUIRE(resolved->moduleOffset == 0x7b1f1);
+    REQUIRE(resolved->exportFound);
+    REQUIRE(resolved->exportName == "memcpy");
+    REQUIRE(resolved->exportAddress == 0x7ff84522b180ull);
+    REQUIRE(resolved->exportOffset == 0x71);
+    REQUIRE(resolved->pdbFound);
+    REQUIRE(resolved->pdbSymbol == "memcpy_internal");
+    REQUIRE(resolved->pdbDisplacement == 0x71);
+    REQUIRE(backend.moduleLookupState()->lastAddressRequest->pid == 4321);
+    REQUIRE(backend.pdbState()->lastNameRequest->address == 0x7b1f1);
+}
+
+TEST_CASE("client reports an address outside every module as unresolved", "[ipc][client][module]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.failModuleByAddressWith("address is not inside a module", mpfshost::LookupStatus::NotFound);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    std::string error;
+    const auto  resolved = mpfshost::resolveAddress(fixture.socketPath(), {"vm-alpha", 4321, 0x1234}, error);
+
+    REQUIRE(resolved.has_value());
+    REQUIRE(error.empty());
+    REQUIRE_FALSE(resolved->moduleFound);
+}
+
 TEST_CASE("client finds a process by dtb through the host", "[ipc][client][process]")
 {
     EndToEndFixture                     fixture;

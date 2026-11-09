@@ -248,6 +248,39 @@ namespace mpfshost
     [[nodiscard]] std::optional<ModuleByAddressResponse>
     moduleByAddress(const std::filesystem::path& socketPath, const ModuleByAddressQuery& query, std::string& error);
 
+    struct AddressResolutionQuery
+    {
+        std::string   targetName;
+        std::uint32_t pid {};
+        std::uint64_t address {};
+    };
+
+    // One round of symbol work for an absolute process virtual address. `moduleFound` is false when no loaded
+    // module contains the address; the export and PDB lookups are then skipped. Missing exports and missing PDB
+    // symbols are reported by their `found` flags instead of an error.
+    struct AddressResolution
+    {
+        bool          moduleFound {};
+        std::string   module;
+        std::string   moduleFullName;
+        std::uint64_t moduleBase {};
+        std::uint64_t moduleEntry {};
+        std::uint64_t moduleImageSize {};
+        std::uint64_t moduleOffset {};
+        std::uint16_t moduleKind {};
+        bool          moduleWow64 {};
+        bool          exportFound {};
+        std::uint64_t exportAddress {};
+        std::uint64_t exportOffset {};
+        std::string   exportName;
+        bool          pdbFound {};
+        std::string   pdbSymbol;
+        std::uint32_t pdbDisplacement {};
+    };
+
+    [[nodiscard]] std::optional<AddressResolution>
+    resolveAddress(const std::filesystem::path& socketPath, const AddressResolutionQuery& query, std::string& error);
+
     struct MemoryMapQuery
     {
         std::string   targetName;

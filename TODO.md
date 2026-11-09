@@ -13,25 +13,7 @@ The tasks below implement the design in `RESEARCH.md` as vertical slices. Later 
 The live checks are run by the user, as required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so`
 and root.
 
-### 1. Add address resolution and watch-hit ergonomics
-
-Make a hit directly usable without several client round trips.
-
-- Add a client-side `resolveAddress(pid, address)` helper that combines `moduleByAddress`, nearest export and an
-  optional already-loaded PDB symbol. Expose it as an MCP tool and a CLI command; keep it out of the wire protocol
-  unless the composition proves too chatty.
-- Add an optional conservative x86-64 decoder for the bytes before `rip` so a write watchpoint can report the
-  instruction that actually performed the store rather than only the trap-after PC. If the decoder is deferred, make
-  sure `bytesBefore` is always present and documented.
-- Optionally unwind the stack from the hit's `rsp` by reading return addresses through MemProcFS and symbolizing
-  them. Keep this additive and bounded (`kMaxCallstackFrames`).
-- Tests: module/export/PDB precedence, address outside every module, malformed or truncated bytes, and decoder edge
-  cases if the decoder lands.
-
-Acceptance: one command or tool call turns an absolute RIP into module, offset, nearest export and optional PDB
-symbol, and the watch output identifies the store when the decoder is available.
-
-### 2. Add breakpoints and single-step
+### 1. Add breakpoints and single-step
 
 Only start this after the write-watch path is solid on a live guest.
 

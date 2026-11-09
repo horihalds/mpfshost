@@ -44,6 +44,7 @@ add_executable(mpfshost_tests
     ipc_end_to_end_test.cpp
     physical_test.cpp
     vfs_test.cpp
+    x86_decoder_test.cpp
 )
 mpfshost_set_common_flags(mpfshost_tests)
 

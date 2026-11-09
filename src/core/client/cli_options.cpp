@@ -60,8 +60,9 @@ namespace mpfshost
                 || command == "pool-tags" || command == "pfn" || command == "vadex" || command == "pdb-load"
                 || command == "pdb-symbol" || command == "pdb-address" || command == "pdb-type-size"
                 || command == "pdb-type-child" || command == "config-set" || command == "module-at"
-                || command == "process-for-dtb" || command == "debug-status" || command == "debug-stop"
-                || command == "debug-continue" || command == "debug-registers" || command == "debug-watch";
+                || command == "resolve" || command == "process-for-dtb" || command == "debug-status"
+                || command == "debug-stop" || command == "debug-continue" || command == "debug-registers"
+                || command == "debug-watch";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -144,6 +145,14 @@ namespace mpfshost
                 if (options.pid == 0 || !options.addressSet)
                 {
                     error = "--client module-at needs --pid and --address";
+                    return false;
+                }
+            }
+            else if (command == "resolve")
+            {
+                if (options.pid == 0 || !options.addressSet)
+                {
+                    error = "--client resolve needs --pid and --address";
                     return false;
                 }
             }

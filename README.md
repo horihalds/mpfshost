@@ -162,6 +162,7 @@ to it automatically.
  `--client modules <vm>` | Loaded modules of a process; `--counts`, `--debug`, `--version-info`. |
  `--client symbol <vm>` | Module base and, with `--symbol`, an export address. |
  `--client module-at <vm>` | Module containing a process virtual address; `--address`. |
+ `--client resolve <vm>` | One-call resolution of `--address` to module, offset, nearest export and optional PDB symbol. |
  `--client pdb-load <vm>` | Load the pdb of the module at `--address` and report its module name. |
  `--client pdb-symbol <vm>` | Resolve `--address` to a pdb symbol name and displacement in `--module`. |
  `--client pdb-address <vm>` | Resolve `--symbol` to its address in `--module`. |
@@ -187,7 +188,7 @@ to it automatically.
  `--client debug-stop <vm>` | Pause the guest through QEMU's QMP socket (destructive). |
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
- `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Destructive. |
+ `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Prints the trapped store when it can be decoded. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
  `--client scatter <vm>` | Several process ranges in one batch; repeat `--range`; `--repeat <n>` re-reads the prepared ranges, `--clear` clears the handle before closing. |
  `--client vquery <vm>` | Region, protection and type of a virtual address. |
@@ -208,7 +209,7 @@ Common options:
  `--name <text>` | Case-insensitive substring filter (for `proc-info`: the name to resolve). |
  `--module <name>` | Module for `symbol`, `sections`, `eat`, `iat`, `pdb-symbol`, `pdb-address`, `pdb-type-size`, `pdb-type-child`. |
  `--symbol <name>`, `--type <name>`, `--child <name>` | Symbol for `pdb-address`; struct type for `pdb-type-size` / `pdb-type-child`; child member for `pdb-type-child`. |
- `--address <hex>`, `--size <n>`, `--data <hex bytes>` | Address, decimal byte count and bytes for read/write commands; `pdb-load` takes the module base in `--address`; `module-at` takes the virtual address. |
+ `--address <hex>`, `--size <n>`, `--data <hex bytes>` | Address, decimal byte count and bytes for read/write commands; `pdb-load` takes the module base in `--address`; `module-at` and `resolve` take a process virtual address. |
  `--dtb <hex>` | CR3 or directory table base for `process-for-dtb`; `--cr3` is an alias and the low twelve flag bits are ignored. |
  `--range <hex>:<size>` | Repeatable range for `scatter`, `phys-scatter`, `page`, `prefetch`. |
  `--repeat <n>`, `--clear` | Repeat a `scatter` read (`n` rounds) and/or clear the handle before closing. |
@@ -321,6 +322,7 @@ guest; use them deliberately. The host's own `--allow-vfs-write` check still app
  `list_modules` | Loaded modules of a process. |
  `lookup_symbol` | Module base and export address. |
  `module_at_address` | Module that contains a process virtual address. |
+ `resolve_address` | Module, nearest export and optional PDB symbol for an absolute address. |
  `pdb_load` | Load the PDB of a module at an address. |
  `pdb_symbol_name` | Address to PDB symbol and displacement. |
  `pdb_symbol_address` | PDB symbol to address. |

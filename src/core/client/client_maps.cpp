@@ -121,6 +121,128 @@ namespace mpfshost
         return decoded;
     }
 
+    std::optional<AddressResolution>
+    resolveAddress(const std::filesystem::path& socketPath, const AddressResolutionQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto moduleRequest = exchange(connection->fd(),
+                                            MessageType::ModuleByAddressRequest,
+                                            encodeModuleByAddressRequest({query.pid, query.address}),
+                                            error);
+        if (!moduleRequest)
+        {
+            return std::nullopt;
+        }
+
+        ErrorCode  moduleError = ErrorCode::Internal;
+        const auto modulePayload =
+            expectResponse(*moduleRequest, MessageType::ModuleByAddressResponse, error, &moduleError);
+        if (!modulePayload)
+        {
+            if (moduleError == ErrorCode::NotFound)
+            {
+                error.clear();
+                return AddressResolution {};
+            }
+            return std::nullopt;
+        }
+
+        const auto module = decodeModuleByAddressResponse(*modulePayload);
+        if (!module)
+        {
+            error = "server returned a malformed module-by-address response";
+            return std::nullopt;
+        }
+
+        AddressResolution resolution;
+        resolution.moduleFound     = true;
+        resolution.module          = module->name;
+        resolution.moduleFullName  = module->fullName;
+        resolution.moduleBase      = module->base;
+        resolution.moduleEntry     = module->entry;
+        resolution.moduleImageSize = module->imageSize;
+        resolution.moduleOffset    = module->offset;
+        resolution.moduleKind      = module->kind;
+        resolution.moduleWow64     = module->wow64;
+
+        const auto exports = exchangeStreamed(connection->fd(),
+                                              MessageType::ExportListRequest,
+                                              encodeExportListRequest({query.pid, module->name}),
+                                              MessageType::ExportListEnd,
+                                              error);
+        if (!exports)
+        {
+            return std::nullopt;
+        }
+
+        const auto exportEnd = decodeExportListEnd(exports->endPayload);
+        if (!exportEnd)
+        {
+            error = "server returned a malformed export list end";
+            return std::nullopt;
+        }
+
+        if (exportEnd->status == 0)
+        {
+            std::optional<ExportDescriptor> best;
+            for (const auto& frame : exports->data)
+            {
+                const auto decoded = decodeExportListData(frame);
+                if (!decoded)
+                {
+                    error = "server returned malformed export list data";
+                    return std::nullopt;
+                }
+                for (const auto& entry : decoded->exports)
+                {
+                    if (entry.vaFunction == 0 || entry.vaFunction > query.address)
+                    {
+                        continue;
+                    }
+                    if (!best.has_value() || entry.vaFunction > best->vaFunction
+                        || (entry.vaFunction == best->vaFunction && best->function.empty()))
+                    {
+                        best = entry;
+                    }
+                }
+            }
+            if (best.has_value())
+            {
+                resolution.exportFound   = true;
+                resolution.exportAddress = best->vaFunction;
+                resolution.exportOffset  = query.address - best->vaFunction;
+                resolution.exportName    = best->function;
+            }
+        }
+
+        // A missing or unloaded PDB is normal; only a well-formed symbol response is recorded.
+        std::string pdbError;
+        const auto  pdbRequest = exchange(connection->fd(),
+                                          MessageType::PdbSymbolNameRequest,
+                                          encodePdbSymbolNameRequest({module->name, module->offset}),
+                                          pdbError);
+        if (pdbRequest && pdbRequest->type != MessageType::ErrorResponse)
+        {
+            if (const auto pdbPayload = expectResponse(*pdbRequest, MessageType::PdbSymbolNameResponse, pdbError))
+            {
+                if (const auto pdb = decodePdbSymbolNameResponse(*pdbPayload))
+                {
+                    resolution.pdbFound        = true;
+                    resolution.pdbSymbol       = pdb->symbol;
+                    resolution.pdbDisplacement = pdb->displacement;
+                }
+            }
+        }
+
+        return resolution;
+    }
+
     std::optional<std::vector<MemoryMapRegion>>
     listMemoryMap(const std::filesystem::path& socketPath, const MemoryMapQuery& query, std::string& error)
     {

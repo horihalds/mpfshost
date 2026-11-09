@@ -4,6 +4,7 @@
 #include "cli/render.hpp"
 #include "cli/run_client.hpp"
 #include "core/client/client.hpp"
+#include "core/debug/x86_decoder.hpp"
 #include "core/log/log.hpp"
 #include "core/util/display.hpp"
 #include "core/util/hex.hpp"
@@ -214,6 +215,48 @@ namespace mpfshost::cli
             std::printf("offset=%s\n", hexPointer(response->offset).c_str());
             std::printf("kind=%u\n", static_cast<unsigned>(response->kind));
             std::printf("wow64=%s\n", response->wow64 ? "yes" : "no");
+            return 0;
+        }
+
+        if (options.command == "resolve")
+        {
+            const auto response =
+                mpfshost::resolveAddress(options.socketPath, {options.target, options.pid, options.address}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+
+            std::printf("address=%s\n", hexPointer(options.address).c_str());
+            if (!response->moduleFound)
+            {
+                std::printf("module=<none>\n");
+                return 0;
+            }
+            std::printf("module=%s\n", response->module.c_str());
+            std::printf("full-name=%s\n", response->moduleFullName.c_str());
+            std::printf("base=%s\n", hexPointer(response->moduleBase).c_str());
+            std::printf("offset=%s\n", hexPointer(response->moduleOffset).c_str());
+            if (response->exportFound)
+            {
+                std::printf("export=%s\n", response->exportName.empty() ? "?" : response->exportName.c_str());
+                std::printf("export-address=%s\n", hexPointer(response->exportAddress).c_str());
+                std::printf("export-offset=%s\n", hexPointer(response->exportOffset).c_str());
+            }
+            else
+            {
+                std::printf("export=<none>\n");
+            }
+            if (response->pdbFound)
+            {
+                std::printf("symbol=%s\n", response->pdbSymbol.c_str());
+                std::printf("symbol-displacement=0x%x\n", static_cast<unsigned>(response->pdbDisplacement));
+            }
+            else
+            {
+                std::printf("symbol=<none>\n");
+            }
             return 0;
         }
 
@@ -1663,6 +1706,10 @@ namespace mpfshost::cli
                             std::printf("%02x", std::to_integer<unsigned>(value));
                         }
                         std::printf("\n");
+                        if (const auto store = mpfshost::debug::decodeStoreBefore(hit.bytesBefore))
+                        {
+                            std::printf("  store=%s\n", store->text.c_str());
+                        }
                     }
                 },
                 error);

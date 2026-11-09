@@ -238,6 +238,7 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "list_modules",
         "lookup_symbol",
         "module_at_address",
+        "resolve_address",
         "pdb_load",
         "pdb_symbol_name",
         "pdb_symbol_address",

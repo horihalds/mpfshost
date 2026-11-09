@@ -75,6 +75,7 @@ namespace
         "pdb-type-child",
         "config-set",
         "module-at",
+        "resolve",
         "process-for-dtb",
         "debug-status",
         "debug-stop",
@@ -320,6 +321,13 @@ TEST_CASE("module-at and process-for-dtb options parse", "[cli-options]")
     CHECK(moduleAt.options->addressSet);
     CHECK(moduleAt.options->address == 0x7ffb10001000ull);
 
+    const auto resolve = parse({"--client", "resolve", "vm1", "--pid", "42", "--address", "0x7ffb10001000"});
+    REQUIRE(resolve.options.has_value());
+    CHECK(resolve.options->command == "resolve");
+    CHECK(resolve.options->pid == 42u);
+    CHECK(resolve.options->addressSet);
+    CHECK(resolve.options->address == 0x7ffb10001000ull);
+
     const auto dtb = parse({"--client", "process-for-dtb", "vm1", "--dtb", "0x1aafff"});
     REQUIRE(dtb.options.has_value());
     CHECK(dtb.options->dtbSet);
@@ -478,6 +486,7 @@ TEST_CASE("a missing required option names the command that needs it", "[cli-opt
         {                  {"--client", "symbol", "vm1"},                   "--client symbol needs --pid and --module"},
         {                {"--client", "sections", "vm1"},                 "--client sections needs --pid and --module"},
         {               {"--client", "module-at", "vm1"},               "--client module-at needs --pid and --address"},
+        {                 {"--client", "resolve", "vm1"},                 "--client resolve needs --pid and --address"},
         {         {"--client", "process-for-dtb", "vm1"},             "--client process-for-dtb needs a nonzero --dtb"},
         {                 {"--client", "modules", "vm1"},                               "--client modules needs --pid"},
         {                    {"--client", "maps", "vm1"},                                  "--client maps needs --pid"},

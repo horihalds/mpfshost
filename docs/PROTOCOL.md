@@ -137,7 +137,9 @@ range.
 ## Address lookups
 
 `ModuleByAddressRequest` carries a pid and a virtual address. The host returns the module whose half-open image range
-contains the address, plus the module-relative offset; an address outside every module is `NotFound`.
+contains the address, plus the module-relative offset; an address outside every module is `NotFound`. The client-side
+`resolve` command and MCP tool compose this lookup with `ExportListRequest` and `PdbSymbolNameRequest` in one
+convenience call; they use no additional message types.
 `ProcessByDtbRequest` carries a CR3 or directory table base. The low twelve CR3 flag bits are masked off before the
 comparison, and both `paDTB` and `paDTB_UserOpt` are candidates, so a KPTI user DTB resolves to the same process;
 `matchedUser` says which one matched. The host caches module lists per pid and one process/DTB snapshot for one second;
@@ -219,7 +221,7 @@ download is started).
  `rip`, `rsp`, `cr3` | `u64` | Registers captured at the stop |
  `address` | `u64` | Watched linear address |
  `oldValue`, `newValue` | `u64` | Previous and current watch value, little-endian |
- `bytesBefore` | bytes | Up to 16 bytes ending at `rip` |
+ `bytesBefore` | bytes | Up to 16 bytes ending at `rip`; empty only when the read failed or `rip` is zero. The client decodes the last store from these bytes when it can do so unambiguously. |
  `module` | string | Module containing `rip`, empty when none |
  `moduleOffset` | `u64` | `rip - module base` |
  `exportFound`, `exportAddress`, `exportOffset`, `exportName` | `u8`, `u64`, `u64`, string | Nearest export at or below `rip` |

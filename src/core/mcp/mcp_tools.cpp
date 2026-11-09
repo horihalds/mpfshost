@@ -1,6 +1,7 @@
 #include "core/mcp/mcp_tools.hpp"
 
 #include "core/client/client.hpp"
+#include "core/debug/x86_decoder.hpp"
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"
 #include "core/util/number.hpp"
@@ -484,26 +485,30 @@ namespace mpfshost::mcp
 
         Json debugWatchJson(const DebugWatchData& hit)
         {
+            const auto store = debug::decodeStoreBefore(hit.bytesBefore);
             return Json {
-                {       "hit_index",                 hit.hitIndex},
-                {            "vcpu",                     hit.vcpu},
-                {       "thread_id",                 hit.threadId},
-                {             "rip",           hexString(hit.rip)},
-                {             "rsp",           hexString(hit.rsp)},
-                {             "cr3",           hexString(hit.cr3)},
-                {         "address",       hexString(hit.address)},
-                {       "old_value",      hexString(hit.oldValue)},
-                {       "new_value",      hexString(hit.newValue)},
-                {          "before",   bytesJson(hit.bytesBefore)},
-                {          "module",                   hit.module},
-                {   "module_offset",   hexSmall(hit.moduleOffset)},
-                {    "export_found",              hit.exportFound},
-                {  "export_address", hexString(hit.exportAddress)},
-                {   "export_offset",   hexSmall(hit.exportOffset)},
-                {     "export_name",               hit.exportName},
-                {       "pdb_found",                 hit.pdbFound},
-                {      "pdb_symbol",                hit.pdbSymbol},
-                {"pdb_displacement",          hit.pdbDisplacement}
+                {       "hit_index",                         hit.hitIndex},
+                {            "vcpu",                             hit.vcpu},
+                {       "thread_id",                         hit.threadId},
+                {             "rip",                   hexString(hit.rip)},
+                {             "rsp",                   hexString(hit.rsp)},
+                {             "cr3",                   hexString(hit.cr3)},
+                {         "address",               hexString(hit.address)},
+                {       "old_value",              hexString(hit.oldValue)},
+                {       "new_value",              hexString(hit.newValue)},
+                {          "before",           bytesJson(hit.bytesBefore)},
+                {           "store", store ? store->text : std::string {}},
+                {    "store_offset",            store ? store->offset : 0},
+                {     "store_width",             store ? store->width : 0},
+                {          "module",                           hit.module},
+                {   "module_offset",           hexSmall(hit.moduleOffset)},
+                {    "export_found",                      hit.exportFound},
+                {  "export_address",         hexString(hit.exportAddress)},
+                {   "export_offset",           hexSmall(hit.exportOffset)},
+                {     "export_name",                       hit.exportName},
+                {       "pdb_found",                         hit.pdbFound},
+                {      "pdb_symbol",                        hit.pdbSymbol},
+                {"pdb_displacement",                  hit.pdbDisplacement}
             };
         }
 
@@ -572,6 +577,9 @@ namespace mpfshost::mcp
      {"symbol", "string", "Export name; omit to return the module base only", false}}                  },
                 {    "module_at_address",
                  "Module for an address",                                            "Find the module that contains a process virtual address.",
+                 true,                                   {target, pid, {"address", "string", "Virtual address (hex)", true}} },
+                {      "resolve_address",
+                 "Resolve an address",        "Resolve an absolute address to its module, nearest export and any already-loaded PDB symbol.",
                  true,                                   {target, pid, {"address", "string", "Virtual address (hex)", true}} },
                 {             "pdb_load",
                  "Load a PDB",                            "Load the PDB of the module at a base address and report its module name.",
@@ -1144,6 +1152,34 @@ namespace mpfshost::mcp
                     {    "offset",    hexString(response->offset)},
                     {      "kind",                 response->kind},
                     {     "wow64",                response->wow64}
+                });
+            }
+
+            if (name == "resolve_address")
+            {
+                const auto address  = hexValue(args, "address", true);
+                const auto response = resolveAddress(
+                    socket, {requireString(args, "target"), u32Value(args, "pid", true), address}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {         "address",                 hexString(address)},
+                    {    "module_found",              response->moduleFound},
+                    {          "module",                   response->module},
+                    {       "full_name",           response->moduleFullName},
+                    {            "base",    hexString(response->moduleBase)},
+                    {          "offset",  hexString(response->moduleOffset)},
+                    {            "kind",               response->moduleKind},
+                    {           "wow64",              response->moduleWow64},
+                    {    "export_found",              response->exportFound},
+                    {  "export_address", hexString(response->exportAddress)},
+                    {   "export_offset",   hexSmall(response->exportOffset)},
+                    {     "export_name",               response->exportName},
+                    {       "pdb_found",                 response->pdbFound},
+                    {      "pdb_symbol",                response->pdbSymbol},
+                    {"pdb_displacement",          response->pdbDisplacement}
                 });
             }
 

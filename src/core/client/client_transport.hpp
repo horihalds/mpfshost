@@ -57,7 +57,7 @@ namespace mpfshost::detail
         int fd, MessageType type, std::span<const std::byte> payload, MessageType endType, std::string& error);
 
     [[nodiscard]] std::optional<std::vector<std::byte>>
-    expectResponse(const Response& response, MessageType expected, std::string& error);
+    expectResponse(const Response& response, MessageType expected, std::string& error, ErrorCode* errorCode = nullptr);
 
     [[nodiscard]] std::optional<Response> request(const std::filesystem::path& socketPath,
                                                   MessageType                  type,

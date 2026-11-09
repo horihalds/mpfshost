@@ -202,13 +202,21 @@ namespace mpfshost::detail
     }
 
     std::optional<std::vector<std::byte>>
-    expectResponse(const Response& response, MessageType expected, std::string& error)
+    expectResponse(const Response& response, MessageType expected, std::string& error, ErrorCode* errorCode)
     {
+        if (errorCode != nullptr)
+        {
+            *errorCode = ErrorCode::Internal;
+        }
         if (response.type == MessageType::ErrorResponse)
         {
             if (const auto decoded = decodeErrorResponse(response.payload); decoded)
             {
                 error = decoded->message;
+                if (errorCode != nullptr)
+                {
+                    *errorCode = decoded->code;
+                }
             }
             else
             {

@@ -258,6 +258,39 @@ TEST_CASE("MCP exposes module-by-address and process-by-dtb lookups", "[mcp][too
     CHECK(lines[2].find("\"matched_user\":true") != std::string::npos);
 }
 
+TEST_CASE("MCP resolves an address through module, export and pdb", "[mcp][tools]")
+{
+    McpFixture                          fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+
+    mpfshost::ModuleByAddressResponse module;
+    module.base      = 0x7ff8451b0000ull;
+    module.imageSize = 0x200000;
+    module.offset    = 0x7b1f1;
+    module.name      = "msvcrt.dll";
+    backend.setModuleByAddressResponse(module);
+    backend.moduleTableState()->exports = {
+        {0x7ff84522b180ull, 1, 0, 0, "memcpy", {}},
+    };
+    backend.setPdbSymbolNameResponse({"memcpy_internal", 0x71});
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    const auto lines =
+        runMcp({kInitialize,
+                kInitialized,
+                toolCall(2, "resolve_address", R"({"target":"vm-alpha","pid":4321,"address":"0x7ff84522b1f1"})")},
+               fixture.socketPath());
+
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].find("\"module\":\"msvcrt.dll\"") != std::string::npos);
+    CHECK(lines[1].find("\"export_name\":\"memcpy\"") != std::string::npos);
+    CHECK(lines[1].find("\"pdb_symbol\":\"memcpy_internal\"") != std::string::npos);
+}
+
 TEST_CASE("MCP maps host and transport failures to isError results", "[mcp][tools][errors]")
 {
     SECTION("LookupStatus::NotFound")
