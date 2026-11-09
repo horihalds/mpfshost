@@ -172,6 +172,25 @@ The host detaches an attachment when its owning session disconnects, when a watc
 is cancelled, and on host shutdown. A closing session only detaches its own attachment; another client's attachment
 is left alone. `VmmHandle` destruction runs the shutdown teardown after every session has ended.
 
+### Attach and detach validation record
+
+Run on 2026-11-09 against the `windows` target (12 vCPUs) with the rebuilt host installed:
+
+- Before the run `debug-status` reported `running`, `arch=x86_64`, `stub-active=no`, `stub-owned=no`,
+  `foreign-stub=no`, `host-paused=no`, `vcpus=12`, `watches=0`.
+- `debug-attach` reported `stub-mode=unix  guest-paused=yes`; `debug-status` while it held the connection reported
+  `paused`, `stub-active=yes`, `stub-owned=yes`, `foreign-stub=no`, `host-paused=yes`.
+- A second `debug-attach` failed with `another debug session is already attached`. `debug-registers --vcpu 0`
+  reused the attached stub and returned `rip=0xfffff800aa6ac7cf`, `rsp=0xfffff8003c8ca368`, `cr3=0x1ae000`,
+  matching the earlier register validation.
+- `debug-detach` from another connection reported `stub-stopped=yes  foreign-stub=no  guest-resumed=yes
+  detached=yes`; the next `debug-status` reported `running`, `stub-active=no`, `host-paused=no`.
+- Closing the attach client with Enter also detached it and restored `running` with no stub. A `debug-status`
+  issued in the same instant as that teardown returned `Busy`; one second later the state was settled. Clients that
+  need a definitive answer after closing an attach should retry that transient error.
+- A foreign stub was not present during this run, so the `InvalidState` recovery path remains covered by unit tests
+  and the earlier stale-stub record.
+
 ## Host shutdown and stale stubs
 
 A graceful host shutdown runs `DebugController::shutdown` from the `VmmHandle` destructor, after every session has
