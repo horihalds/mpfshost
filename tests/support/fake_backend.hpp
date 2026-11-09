@@ -436,6 +436,7 @@ namespace mpfshost::testing
         DebugWatchEnd                    watchEnd;
         std::string                      watchFailure;
         bool                             watchBusy {};
+        bool                             watchNotFound {};
         std::uint32_t                    watchCalls {};
 
         std::optional<DebugBreakpointRequest> lastBreakpointRequest;
@@ -443,6 +444,7 @@ namespace mpfshost::testing
         std::string                           breakpointFailure;
         bool                                  breakpointInvalidState {};
         bool                                  breakpointBusy {};
+        bool                                  breakpointNotFound {};
         std::uint32_t                         breakpointCalls {};
 
         std::optional<DebugStepRequest> lastStepRequest;
@@ -1732,7 +1734,8 @@ namespace mpfshost::testing
                                                               const DebugWatchAbortCheck& aborted,
                                                               bool&                       busy,
                                                               std::string&                error,
-                                                              bool&                       unavailable) override
+                                                              bool&                       unavailable,
+                                                              bool&                       notFound) override
         {
             ++_debugState->watchCalls;
             _debugState->lastWatchRequest = request;
@@ -1740,6 +1743,7 @@ namespace mpfshost::testing
             {
                 busy        = _debugState->watchBusy;
                 unavailable = _debugState->failureUnavailable;
+                notFound    = _debugState->watchNotFound;
                 error       = _debugState->watchFailure;
                 return std::nullopt;
             }
@@ -1759,7 +1763,8 @@ namespace mpfshost::testing
                                                                              bool&                         invalidState,
                                                                              bool&                         busy,
                                                                              std::string&                  error,
-                                                                             bool& unavailable) override
+                                                                             bool&                         unavailable,
+                                                                             bool& notFound) override
         {
             ++_debugState->breakpointCalls;
             _debugState->lastBreakpointRequest = request;
@@ -1768,6 +1773,7 @@ namespace mpfshost::testing
                 invalidState = _debugState->breakpointInvalidState;
                 busy         = _debugState->breakpointBusy;
                 unavailable  = _debugState->failureUnavailable;
+                notFound     = _debugState->breakpointNotFound;
                 error        = _debugState->breakpointFailure;
                 return std::nullopt;
             }
@@ -2561,10 +2567,11 @@ namespace mpfshost::testing
             _debugState->watchEnd  = std::move(end);
         }
 
-        void failDebugWatchWith(std::string message, bool busy = false)
+        void failDebugWatchWith(std::string message, bool busy = false, bool notFound = false)
         {
-            _debugState->watchFailure = std::move(message);
-            _debugState->watchBusy    = busy;
+            _debugState->watchFailure  = std::move(message);
+            _debugState->watchBusy     = busy;
+            _debugState->watchNotFound = notFound;
         }
 
         void setDebugBreakpoint(DebugBreakpointResponse response)
@@ -2572,11 +2579,15 @@ namespace mpfshost::testing
             _debugState->breakpointResponse = std::move(response);
         }
 
-        void failDebugBreakpointWith(std::string message, bool invalidState = false, bool busy = false)
+        void failDebugBreakpointWith(std::string message,
+                                     bool        invalidState = false,
+                                     bool        busy         = false,
+                                     bool        notFound     = false)
         {
             _debugState->breakpointFailure      = std::move(message);
             _debugState->breakpointInvalidState = invalidState;
             _debugState->breakpointBusy         = busy;
+            _debugState->breakpointNotFound     = notFound;
         }
 
         void setDebugStep(DebugStepResponse response)

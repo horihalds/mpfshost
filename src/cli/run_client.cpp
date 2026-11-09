@@ -8,6 +8,7 @@
 #include "core/log/log.hpp"
 #include "core/util/display.hpp"
 #include "core/util/hex.hpp"
+#include "core/util/symbol_expression.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -1802,6 +1803,10 @@ namespace mpfshost::cli
 
         if (options.command == "debug-watch")
         {
+            const std::string requestText =
+                options.addressSymbolic
+                    ? mpfshost::formatSymbolAddress({options.addressModule, options.addressSymbol, options.address})
+                    : std::string {};
             const auto end = mpfshost::debugWatch(
                 options.socketPath,
                 {options.target,
@@ -1810,8 +1815,10 @@ namespace mpfshost::cli
                  options.watchWidth,
                  options.watchAccess,
                  options.maxHits,
-                 options.watchTimeoutSeconds * 1000},
-                [](const mpfshost::DebugWatchData& hit)
+                 options.watchTimeoutSeconds * 1000,
+                 options.addressModule,
+                 options.addressSymbol},
+                [&requestText](const mpfshost::DebugWatchData& hit)
                 {
                     std::printf("hit %u  vcpu %u  thread %s",
                                 static_cast<unsigned>(hit.hitIndex),
@@ -1819,6 +1826,12 @@ namespace mpfshost::cli
                                 hit.threadId.c_str());
                     printGuestContext(hit.guestPid, hit.guestTid, hit.processFound, hit.threadFound);
                     std::printf("\n");
+                    if (!requestText.empty())
+                    {
+                        std::printf("  target=%s  address=0x%016llx\n",
+                                    requestText.c_str(),
+                                    static_cast<unsigned long long>(hit.address));
+                    }
                     std::printf("  address=0x%016llx  old=0x%016llx  new=0x%016llx\n",
                                 static_cast<unsigned long long>(hit.address),
                                 static_cast<unsigned long long>(hit.oldValue),
@@ -1876,12 +1889,18 @@ namespace mpfshost::cli
 
         if (options.command == "debug-break")
         {
+            const std::string requestText =
+                options.addressSymbolic
+                    ? mpfshost::formatSymbolAddress({options.addressModule, options.addressSymbol, options.address})
+                    : std::string {};
             const auto response = mpfshost::debugBreakpoint(options.socketPath,
                                                             {options.target,
                                                              options.pid,
                                                              options.address,
                                                              options.breakpointKind,
-                                                             options.watchTimeoutSeconds * 1000},
+                                                             options.watchTimeoutSeconds * 1000,
+                                                             options.addressModule,
+                                                             options.addressSymbol},
                                                             error);
             if (!response)
             {
@@ -1895,6 +1914,12 @@ namespace mpfshost::cli
                 printGuestContext(
                     response->guestPid, response->guestTid, response->processFound, response->threadFound);
                 std::printf("\n");
+                if (!requestText.empty())
+                {
+                    std::printf("  target=%s  address=0x%016llx\n",
+                                requestText.c_str(),
+                                static_cast<unsigned long long>(response->address));
+                }
                 std::printf("  address=0x%016llx  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
                             static_cast<unsigned long long>(response->address),
                             static_cast<unsigned long long>(response->rip),

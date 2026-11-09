@@ -230,7 +230,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "a debug watch needs a process id");
             return;
         }
-        if (request->address == 0)
+        if (request->address == 0 && request->module.empty())
         {
             sendError(requestId, ErrorCode::MalformedPayload, "a debug watch needs a nonzero address");
             return;
@@ -297,12 +297,18 @@ namespace mpfshost
         bool        busy = false;
         std::string error;
         bool        unavailable = false;
-        const auto  end         = provider->debugWatch(*request, onHit, abortCheck, busy, error, unavailable);
+        bool        notFound    = false;
+        const auto  end         = provider->debugWatch(*request, onHit, abortCheck, busy, error, unavailable, notFound);
         if (!end.has_value())
         {
             if (aborted)
             {
                 provider->debugDetachSession(_bound->sessionId);
+                return;
+            }
+            if (notFound)
+            {
+                sendError(requestId, ErrorCode::NotFound, error.empty() ? "the symbol was not found" : error);
                 return;
             }
             if (busy)
@@ -347,7 +353,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "a debug breakpoint needs a process id");
             return;
         }
-        if (request->address == 0)
+        if (request->address == 0 && request->module.empty())
         {
             sendError(requestId, ErrorCode::MalformedPayload, "a debug breakpoint needs a nonzero address");
             return;
@@ -391,12 +397,19 @@ namespace mpfshost
         bool        busy         = false;
         std::string error;
         bool        unavailable = false;
-        const auto  response = provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error, unavailable);
+        bool        notFound    = false;
+        const auto  response =
+            provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error, unavailable, notFound);
         if (!response.has_value())
         {
             if (aborted)
             {
                 provider->debugDetachSession(_bound->sessionId);
+                return;
+            }
+            if (notFound)
+            {
+                sendError(requestId, ErrorCode::NotFound, error.empty() ? "the symbol was not found" : error);
                 return;
             }
             if (busy)

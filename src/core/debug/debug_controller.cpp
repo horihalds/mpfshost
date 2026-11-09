@@ -9,6 +9,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <thread>
@@ -850,6 +851,47 @@ namespace mpfshost::debug
         threadFound  = guest->threadFound;
     }
 
+    bool DebugController::resolveRequestAddress(std::uint32_t      pid,
+                                                const std::string& module,
+                                                const std::string& symbol,
+                                                std::uint64_t      offset,
+                                                std::uint64_t&     address,
+                                                bool&              notFound,
+                                                std::string&       error)
+    {
+        notFound = false;
+        address  = offset;
+        if (module.empty())
+        {
+            return true;
+        }
+        if (_inspector == nullptr)
+        {
+            error = "the symbol service is unavailable";
+            return false;
+        }
+
+        error.clear();
+        const auto hit = _inspector->resolveSymbol(pid, module, symbol, error);
+        if (!hit.found)
+        {
+            notFound = true;
+            if (error.empty())
+            {
+                error = hit.ambiguous ? "module '" + module + "' matches more than one loaded image"
+                                      : "symbol '" + symbol + "' was not found in module '" + module + "'";
+            }
+            return false;
+        }
+        if (offset > std::numeric_limits<std::uint64_t>::max() - hit.address)
+        {
+            error = "the symbolic address overflows a 64-bit virtual address";
+            return false;
+        }
+        address = hit.address + offset;
+        return true;
+    }
+
     std::optional<std::vector<DebugRegisterRecord>> DebugController::registers(
         const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {
@@ -1102,15 +1144,17 @@ namespace mpfshost::debug
         return threads;
     }
 
-    std::optional<DebugWatchEnd> DebugController::watch(const DebugWatchRequest&    request,
+    std::optional<DebugWatchEnd> DebugController::watch(DebugWatchRequest           request,
                                                         const DebugWatchHitSink&    onHit,
                                                         const DebugWatchAbortCheck& aborted,
                                                         bool&                       busy,
                                                         std::string&                error,
-                                                        bool&                       unavailable)
+                                                        bool&                       unavailable,
+                                                        bool&                       notFound)
     {
         busy        = false;
         unavailable = false;
+        notFound    = false;
         std::unique_lock lock {_operationMutex, std::try_to_lock};
         if (!lock.owns_lock())
         {
@@ -1121,6 +1165,11 @@ namespace mpfshost::debug
         if (_inspector == nullptr)
         {
             error = "the watchpoint service is unavailable";
+            return std::nullopt;
+        }
+        if (!resolveRequestAddress(
+                request.pid, request.module, request.symbol, request.address, request.address, notFound, error))
+        {
             return std::nullopt;
         }
         // This watch owns the guest's run state from here; a pause requested before it started is not an
@@ -1581,16 +1630,18 @@ namespace mpfshost::debug
         return end;
     }
 
-    std::optional<DebugBreakpointResponse> DebugController::breakpoint(const DebugBreakpointRequest& request,
-                                                                       const DebugWatchAbortCheck&   aborted,
-                                                                       bool&                         invalidState,
-                                                                       bool&                         busy,
-                                                                       std::string&                  error,
-                                                                       bool&                         unavailable)
+    std::optional<DebugBreakpointResponse> DebugController::breakpoint(DebugBreakpointRequest      request,
+                                                                       const DebugWatchAbortCheck& aborted,
+                                                                       bool&                       invalidState,
+                                                                       bool&                       busy,
+                                                                       std::string&                error,
+                                                                       bool&                       unavailable,
+                                                                       bool&                       notFound)
     {
         busy         = false;
         invalidState = false;
         unavailable  = false;
+        notFound     = false;
         std::unique_lock lock {_operationMutex, std::try_to_lock};
         if (!lock.owns_lock())
         {
@@ -1601,6 +1652,11 @@ namespace mpfshost::debug
         if (_inspector == nullptr)
         {
             error = "the breakpoint service is unavailable";
+            return std::nullopt;
+        }
+        if (!resolveRequestAddress(
+                request.pid, request.module, request.symbol, request.address, request.address, notFound, error))
+        {
             return std::nullopt;
         }
         // This breakpoint owns the guest's run state from here; see the watch path for the same reset.

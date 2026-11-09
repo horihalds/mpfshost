@@ -151,8 +151,14 @@ namespace mpfshost
         if (!writeFrame(connection->fd(),
                         MessageType::DebugWatchRequest,
                         requestId,
-                        encodeDebugWatchRequest(
-                            {query.pid, query.address, query.width, query.access, query.maxHits, query.timeoutMs}),
+                        encodeDebugWatchRequest({query.pid,
+                                                 query.address,
+                                                 query.width,
+                                                 query.access,
+                                                 query.maxHits,
+                                                 query.timeoutMs,
+                                                 query.module,
+                                                 query.symbol}),
                         error))
         {
             return std::nullopt;
@@ -231,7 +237,8 @@ namespace mpfshost
         const auto response =
             exchange(connection->fd(),
                      MessageType::DebugBreakpointRequest,
-                     encodeDebugBreakpointRequest({query.pid, query.address, query.kind, query.timeoutMs}),
+                     encodeDebugBreakpointRequest(
+                         {query.pid, query.address, query.kind, query.timeoutMs, query.module, query.symbol}),
                      error);
         if (!response)
         {

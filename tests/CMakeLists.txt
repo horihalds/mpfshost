@@ -29,6 +29,7 @@ add_executable(mpfshost_tests
     server_test.cpp
     services_test.cpp
     scatter_test.cpp
+    symbol_expression_test.cpp
     thread_test.cpp
     unloaded_modules_test.cpp
     users_test.cpp

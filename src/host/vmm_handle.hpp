@@ -273,13 +273,15 @@ namespace mpfshost
                                                                                const DebugWatchAbortCheck& aborted,
                                                                                bool&                       busy,
                                                                                std::string&                error,
-                                                                               bool&                       unavailable) override;
+                                                                               bool&                       unavailable,
+                                                                               bool&                       notFound) override;
         [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
                                                                              const DebugWatchAbortCheck&   aborted,
                                                                              bool&                         invalidState,
                                                                              bool&                         busy,
                                                                              std::string&                  error,
-                                                                             bool& unavailable) override;
+                                                                             bool&                         unavailable,
+                                                                             bool& notFound) override;
         [[nodiscard]] std::optional<DebugStepResponse>       debugStep(const DebugStepRequest& request,
                                                                        bool&                   invalidState,
                                                                        bool&                   busy,
@@ -342,6 +344,10 @@ namespace mpfshost
         nearestExport(std::uint32_t pid, const std::string& module, std::uint64_t address, std::string& error) override;
         [[nodiscard]] std::optional<debug::DebugPdbHit>
         pdbSymbol(std::uint32_t pid, const std::string& module, std::uint64_t offset, std::string& error) override;
+        [[nodiscard]] debug::DebugSymbolHit resolveSymbol(std::uint32_t      pid,
+                                                          const std::string& module,
+                                                          const std::string& symbol,
+                                                          std::string&       error) override;
         [[nodiscard]] std::optional<debug::DebugGuestThread>
         guestThread(std::uint64_t cr3, std::uint64_t rip, std::uint64_t rsp, std::string& error) override;
 

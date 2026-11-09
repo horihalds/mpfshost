@@ -88,11 +88,13 @@ namespace mpfshost
     {
         std::string      targetName;
         std::uint32_t    pid {};
-        std::uint64_t    address {};
+        std::uint64_t    address {}; // offset from the module or symbol when `module` is set
         std::uint32_t    width {4};
         DebugWatchAccess access {DebugWatchAccess::Write};
         std::uint32_t    maxHits {1};
         std::uint32_t    timeoutMs {30000};
+        std::string      module; // optional symbolic anchor
+        std::string      symbol; // export or PDB name, empty for a module-relative offset
     };
 
     // Streams one hit at a time through `onHit` and returns the end record. A dedicated connection is used
@@ -106,9 +108,11 @@ namespace mpfshost
     {
         std::string         targetName;
         std::uint32_t       pid {};
-        std::uint64_t       address {};
+        std::uint64_t       address {}; // offset from the module or symbol when `module` is set
         DebugBreakpointKind kind {DebugBreakpointKind::Software};
         std::uint32_t       timeoutMs {30000};
+        std::string         module; // optional symbolic anchor
+        std::string         symbol; // export or PDB name, empty for a module-relative offset
     };
 
     // Arms one breakpoint, runs to its first hit or a timeout, and always tears the breakpoint down.

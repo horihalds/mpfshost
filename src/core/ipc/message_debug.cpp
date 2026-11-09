@@ -335,6 +335,8 @@ namespace mpfshost
         writer.writeU8(static_cast<std::uint8_t>(message.access));
         writer.writeU32(message.maxHits);
         writer.writeU32(message.timeoutMs);
+        writer.writeString(message.module);
+        writer.writeString(message.symbol);
         return writer.take();
     }
 
@@ -348,11 +350,17 @@ namespace mpfshost
         message.access    = static_cast<DebugWatchAccess>(reader.readU8());
         message.maxHits   = reader.readU32();
         message.timeoutMs = reader.readU32();
+        message.module    = reader.readString();
+        message.symbol    = reader.readString();
         if (!reader.ok() || !reader.atEnd())
         {
             return std::nullopt;
         }
         if (message.access != DebugWatchAccess::Write)
+        {
+            return std::nullopt;
+        }
+        if (message.module.empty() && !message.symbol.empty())
         {
             return std::nullopt;
         }
@@ -475,6 +483,8 @@ namespace mpfshost
         writer.writeU64(message.address);
         writer.writeU8(static_cast<std::uint8_t>(message.kind));
         writer.writeU32(message.timeoutMs);
+        writer.writeString(message.module);
+        writer.writeString(message.symbol);
         return writer.take();
     }
 
@@ -486,11 +496,17 @@ namespace mpfshost
         message.address   = reader.readU64();
         message.kind      = static_cast<DebugBreakpointKind>(reader.readU8());
         message.timeoutMs = reader.readU32();
+        message.module    = reader.readString();
+        message.symbol    = reader.readString();
         if (!reader.ok() || !reader.atEnd())
         {
             return std::nullopt;
         }
         if (message.kind != DebugBreakpointKind::Software && message.kind != DebugBreakpointKind::Hardware)
+        {
+            return std::nullopt;
+        }
+        if (message.module.empty() && !message.symbol.empty())
         {
             return std::nullopt;
         }

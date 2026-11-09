@@ -288,14 +288,16 @@ TEST_CASE("debug thread requests and responses round trip", "[core][debug][codec
 
 TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec]")
 {
-    const auto request = mpfshost::decodeDebugWatchRequest(
-        mpfshost::encodeDebugWatchRequest({7, 0x12345678, 4, mpfshost::DebugWatchAccess::Write, 3, 1500}));
+    const auto request = mpfshost::decodeDebugWatchRequest(mpfshost::encodeDebugWatchRequest(
+        {7, 0x12345678, 4, mpfshost::DebugWatchAccess::Write, 3, 1500, "nt", "KiIdleLoop"}));
     REQUIRE(request.has_value());
     REQUIRE(request->pid == 7);
     REQUIRE(request->address == 0x12345678);
     REQUIRE(request->width == 4);
     REQUIRE(request->maxHits == 3);
     REQUIRE(request->timeoutMs == 1500);
+    REQUIRE(request->module == "nt");
+    REQUIRE(request->symbol == "KiIdleLoop");
 
     mpfshost::DebugWatchData hit;
     hit.hitIndex        = 1;
@@ -357,13 +359,15 @@ TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec
 
 TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]")
 {
-    const auto request = mpfshost::decodeDebugBreakpointRequest(
-        mpfshost::encodeDebugBreakpointRequest({9, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 2500}));
+    const auto request = mpfshost::decodeDebugBreakpointRequest(mpfshost::encodeDebugBreakpointRequest(
+        {9, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 2500, "msvcrt.dll", "memcpy"}));
     REQUIRE(request.has_value());
     REQUIRE(request->pid == 9);
     REQUIRE(request->address == 0x7ff84522b1f1ull);
     REQUIRE(request->kind == mpfshost::DebugBreakpointKind::Hardware);
     REQUIRE(request->timeoutMs == 2500);
+    REQUIRE(request->module == "msvcrt.dll");
+    REQUIRE(request->symbol == "memcpy");
 
     mpfshost::DebugBreakpointResponse response;
     response.status          = mpfshost::DebugBreakpointStatus::Hit;
@@ -659,7 +663,7 @@ TEST_CASE("debug watch hits stream through the fake backend", "[core][debug][ses
     std::string                           error;
     const auto                            result = mpfshost::debugWatch(
         fixture.socketPath(),
-        {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 2, 5000},
+        {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 2, 5000, {}, {}},
         [&received](const mpfshost::DebugWatchData& data)
         {
             received.push_back(data);
@@ -700,7 +704,7 @@ TEST_CASE("debug breakpoints and single steps are delivered through the fake bac
 
     std::string error;
     const auto  breakpoint = mpfshost::debugBreakpoint(
-        fixture.socketPath(), {"vm1", 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 5000}, error);
+        fixture.socketPath(), {"vm1", 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 5000, {}, {}}, error);
     REQUIRE(breakpoint.has_value());
     REQUIRE(breakpoint->status == mpfshost::DebugBreakpointStatus::Hit);
     REQUIRE(fixture.backend().debugState()->breakpointCalls == 1);
@@ -824,7 +828,7 @@ TEST_CASE("a handle without the debug provider cannot run a watch", "[core][debu
 
     std::string error;
     const auto  result = mpfshost::debugWatch(
-        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, error);
+        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000, {}, {}}, {}, error);
     REQUIRE_FALSE(result.has_value());
     REQUIRE(error.find("cannot run a debug watch") != std::string::npos);
 }
@@ -837,7 +841,7 @@ TEST_CASE("a concurrent debug operation is reported as Busy", "[core][debug][ses
 
     std::string error;
     const auto  result = mpfshost::debugWatch(
-        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, error);
+        fixture.socketPath(), {"vm1", 42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000, {}, {}}, {}, error);
     REQUIRE_FALSE(result.has_value());
     REQUIRE(error.find("another debug operation") != std::string::npos);
 
@@ -846,13 +850,53 @@ TEST_CASE("a concurrent debug operation is reported as Busy", "[core][debug][ses
     const auto response = mpfshost::detail::exchange(
         connection->fd(),
         mpfshost::MessageType::DebugWatchRequest,
-        mpfshost::encodeDebugWatchRequest({42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000}),
+        mpfshost::encodeDebugWatchRequest({42, 0x2000, 4, mpfshost::DebugWatchAccess::Write, 1, 5000, {}, {}}),
         error);
     REQUIRE(response.has_value());
     REQUIRE(response->type == mpfshost::MessageType::ErrorResponse);
     const auto decoded = mpfshost::decodeErrorResponse(response->payload);
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->code == mpfshost::ErrorCode::Busy);
+}
+
+TEST_CASE("a symbolic debug target reports NotFound instead of Internal", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().failDebugWatchWith("symbol 'NoSuchSymbol' was not found in module 'nt'", false, true);
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  result =
+        mpfshost::debugWatch(fixture.socketPath(),
+                             {"vm1", 42, 0, 4, mpfshost::DebugWatchAccess::Write, 1, 5000, "nt", "NoSuchSymbol"},
+                             {},
+                             error);
+    REQUIRE_FALSE(result.has_value());
+    REQUIRE(error.find("NoSuchSymbol") != std::string::npos);
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest->module == "nt");
+    REQUIRE(fixture.backend().debugState()->lastWatchRequest->symbol == "NoSuchSymbol");
+
+    fixture.backend().failDebugBreakpointWith("module 'ghost' is not loaded", false, false, true);
+    const auto breakpoint = mpfshost::debugBreakpoint(
+        fixture.socketPath(), {"vm1", 42, 0, mpfshost::DebugBreakpointKind::Software, 5000, "ghost", {}}, error);
+    REQUIRE_FALSE(breakpoint.has_value());
+    REQUIRE(error.find("ghost") != std::string::npos);
+    REQUIRE(fixture.backend().debugState()->lastBreakpointRequest.has_value());
+    REQUIRE(fixture.backend().debugState()->lastBreakpointRequest->module == "ghost");
+
+    const auto connection = mpfshost::detail::connectAndBind(fixture.socketPath(), "vm1", error);
+    REQUIRE(connection.has_value());
+    const auto response = mpfshost::detail::exchange(
+        connection->fd(),
+        mpfshost::MessageType::DebugBreakpointRequest,
+        mpfshost::encodeDebugBreakpointRequest({42, 0, mpfshost::DebugBreakpointKind::Software, 5000, "ghost", {}}),
+        error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->type == mpfshost::MessageType::ErrorResponse);
+    const auto decoded = mpfshost::decodeErrorResponse(response->payload);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->code == mpfshost::ErrorCode::NotFound);
 }
 
 TEST_CASE("persistent debug resource messages round trip", "[core][debug][codec]")

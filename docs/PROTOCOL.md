@@ -331,11 +331,20 @@ a request operates on.
  Field | Type | Meaning |
  -------|------|---------|
  `pid` | `u32` | Process whose address is watched; zero is `MalformedPayload` |
- `address` | `u64` | Watched linear address; zero is `MalformedPayload` |
+ `address` | `u64` | Watched linear address, or an offset from the module or symbol named below; zero is `MalformedPayload` only for a raw address |
  `width` | `u32` | Watch width in bytes: 1, 2, 4 or 8 |
  `access` | `u8` | `0` write; other values are `MalformedPayload` in this slice |
  `maxHits` | `u32` | Stop after this many matching hits, 1–`kMaxDebugWatchHits` (64) |
  `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
+ `module` | string | Optional module name; when set, `address` is an offset from this module or from `symbol` |
+ `symbol` | string | Optional export or PDB symbol in `module`; empty means `address` is module-relative |
+
+The CLI and MCP layers accept `module!symbol`, `module!symbol+offset`, `module!+offset`, `module+offset` and a bare
+`module` name (its base) as `--address`/`address`, and parse them into these two fields. A symbol expression is
+resolved on the host before any stub is started. Exports are preferred over PDB symbols with the same name, an
+ordinal-only export is not addressable by name, and a module that matches several loaded images or a symbol that
+matches nothing is answered with `NotFound` (`16`), not `Internal`. Raw hex addresses keep the old behaviour and are
+stored in `address` with both string fields empty.
 
 The host pauses the guest if it is running, starts a stub it owns, reads the process DTBs (`paDTB` and
 `paDTB_UserOpt`), arms one `Z2` watchpoint (QEMU's debug registers are global, not per vCPU), resumes execution
@@ -378,9 +387,15 @@ always removed during teardown, so a caller that wants to keep stopping repeats 
  Field | Type | Meaning |
 -------|------|---------|
  `pid` | `u32` | Process used to scope and symbolize the hit; zero is `MalformedPayload` |
- `address` | `u64` | Breakpoint linear address; zero is `MalformedPayload` |
+ `address` | `u64` | Breakpoint linear address, or an offset from the module or symbol named below; zero is `MalformedPayload` only for a raw address |
  `kind` | `u8` | `0` software (`Z0`), `1` hardware (`Z1`); other values are `MalformedPayload` |
  `timeoutMs` | `u32` | Wall-clock wait, 1–`kMaxDebugWatchTimeoutMs` (3 600 000) |
+ `module` | string | Optional module name; when set, `address` is an offset from this module or from `symbol` |
+ `symbol` | string | Optional export or PDB symbol in `module`; empty means `address` is module-relative |
+
+Symbolic `address` values are accepted in the same forms as `DebugWatchRequest` and are resolved before the stub is
+armed. A missing or ambiguous module/symbol is `NotFound`. The resolved absolute address is returned in
+`DebugBreakpointResponse.address` and in every `DebugWatchData.address`.
 
 The host pauses the guest if needed, starts a stub it owns, reads the process DTBs, selects one thread and arms the
 breakpoint once (QEMU's debug registers are global). It then resumes execution and polls with short timeouts so

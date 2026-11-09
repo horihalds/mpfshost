@@ -99,6 +99,7 @@ add_library(mpfshost_core STATIC
     src/core/util/number.cpp
     src/core/util/identity.cpp
     src/core/util/page_range.cpp
+    src/core/util/symbol_expression.cpp
     src/core/util/text.cpp
 )
 mpfshost_set_common_flags(mpfshost_core)

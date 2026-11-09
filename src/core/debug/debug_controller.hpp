@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mpfshost::debug
@@ -59,20 +60,47 @@ namespace mpfshost::debug
             const DebugThreadsRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
         // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
         // returns nullopt; once the watch is armed, an error is reported through the end record instead.
-        [[nodiscard]] std::optional<DebugWatchEnd>           watch(const DebugWatchRequest&    request,
-                                                                   const DebugWatchHitSink&    onHit,
-                                                                   const DebugWatchAbortCheck& aborted,
-                                                                   bool&                       busy,
-                                                                   std::string&                error,
-                                                                   bool&                       unavailable);
+        // `notFound` reports a module or symbol that could not be resolved, which the caller maps to NotFound.
+        [[nodiscard]] std::optional<DebugWatchEnd> watch(DebugWatchRequest           request,
+                                                         const DebugWatchHitSink&    onHit,
+                                                         const DebugWatchAbortCheck& aborted,
+                                                         bool&                       busy,
+                                                         std::string&                error,
+                                                         bool&                       unavailable,
+                                                         bool&                       notFound);
+
+        [[nodiscard]] std::optional<DebugWatchEnd> watch(DebugWatchRequest           request,
+                                                         const DebugWatchHitSink&    onHit,
+                                                         const DebugWatchAbortCheck& aborted,
+                                                         bool&                       busy,
+                                                         std::string&                error,
+                                                         bool&                       unavailable)
+        {
+            bool notFound = false;
+            return watch(std::move(request), onHit, aborted, busy, error, unavailable, notFound);
+        }
+
         // Runs one breakpoint to its first hit or a timeout. Once the breakpoint is armed an error is
         // reported through the response; only setup failures return nullopt.
-        [[nodiscard]] std::optional<DebugBreakpointResponse> breakpoint(const DebugBreakpointRequest& request,
-                                                                        const DebugWatchAbortCheck&   aborted,
-                                                                        bool&                         invalidState,
-                                                                        bool&                         busy,
-                                                                        std::string&                  error,
-                                                                        bool&                         unavailable);
+        [[nodiscard]] std::optional<DebugBreakpointResponse> breakpoint(DebugBreakpointRequest      request,
+                                                                        const DebugWatchAbortCheck& aborted,
+                                                                        bool&                       invalidState,
+                                                                        bool&                       busy,
+                                                                        std::string&                error,
+                                                                        bool&                       unavailable,
+                                                                        bool&                       notFound);
+
+        [[nodiscard]] std::optional<DebugBreakpointResponse> breakpoint(DebugBreakpointRequest      request,
+                                                                        const DebugWatchAbortCheck& aborted,
+                                                                        bool&                       invalidState,
+                                                                        bool&                       busy,
+                                                                        std::string&                error,
+                                                                        bool&                       unavailable)
+        {
+            bool notFound = false;
+            return breakpoint(std::move(request), aborted, invalidState, busy, error, unavailable, notFound);
+        }
+
         // Executes one instruction on a paused guest and returns the resulting registers.
         [[nodiscard]] std::optional<DebugStepResponse>
         step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
@@ -167,6 +195,13 @@ namespace mpfshost::debug
 
         // All resource bookkeeping runs under _operationMutex.
         [[nodiscard]] bool          ownsAttachment(std::uint64_t sessionId, bool& invalidState, std::string& error);
+        [[nodiscard]] bool          resolveRequestAddress(std::uint32_t      pid,
+                                                          const std::string& module,
+                                                          const std::string& symbol,
+                                                          std::uint64_t      offset,
+                                                          std::uint64_t&     address,
+                                                          bool&              notFound,
+                                                          std::string&       error);
         [[nodiscard]] bool          requirePausedForResource(bool& invalidState, std::string& error, bool& unavailable);
         [[nodiscard]] std::uint32_t allocateHardwareSlot() noexcept;
         void                        releaseHardwareSlot(std::uint32_t slot) noexcept;

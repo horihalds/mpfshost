@@ -189,8 +189,8 @@ to it automatically.
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
  `--client debug-threads <vm>` | List each stub thread with its vCPU index, GDB thread id, `rip`, `rsp`, `cr3` and, when resolvable, the guest pid and tid. Requires a paused guest. |
- `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Prints the trapped store when it can be decoded. Destructive. |
- `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). Reports the first hit and removes it. Destructive. |
+ `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). `--address` accepts hex or `module!symbol[+offset]`, `module+offset`, a bare module name. Prints the resolved target and trapped store. Destructive. |
+ `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). `--address` accepts the same symbolic forms. Reports the resolved address, first hit and symbol, then removes it. Destructive. |
  `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0) or `--thread <id>` from `debug-threads`. Destructive. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
  `--client debug-detach <vm>` | End an attachment or stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
@@ -272,6 +272,12 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md). Only x86-64 guests can be debugged. The register, watch,
   breakpoint and step commands reject another architecture with `CapabilityUnavailable` before starting a stub;
   `debug-status` still works and reports the architecture it detected.
+
+`debug-watch` and `debug-break` resolve a symbolic `--address` on the host before touching the guest. Accepted forms
+are `module!symbol`, `module!symbol+offset`, `module!+offset`, `module+offset` and a bare `module` (its base). Exports
+are preferred over PDB symbols, names are case-insensitive at the module level, and an ordinal-only export has no
+name to request. A missing module, a missing symbol or a module name shared by several loaded images fails with
+`NotFound`; the resolved absolute address is printed in the result.
 
 ### Using MCP mode
 

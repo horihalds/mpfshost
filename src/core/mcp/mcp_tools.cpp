@@ -5,6 +5,7 @@
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"
 #include "core/util/number.hpp"
+#include "core/util/symbol_expression.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -68,6 +69,29 @@ namespace mpfshost::mcp
             char buffer[19] {};
             std::snprintf(buffer, sizeof(buffer), "0x%llx", static_cast<unsigned long long>(value));
             return buffer;
+        }
+
+        struct DebugAddress
+        {
+            std::uint64_t address {};
+            std::string   module;
+            std::string   symbol;
+        };
+
+        // Accepts a raw hex address or a `module!symbol+offset` style expression.
+        DebugAddress parseDebugAddress(std::string_view text)
+        {
+            if (const auto raw = parseHexU64(text); raw.has_value())
+            {
+                return {*raw, {}, {}};
+            }
+            std::string error;
+            const auto  expression = parseSymbolAddress(text, error);
+            if (!expression.has_value() || !expression->hasModule())
+            {
+                throw ArgumentError(error.empty() ? "address is not a hex value or a symbol expression" : error);
+            }
+            return {expression->offset, expression->module, expression->symbol};
         }
 
         std::string poolTagText(std::uint32_t tag)
@@ -909,7 +933,7 @@ namespace mpfshost::mcp
          "trap PC, CR3 and nearest symbol. Destructive: pauses and resumes the guest.", false,
                  {target,
                  pid,
-                 {"address", "string", "Watched linear address (hex)", true},
+                 {"address", "string", "Watched linear address (hex) or module!symbol[+offset] expression", true},
                  {"width", "integer", "Watch width in bytes: 1, 2, 4 or 8 (default 4)", false},
                  {"access", "string", "Access to watch; only write is supported", false},
                  {"max_hits", "integer", "Stop after this many hits (default 1)", false},
@@ -918,7 +942,7 @@ namespace mpfshost::mcp
                  "Break on an address",                                   "Arm one software or hardware breakpoint and return its first hit.",
                  false,    {target,
     pid,
-    {"address", "string", "Breakpoint linear address (hex)", true},
+    {"address", "string", "Breakpoint linear address (hex) or module!symbol[+offset] expression", true},
     {"kind", "string", "Breakpoint kind: software or hardware (default software)", false},
     {"timeout", "integer", "Seconds to wait for the breakpoint (default 30)", false}}                 },
                 {           "debug_step",
@@ -2557,16 +2581,19 @@ namespace mpfshost::mcp
                     return failure("timeout is out of range");
                 }
 
-                Json       hits = Json::array();
-                const auto end  = debugWatch(
+                Json       hits          = Json::array();
+                const auto targetAddress = parseDebugAddress(requireString(args, "address"));
+                const auto end           = debugWatch(
                     socket,
                     {requireString(args, "target"),
                      u32Value(args, "pid", true),
-                     hexValue(args, "address", true),
+                     targetAddress.address,
                      static_cast<std::uint32_t>(width),
                      DebugWatchAccess::Write,
                      static_cast<std::uint32_t>(maxHits),
-                     static_cast<std::uint32_t>(timeout * 1000)},
+                     static_cast<std::uint32_t>(timeout * 1000),
+                     targetAddress.module,
+                     targetAddress.symbol},
                     [&hits](const DebugWatchData& hit)
                     {
                         hits.push_back(debugWatchJson(hit));
@@ -2577,11 +2604,12 @@ namespace mpfshost::mcp
                     return failure(error);
                 }
                 return success(Json {
-                    {       "status", std::string {debugWatchStatusName(end->status)}},
-                    {    "hit_count",                                   end->hitCount},
-                    {"skipped_count",                               end->skippedCount},
-                    {        "error",                                      end->error},
-                    {         "hits",                                 std::move(hits)}
+                    {"status", std::string {debugWatchStatusName(end->status)}},
+                    {"hit_count", end->hitCount},
+                    {"skipped_count", end->skippedCount},
+                    {"error", end->error},
+                    {"symbol", requireString(args, "address")},
+                    {"hits", std::move(hits)}
                 });
             }
 
@@ -2607,18 +2635,23 @@ namespace mpfshost::mcp
                     return failure("timeout is out of range");
                 }
 
-                const auto response = debugBreakpoint(socket,
-                                                      {requireString(args, "target"),
-                                                       u32Value(args, "pid", true),
-                                                       hexValue(args, "address", true),
-                                                       kind,
-                                                       static_cast<std::uint32_t>(timeout * 1000)},
-                                                      error);
+                const auto targetAddress = parseDebugAddress(requireString(args, "address"));
+                const auto response      = debugBreakpoint(socket,
+                                                           {requireString(args, "target"),
+                                                            u32Value(args, "pid", true),
+                                                            targetAddress.address,
+                                                            kind,
+                                                            static_cast<std::uint32_t>(timeout * 1000),
+                                                            targetAddress.module,
+                                                            targetAddress.symbol},
+                                                           error);
                 if (!response)
                 {
                     return failure(error);
                 }
-                return success(debugBreakpointJson(*response));
+                Json result      = debugBreakpointJson(*response);
+                result["symbol"] = requireString(args, "address");
+                return success(std::move(result));
             }
 
             if (name == "debug_step")

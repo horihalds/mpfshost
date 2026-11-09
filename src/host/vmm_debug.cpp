@@ -2,13 +2,32 @@
 
 #include "core/debug/debug_controller.hpp"
 #include "host/vmm_module_tables.hpp"
+#include "host/vmm_modules.hpp"
 #include "host/vmm_pdb.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <string_view>
 #include <utility>
 
 namespace mpfshost
 {
+    namespace
+    {
+        bool moduleNamesEqual(std::string_view left, std::string_view right)
+        {
+            return left.size() == right.size()
+                && std::equal(left.begin(),
+                              left.end(),
+                              right.begin(),
+                              [](char l, char r)
+                              {
+                                  return std::tolower(static_cast<unsigned char>(l))
+                                      == std::tolower(static_cast<unsigned char>(r));
+                              });
+        }
+    } // namespace
+
     std::optional<DebugStatus> VmmHandle::debugState(bool& busy, std::string& error, bool& unavailable)
     {
         return _debug.state(busy, error, unavailable);
@@ -37,9 +56,10 @@ namespace mpfshost
                                                        const DebugWatchAbortCheck& aborted,
                                                        bool&                       busy,
                                                        std::string&                error,
-                                                       bool&                       unavailable)
+                                                       bool&                       unavailable,
+                                                       bool&                       notFound)
     {
-        return _debug.watch(request, onHit, aborted, busy, error, unavailable);
+        return _debug.watch(request, onHit, aborted, busy, error, unavailable, notFound);
     }
 
     std::optional<DebugBreakpointResponse> VmmHandle::debugBreakpoint(const DebugBreakpointRequest& request,
@@ -47,9 +67,10 @@ namespace mpfshost
                                                                       bool&                         invalidState,
                                                                       bool&                         busy,
                                                                       std::string&                  error,
-                                                                      bool&                         unavailable)
+                                                                      bool&                         unavailable,
+                                                                      bool&                         notFound)
     {
-        return _debug.breakpoint(request, aborted, invalidState, busy, error, unavailable);
+        return _debug.breakpoint(request, aborted, invalidState, busy, error, unavailable, notFound);
     }
 
     std::optional<DebugStepResponse> VmmHandle::debugStep(
@@ -214,6 +235,62 @@ namespace mpfshost
             return std::nullopt;
         }
         return debug::DebugPdbHit {symbol->symbol, symbol->displacement};
+    }
+
+    debug::DebugSymbolHit VmmHandle::resolveSymbol(std::uint32_t      pid,
+                                                   const std::string& module,
+                                                   const std::string& symbol,
+                                                   std::string&       error)
+    {
+        error.clear();
+        LookupStatus status = LookupStatus::Failed;
+
+        // A module name that matches several loaded images cannot be resolved without picking one by accident.
+        if (const auto modules = listModules(ModuleListRequest {pid, 0, module}, error); modules.has_value())
+        {
+            std::size_t matches = 0;
+            for (const auto& entry : *modules)
+            {
+                if (moduleNamesEqual(entry.name, module))
+                {
+                    ++matches;
+                }
+            }
+            if (matches > 1)
+            {
+                error = "module '" + module + "' matches " + std::to_string(matches) + " loaded images";
+                return debug::DebugSymbolHit {false, true, 0};
+            }
+        }
+        error.clear();
+
+        if (symbol.empty())
+        {
+            const auto base = lookupVmmSymbol(_handle, SymbolLookupRequest {pid, module, {}}, status, error);
+            if (!base)
+            {
+                error.clear();
+                return {};
+            }
+            return debug::DebugSymbolHit {true, false, base->moduleBase};
+        }
+
+        // An export is preferred because it is the process's real entry point when both tables carry the name.
+        const auto exported = lookupVmmSymbol(_handle, SymbolLookupRequest {pid, module, symbol}, status, error);
+        if (exported && exported->found)
+        {
+            return debug::DebugSymbolHit {true, false, exported->address};
+        }
+        error.clear();
+
+        // PDB lookup has no pid and also covers kernel modules that are not in the process module list.
+        const auto pdb = lookupVmmPdbSymbolAddress(_handle, PdbSymbolAddressRequest {module, symbol}, status, error);
+        if (pdb)
+        {
+            return debug::DebugSymbolHit {true, false, pdb->address};
+        }
+        error.clear();
+        return {};
     }
 
     std::optional<debug::DebugGuestThread>

@@ -2,6 +2,7 @@
 
 #include "core/util/hex.hpp"
 #include "core/util/number.hpp"
+#include "core/util/symbol_expression.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -673,14 +674,30 @@ namespace mpfshost
                     error = "--address needs a hex value";
                     return std::nullopt;
                 }
-                const auto parsed = mpfshost::parseHexU64(args[++index]);
-                if (!parsed)
+                const std::string_view text {args[++index]};
+                if (const auto parsed = mpfshost::parseHexU64(text); parsed.has_value())
+                {
+                    options.address    = *parsed;
+                    options.addressSet = true;
+                    continue;
+                }
+                if (options.command != "debug-watch" && options.command != "debug-break")
                 {
                     error = "--address needs a hex value";
                     return std::nullopt;
                 }
-                options.address    = *parsed;
-                options.addressSet = true;
+                std::string symbolError;
+                const auto  expression = mpfshost::parseSymbolAddress(text, symbolError);
+                if (!expression.has_value() || !expression->hasModule())
+                {
+                    error = symbolError.empty() ? "--address needs a hex value or a symbol expression" : symbolError;
+                    return std::nullopt;
+                }
+                options.address         = expression->offset;
+                options.addressModule   = expression->module;
+                options.addressSymbol   = expression->symbol;
+                options.addressSymbolic = true;
+                options.addressSet      = true;
                 continue;
             }
             if (argument == "--dtb" || argument == "--cr3")

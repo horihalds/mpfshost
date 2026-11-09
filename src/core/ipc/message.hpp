@@ -683,6 +683,10 @@ namespace mpfshost
         DebugWatchAccess access {DebugWatchAccess::Write};
         std::uint32_t    maxHits {1};
         std::uint32_t    timeoutMs {30000};
+        // When `module` is set, `address` is an offset added to the resolved module base (`symbol` empty) or
+        // to the resolved export/PDB symbol. A missing or ambiguous symbol is answered with NotFound.
+        std::string      module;
+        std::string      symbol; // export or PDB name, empty for a module-relative offset
     };
 
     struct DebugWatchData
@@ -744,6 +748,10 @@ namespace mpfshost
         std::uint64_t       address {};
         DebugBreakpointKind kind {DebugBreakpointKind::Software};
         std::uint32_t       timeoutMs {30000};
+        // When `module` is set, `address` is an offset added to the resolved module base (`symbol` empty) or
+        // to the resolved export/PDB symbol. A missing or ambiguous symbol is answered with NotFound.
+        std::string         module;
+        std::string         symbol; // export or PDB name, empty for a module-relative offset
     };
 
     struct DebugBreakpointResponse

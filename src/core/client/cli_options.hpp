@@ -28,6 +28,9 @@ namespace mpfshost
         std::string                         typeName;
         std::string                         childName;
         std::uint64_t                       address {};
+        std::string                         addressModule;
+        std::string                         addressSymbol;
+        bool                                addressSymbolic {};
         std::uint64_t                       dtb {};
         std::uint32_t                       size {};
         std::vector<std::byte>              data;

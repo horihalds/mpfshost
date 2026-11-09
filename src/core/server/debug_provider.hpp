@@ -51,15 +51,18 @@ namespace mpfshost
                                                                       const DebugWatchAbortCheck& aborted,
                                                                       bool&                       busy,
                                                                       std::string&                error,
-                                                                      bool&                       unavailable)  = 0;
+                                                                      bool&                       unavailable,
+                                                                      bool&                       notFound)     = 0;
         // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
+        // `notFound` reports a module or symbol that could not be resolved, which the session maps to NotFound.
         [[nodiscard]] virtual std::optional<DebugBreakpointResponse>
                                                                debugBreakpoint(const DebugBreakpointRequest& request,
                                                                                const DebugWatchAbortCheck&   aborted,
                                                                                bool&                         invalidState,
                                                                                bool&                         busy,
                                                                                std::string&                  error,
-                                                                               bool&                         unavailable) = 0;
+                                                                               bool&                         unavailable,
+                                                                               bool&                         notFound) = 0;
         [[nodiscard]] virtual std::optional<DebugStepResponse> debugStep(
             const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
         // Starts one persistent stub for `sessionId`. `invalidState` reports a foreign stub, which the session

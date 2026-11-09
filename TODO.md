@@ -15,24 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 6. Accept symbolic addresses in breakpoint and watch requests
-
-`debug-break` and `debug-watch` take raw hex only, although the host already resolves modules, exports and PDB
-symbols.
-
-- Extend `DebugBreakpointRequest` and `DebugWatchRequest` additively with an optional module and symbol/export name
-  pair. When present, the host resolves them with the same inspector used for hit symbolization and reports the
-  resolved address in the response. Reject an ambiguous or missing symbol with `NotFound`, not `Internal`.
-- Support `module!symbol`, `module+offset` and process-relative forms in the CLI and MCP layers, reusing the existing
-  `resolve`/`symbol` helpers instead of duplicating parsing.
-- Add the resolved address and symbol to the CLI output.
-- Tests: export and PDB symbol resolution, a missing module, a missing symbol, an ordinal-only export, and a raw
-  address that still works unchanged.
-- Document the accepted forms in `README.md` and `docs/PROTOCOL.md`.
-
-Acceptance: a user can break or watch `nt!HalProcessorIdle+0xf` or `guest-probe.exe!GuestProbeMarker` without a
-separate address lookup.
-
 ### 7. Add disassembly and backtrace output
 
 Watch hits currently render one decoded store instruction; there is no way to inspect code around a stop or walk
