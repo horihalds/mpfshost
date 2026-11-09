@@ -269,6 +269,7 @@ namespace
         std::size_t                                        accessWatchRemoves {0};
         bool                                               rejectReadWatch {false};
         bool                                               rejectAccessWatch {false};
+        bool                                               rejectThreadQueries {false};
         std::size_t                                        breakpointInserts {0};
         std::size_t                                        breakpointRemoves {0};
         std::size_t                                        continues {0};
@@ -341,6 +342,11 @@ namespace
             }
             else if (body == "qfThreadInfo")
             {
+                if (rejectThreadQueries)
+                {
+                    quoteAck("E01");
+                    return;
+                }
                 std::string list {"m"};
                 for (std::size_t index = 0; index < threads.size(); ++index)
                 {
@@ -3129,6 +3135,56 @@ TEST_CASE("an attached arm drains the pending stop left by a QMP pause", "[core]
     INFO(error);
     REQUIRE(armed.has_value());
     REQUIRE(armed->slot == 0);
+
+    REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}
+
+TEST_CASE("a debug wait does not query threads while the stub is running", "[core][debug][controller]")
+{
+    auto qmp                    = std::make_shared<FakeQmpState>();
+    qmp->running                = false;
+    auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport           = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml  = x86RegisterXml();
+    rspTransport->registerBytes = registerBytes();
+    auto* rsp                   = rspTransport.get();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(controller
+                .armWatch(7, {42, 0x5000, 4, mpfshost::DebugWatchAccess::Write}, invalidState, busy, error, unavailable)
+                .has_value());
+    REQUIRE(controller.continueGuest(7, invalidState, busy, error, unavailable).has_value());
+
+    rsp->rejectThreadQueries = true;
+    const auto end           = controller.wait(
+        {50, 1},
+        [](const mpfshost::DebugWaitHit&)
+        {
+            return true;
+        },
+        {},
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
 
     REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
 }

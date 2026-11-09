@@ -3346,21 +3346,19 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
-        _attachedRsp->drainPending();
         std::vector<std::string> threads;
-        if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
-        if (threads.empty())
-        {
-            error = "the GDB stub reported no threads";
-            return std::nullopt;
-        }
-
         if (!_sessionRunning.load())
         {
             _attachedRsp->drainPending();
+            if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            if (threads.empty())
+            {
+                error = "the GDB stub reported no threads";
+                return std::nullopt;
+            }
             if (!_attachedRsp->continueExecution(kRspTimeout, error))
             {
                 return std::nullopt;
@@ -3424,6 +3422,21 @@ namespace mpfshost::debug
             if (!stopped)
             {
                 continue;
+            }
+            if (threads.empty())
+            {
+                if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+                {
+                    end.status = DebugWatchStatus::Error;
+                    end.error  = error;
+                    break;
+                }
+                if (threads.empty())
+                {
+                    end.status = DebugWatchStatus::Error;
+                    end.error  = "the GDB stub reported no threads";
+                    break;
+                }
             }
             if (thread && !thread->empty() && !_attachedRsp->selectThread(*thread, kRspTimeout, error))
             {
