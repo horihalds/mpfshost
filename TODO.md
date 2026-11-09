@@ -31,7 +31,17 @@ Make a hit directly usable without several client round trips.
 Acceptance: one command or tool call turns an absolute RIP into module, offset, nearest export and optional PDB
 symbol, and the watch output identifies the store when the decoder is available.
 
-### 2. Add breakpoints and single-step
+### 2. Keep a write watchpoint armed across guest context switches
+
+Live validation showed that `Z2` traps a write only in a short window after `vCont;c`; later writes reach the watched
+buffer without producing a stop. Determine whether Windows rewrites DR7 on each thread switch and whether QEMU/KVM
+re-applies it. Consider re-arming after every stop, stopping only the writing vCPU, or a different trap mechanism.
+Add a live test that catches a write several seconds after arming.
+
+Acceptance: a host `debug-watch` returns a `DebugWatchData` frame for a write that happens well after the guest has
+resumed, then removes the watch and leaves the guest running.
+
+### 3. Add breakpoints and single-step
 
 Only start this after the write-watch path is solid on a live guest.
 

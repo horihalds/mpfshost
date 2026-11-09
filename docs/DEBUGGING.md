@@ -174,6 +174,20 @@ that slot, arming fails and the request reports an error instead of silently mis
 Record here: the observed `cr3` values, whether the first hit was a reallocation vs the logical store, and whether
 repeated hits kept the guest responsive.
 
+### Watchpoint validation record
+
+On 2026-11-09 against `windows` (12 vCPU, QEMU 10.2.2) the live checks found and fixed four host-side bugs:
+arming `Z2` once per guest (a duplicate on another thread returns `E22`), using `vCont;c` instead of `c`, closing the
+RSP connection before stopping the stub, and pausing the guest via QMP before removing the watchpoint. A raw RSP
+session with `Z2` + `vCont;c` produced a real `T05thread:p01.07;watch:<address>;` stop for a Notepad buffer write,
+proving the QEMU side and the register layout.
+
+The host end-to-end path still did not return a `DebugWatchData` frame in these runs. The same write was only trapped
+when it happened within a fraction of a second after `vCont;c`; later writes reached the buffer but produced no stop.
+The guest reprograms its debug registers as Windows switches threads, so a watchpoint set through QEMU's gdbstub does
+not reliably survive until a user input or timer write. Re-arming on every stop/continue or choosing a mechanism that
+survives guest context switches is still open.
+
 ## Checks still owed to a live guest
 
 - ~~Whether `Z2` watchpoints must be armed per vCPU.~~ Answered on 2026-11-09 against `windows` (12 vCPU): a first
