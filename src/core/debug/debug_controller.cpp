@@ -854,6 +854,9 @@ namespace mpfshost::debug
         _watchCount = 1;
         log::info("host", "armed a write watchpoint");
 
+        // Drop any stop reply QEMU queued before this client attached, so the first poll cannot report
+        // stale registers as a hit.
+        rsp->drainPending();
         if (!rsp->continueExecution(kRspTimeout, error))
         {
             return std::nullopt;
@@ -933,25 +936,33 @@ namespace mpfshost::debug
                 break;
             }
 
-            const auto hitDtb = canonicalDtb(cr3);
-            if (hitDtb != canonicalDtb(dtbs->dtb) && hitDtb != canonicalDtb(dtbs->dtbUser))
-            {
-                ++end.skippedCount;
-                if (!rsp->continueExecution(kRspTimeout, error))
-                {
-                    end.status = DebugWatchStatus::Error;
-                    end.error  = error;
-                    break;
-                }
-                continue;
-            }
-
             std::uint64_t newValue = 0;
             if (!readWatchValue(_inspector, request.pid, request.address, request.width, newValue, error))
             {
                 end.status = DebugWatchStatus::Error;
                 end.error  = error;
                 break;
+            }
+
+            // A user-mode CR3 may be a shadow page table that MemProcFS cannot report for the process,
+            // so a CR3 mismatch alone is not proof that the hit belongs to someone else. Require both a
+            // value change and a RIP inside one of the target's modules; that rejects stale or
+            // unrelated stops whose registers only show a kernel idle loop.
+            const auto hitDtb = canonicalDtb(cr3);
+            if (hitDtb != canonicalDtb(dtbs->dtb) && hitDtb != canonicalDtb(dtbs->dtbUser))
+            {
+                std::string moduleError;
+                if (newValue == lastValue || !_inspector->moduleForAddress(request.pid, rip, moduleError))
+                {
+                    ++end.skippedCount;
+                    if (!rsp->continueExecution(kRspTimeout, error))
+                    {
+                        end.status = DebugWatchStatus::Error;
+                        end.error  = error;
+                        break;
+                    }
+                    continue;
+                }
             }
 
             DebugWatchData hit;

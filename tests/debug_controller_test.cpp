@@ -662,7 +662,7 @@ TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[cor
     rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
 
     FakeInspector inspector;
-    inspector.values = {0xAA, 0xBB};
+    inspector.values = {0xAA, 0xAA, 0xBB};
 
     DebugController controller {"/tmp/qmp.sock",
                                 "/tmp/stub.sock",
@@ -694,6 +694,103 @@ TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[cor
     REQUIRE(end->hitCount == 1);
     REQUIRE(end->skippedCount == 1);
     REQUIRE(hits.size() == 1);
+    REQUIRE(rsp->continues == 2);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a watchpoint accepts a CR3 mismatch when the target memory changed", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x999123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(end->skippedCount == 0);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits[0].cr3 == 0x999123);
+    REQUIRE(hits[0].oldValue == 0xAA);
+    REQUIRE(hits[0].newValue == 0xBB);
+    REQUIRE(rsp->continues == 1);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a watchpoint ignores a stale hit outside the target's modules", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0xfffff800aa6ac7cfull, 0x1234, 0x999123});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 100},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE(end->hitCount == 0);
+    REQUIRE(end->skippedCount == 1);
+    REQUIRE(hits.empty());
     REQUIRE(rsp->continues == 2);
     REQUIRE(qmp->running);
 }

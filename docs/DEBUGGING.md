@@ -142,8 +142,8 @@ Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs)
 
 ## Manual check: write watchpoint
 
-This procedure needs a live Windows guest and root. It has not been run yet for this slice; record the result here
-after the first run.
+This procedure needs a live Windows guest and root. It was run against `windows` on 2026-11-09; the result is in
+the validation record below.
 
 1. Pick a process and a writable buffer, and confirm the address with `read_memory`. A UTF-16 text buffer with spare
    capacity is easier than one that is about to be reallocated.
@@ -182,11 +182,34 @@ RSP connection before stopping the stub, and pausing the guest via QMP before re
 session with `Z2` + `vCont;c` produced a real `T05thread:p01.07;watch:<address>;` stop for a Notepad buffer write,
 proving the QEMU side and the register layout.
 
-The host end-to-end path still did not return a `DebugWatchData` frame in these runs. The same write was only trapped
-when it happened within a fraction of a second after `vCont;c`; later writes reached the buffer but produced no stop.
-The guest reprograms its debug registers as Windows switches threads, so a watchpoint set through QEMU's gdbstub does
-not reliably survive until a user input or timer write. Re-arming on every stop/continue or choosing a mechanism that
-survives guest context switches is still open.
+The earlier host-end-to-end runs missed the write because QMP accepts only one client. The host keeps its QMP socket
+open for the whole watch, so the external connection used to send `sendkey` only completed after the watch had
+already timed out. The apparent short post-resume window was a trigger artifact, not debug-register context
+switching.
+
+The final live procedure injects keys over the SPICE inputs channel, which does not use QMP. With a Notepad buffer at
+`0x20e6f5ac6a2` and a two-byte watch, a key typed well after arming produced:
+
+```text
+hit 0  vcpu 2  thread p01.03
+  address=0x0000020e6f5ac6a2  old=0x0000000000000071  new=0x0000000000000072
+  rip=0x00007ffe03ddb1f1  rsp=0x000000fd6f5cf418  cr3=0x0000000354cd9000
+  module=msvcrt.dll+0x7b1f1
+  export=memcpy+0x71
+  before=03c8448a5c11ff48ffc949ffc8448819
+completed  hits=1  skipped=0
+```
+
+The hit was the buffer update performed by Notepad, not the later logical character store. Afterwards
+`debug-status` reported `running`, `stub-active=no` and `watches=0`; HMP `info registers` showed `DR7=0x400` and all
+four address registers zero. A separate run that typed at the start of the buffer reported `old=0x78 new=0x79`, so
+the old/new pair does reach `DebugWatchData`.
+
+Two follow-up hardenings came out of the same session. A stop QEMU queued before the client attached is drained
+before the first `vCont;c`, so it cannot be reported as a hit with stale registers. If a hit's CR3 does not match the
+process DTB, the host now also requires a value change **and** a RIP inside one of the target's modules; a value
+change alone accepted one stale idle-loop stop (`CR3=0x1ae000`, kernel `rip`). The stricter path was installed and
+re-run successfully after this record was written.
 
 ## Checks still owed to a live guest
 
