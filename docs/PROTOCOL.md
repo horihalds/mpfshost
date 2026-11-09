@@ -166,10 +166,13 @@ carries one `u8` action: `0` stop, `1` continue; any other value is `MalformedPa
 
 The host reaches the target's QEMU control plane through the QMP Unix socket that the target scan pairs with the QEMU
 pid (`list-targets` reports it). No new host flag gates these types; the connection's access policy is the gate, as
-for memory writes. Stop and continue are **destructive**: a paused guest stops executing until it is continued. The
-host only reports `hostPaused = 1` when its own `debug-stop` performed the pause; it still honours `debug-continue`
-for a guest paused by another client. `CapabilityUnavailable` means the bound handle does not implement debug
-control; `Internal` means the QMP exchange failed.
+for memory writes. The host keeps one QMP connection per target open across requests and reconnects when the
+transport closes or a reply desynchronizes the stream; QMP commands are serialized without blocking status or
+control during a watch or breakpoint. Stop and continue are **destructive**: a paused guest stops executing until it
+is continued. The host only reports `hostPaused = 1` when its own `debug-stop` performed the pause; it still honours
+`debug-continue` for a guest paused by another client. `CapabilityUnavailable` means the bound handle does not
+implement debug control or QMP could not be reached (a missing socket or a failed connect); `Internal` means a QMP
+command really failed.
 
 ## Debug detach
 
@@ -255,8 +258,9 @@ download is started).
 `DebugWatchEnd` carries a `u8` status (`0` completed, `1` timeout, `2` cancelled, `3` error), the `u32` hit count, the
 `u32` skipped-hit count and an error string. Teardown removes the watchpoints, stops a stub the host started, resumes
 the guest if this request paused it (an already-paused guest is left paused) and verifies the result with
-`query-status`. `Busy` (`19`) means another debug operation holds the target; `InvalidState` means another owner holds
-the GDB stub.
+`query-status`. `Busy` (`19`) means another exclusive debug operation (registers, watch, breakpoint, step or detach)
+holds the target; `InvalidState` means another owner holds the GDB stub. `debug-status` and
+`debug-stop`/`debug-continue` are not exclusive and stay available while a watch is in flight.
 
 ## Debug breakpoints
 

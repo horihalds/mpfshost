@@ -421,6 +421,33 @@ TEST_CASE("a probe failure is reported to the client", "[core][debug][session]")
     REQUIRE(error == "QMP control failed");
 }
 
+TEST_CASE("an unreachable debug channel is reported as a capability error", "[core][debug][session]")
+{
+    DebugFixture fixture;
+    fixture.backend().failDebugControlWith("the QMP socket is not available");
+    fixture.backend().debugState()->failureUnavailable = true;
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  stopped =
+        mpfshost::debugControl(fixture.socketPath(), {"vm1"}, mpfshost::DebugControlAction::Stop, error);
+    REQUIRE_FALSE(stopped.has_value());
+    REQUIRE(error.find("not available") != std::string::npos);
+
+    const auto connection = mpfshost::detail::connectAndBind(fixture.socketPath(), "vm1", error);
+    REQUIRE(connection.has_value());
+    const auto response =
+        mpfshost::detail::exchange(connection->fd(),
+                                   mpfshost::MessageType::DebugControlRequest,
+                                   mpfshost::encodeDebugControlRequest({mpfshost::DebugControlAction::Stop}),
+                                   error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->type == mpfshost::MessageType::ErrorResponse);
+    const auto decoded = mpfshost::decodeErrorResponse(response->payload);
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->code == mpfshost::ErrorCode::CapabilityUnavailable);
+}
+
 TEST_CASE("debug registers are delivered through the fake backend", "[core][debug][session]")
 {
     DebugFixture                  fixture;

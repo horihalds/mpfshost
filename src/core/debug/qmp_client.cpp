@@ -394,6 +394,8 @@ namespace mpfshost::debug
 
         if (!_transport->writeLine(messageJson, timeout, error))
         {
+            // A partial write leaves the command stream unusable, so the next call must reconnect.
+            _open = false;
             return false;
         }
         return waitForReply(resultJson, timeout, error);
@@ -452,10 +454,9 @@ namespace mpfshost::debug
             bool        closed = false;
             if (!_transport->readLine(line, left, closed, error))
             {
-                if (closed)
-                {
-                    _open = false;
-                }
+                // The reply is gone or arrived too late; keeping the channel would desynchronize the next
+                // command because QMP replies carry no request id.
+                _open = false;
                 if (error.empty())
                 {
                     error = closed ? "the QMP connection closed" : "timed out waiting for a QMP reply";
@@ -470,11 +471,13 @@ namespace mpfshost::debug
             }
             catch (const Json::exception&)
             {
+                _open = false;
                 error = "the QMP peer sent a malformed JSON line";
                 return false;
             }
             if (!message.is_object())
             {
+                _open = false;
                 error = "the QMP peer sent a JSON value that is not an object";
                 return false;
             }
@@ -489,6 +492,7 @@ namespace mpfshost::debug
             }
             if (!message.contains("return"))
             {
+                _open = false;
                 error = "the QMP peer sent a message with neither return nor error";
                 return false;
             }

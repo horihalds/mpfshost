@@ -413,6 +413,7 @@ namespace mpfshost::testing
     struct FakeDebugState
     {
         DebugStatus                       status;
+        bool                              failureUnavailable {};
         std::string                       stateFailure;
         std::string                       controlFailure;
         std::optional<DebugControlAction> lastAction;
@@ -1594,12 +1595,13 @@ namespace mpfshost::testing
             return true;
         }
 
-        [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error) override
+        [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error, bool& unavailable) override
         {
             ++_debugState->stateCalls;
             if (!_debugState->stateFailure.empty())
             {
-                error = _debugState->stateFailure;
+                unavailable = _debugState->failureUnavailable;
+                error       = _debugState->stateFailure;
                 return std::nullopt;
             }
             busy = false;
@@ -1607,27 +1609,33 @@ namespace mpfshost::testing
         }
 
         [[nodiscard]] std::optional<DebugStatus>
-        debugControl(DebugControlAction action, bool& busy, std::string& error) override
+        debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable) override
         {
             ++_debugState->controlCalls;
             _debugState->lastAction = action;
             if (!_debugState->controlFailure.empty())
             {
-                error = _debugState->controlFailure;
+                unavailable = _debugState->failureUnavailable;
+                error       = _debugState->controlFailure;
                 return std::nullopt;
             }
             busy = false;
             return _debugState->status;
         }
 
-        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> debugRegisters(
-            const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error) override
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
+        debugRegisters(const DebugRegistersRequest& request,
+                       bool&                        invalidState,
+                       bool&                        busy,
+                       std::string&                 error,
+                       bool&                        unavailable) override
         {
             ++_debugState->registersCalls;
             _debugState->lastRegistersRequest = request;
             if (!_debugState->registersFailure.empty())
             {
                 invalidState = _debugState->registersInvalidState;
+                unavailable  = _debugState->failureUnavailable;
                 error        = _debugState->registersFailure;
                 return std::nullopt;
             }
@@ -1639,14 +1647,16 @@ namespace mpfshost::testing
                                                               const DebugWatchHitSink&    onHit,
                                                               const DebugWatchAbortCheck& aborted,
                                                               bool&                       busy,
-                                                              std::string&                error) override
+                                                              std::string&                error,
+                                                              bool&                       unavailable) override
         {
             ++_debugState->watchCalls;
             _debugState->lastWatchRequest = request;
             if (!_debugState->watchFailure.empty())
             {
-                busy  = _debugState->watchBusy;
-                error = _debugState->watchFailure;
+                busy        = _debugState->watchBusy;
+                unavailable = _debugState->failureUnavailable;
+                error       = _debugState->watchFailure;
                 return std::nullopt;
             }
             for (const auto& hit : _debugState->watchHits)
@@ -1664,7 +1674,8 @@ namespace mpfshost::testing
                                                                              const DebugWatchAbortCheck&   aborted,
                                                                              bool&                         invalidState,
                                                                              bool&                         busy,
-                                                                             std::string& error) override
+                                                                             std::string&                  error,
+                                                                             bool& unavailable) override
         {
             ++_debugState->breakpointCalls;
             _debugState->lastBreakpointRequest = request;
@@ -1672,6 +1683,7 @@ namespace mpfshost::testing
             {
                 invalidState = _debugState->breakpointInvalidState;
                 busy         = _debugState->breakpointBusy;
+                unavailable  = _debugState->failureUnavailable;
                 error        = _debugState->breakpointFailure;
                 return std::nullopt;
             }
@@ -1683,8 +1695,11 @@ namespace mpfshost::testing
             return _debugState->breakpointResponse;
         }
 
-        [[nodiscard]] std::optional<DebugStepResponse>
-        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error) override
+        [[nodiscard]] std::optional<DebugStepResponse> debugStep(const DebugStepRequest& request,
+                                                                 bool&                   invalidState,
+                                                                 bool&                   busy,
+                                                                 std::string&            error,
+                                                                 bool&                   unavailable) override
         {
             ++_debugState->stepCalls;
             _debugState->lastStepRequest = request;
@@ -1692,6 +1707,7 @@ namespace mpfshost::testing
             {
                 invalidState = _debugState->stepInvalidState;
                 busy         = _debugState->stepBusy;
+                unavailable  = _debugState->failureUnavailable;
                 error        = _debugState->stepFailure;
                 return std::nullopt;
             }
@@ -1699,13 +1715,15 @@ namespace mpfshost::testing
             return _debugState->stepResponse;
         }
 
-        [[nodiscard]] std::optional<DebugDetachResponse> debugDetach(bool& busy, std::string& error) override
+        [[nodiscard]] std::optional<DebugDetachResponse>
+        debugDetach(bool& busy, std::string& error, bool& unavailable) override
         {
             ++_debugState->detachCalls;
             if (!_debugState->detachFailure.empty())
             {
-                busy  = _debugState->detachBusy;
-                error = _debugState->detachFailure;
+                busy        = _debugState->detachBusy;
+                unavailable = _debugState->failureUnavailable;
+                error       = _debugState->detachFailure;
                 return std::nullopt;
             }
             busy = false;

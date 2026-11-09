@@ -9,49 +9,52 @@
 
 namespace mpfshost
 {
-    std::optional<DebugStatus> VmmHandle::debugState(bool& busy, std::string& error)
+    std::optional<DebugStatus> VmmHandle::debugState(bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.state(busy, error);
+        return _debug.state(busy, error, unavailable);
     }
 
-    std::optional<DebugStatus> VmmHandle::debugControl(DebugControlAction action, bool& busy, std::string& error)
+    std::optional<DebugStatus>
+    VmmHandle::debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.control(action, busy, error);
+        return _debug.control(action, busy, error, unavailable);
     }
 
-    std::optional<std::vector<DebugRegisterRecord>>
-    VmmHandle::debugRegisters(const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error)
+    std::optional<std::vector<DebugRegisterRecord>> VmmHandle::debugRegisters(
+        const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.registers(request, invalidState, busy, error);
+        return _debug.registers(request, invalidState, busy, error, unavailable);
     }
 
     std::optional<DebugWatchEnd> VmmHandle::debugWatch(const DebugWatchRequest&    request,
                                                        const DebugWatchHitSink&    onHit,
                                                        const DebugWatchAbortCheck& aborted,
                                                        bool&                       busy,
-                                                       std::string&                error)
+                                                       std::string&                error,
+                                                       bool&                       unavailable)
     {
-        return _debug.watch(request, onHit, aborted, busy, error);
+        return _debug.watch(request, onHit, aborted, busy, error, unavailable);
     }
 
     std::optional<DebugBreakpointResponse> VmmHandle::debugBreakpoint(const DebugBreakpointRequest& request,
                                                                       const DebugWatchAbortCheck&   aborted,
                                                                       bool&                         invalidState,
                                                                       bool&                         busy,
-                                                                      std::string&                  error)
+                                                                      std::string&                  error,
+                                                                      bool&                         unavailable)
     {
-        return _debug.breakpoint(request, aborted, invalidState, busy, error);
+        return _debug.breakpoint(request, aborted, invalidState, busy, error, unavailable);
     }
 
-    std::optional<DebugStepResponse>
-    VmmHandle::debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error)
+    std::optional<DebugStepResponse> VmmHandle::debugStep(
+        const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.step(request, invalidState, busy, error);
+        return _debug.step(request, invalidState, busy, error, unavailable);
     }
 
-    std::optional<DebugDetachResponse> VmmHandle::debugDetach(bool& busy, std::string& error)
+    std::optional<DebugDetachResponse> VmmHandle::debugDetach(bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.detach(busy, error);
+        return _debug.detach(busy, error, unavailable);
     }
 
     std::optional<debug::DebugProcessDtbs> VmmHandle::processDtbs(std::uint32_t pid, std::string& error)

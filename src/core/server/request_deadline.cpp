@@ -46,4 +46,13 @@ namespace mpfshost
     {
         return activeDeadline != nullptr && activeDeadline->expired();
     }
+
+    std::chrono::milliseconds requestRemaining(std::chrono::milliseconds fallback) noexcept
+    {
+        if (activeDeadline == nullptr)
+        {
+            return fallback;
+        }
+        return activeDeadline->remaining();
+    }
 } // namespace mpfshost

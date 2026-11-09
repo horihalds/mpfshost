@@ -27,13 +27,21 @@ namespace mpfshost
         }
 
         std::string error;
-        bool        busy   = false;
-        auto        status = provider->debugState(busy, error);
+        bool        busy        = false;
+        bool        unavailable = false;
+        auto        status      = provider->debugState(busy, error, unavailable);
         if (!status.has_value())
         {
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug state query failed" : error);
@@ -65,13 +73,21 @@ namespace mpfshost
         }
 
         std::string error;
-        bool        busy   = false;
-        auto        status = provider->debugControl(request->action, busy, error);
+        bool        busy        = false;
+        bool        unavailable = false;
+        auto        status      = provider->debugControl(request->action, busy, error, unavailable);
         if (!status.has_value())
         {
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug control failed" : error);
@@ -110,7 +126,8 @@ namespace mpfshost
         bool        invalidState = false;
         bool        busy         = false;
         std::string error;
-        auto        records = provider->debugRegisters(*request, invalidState, busy, error);
+        bool        unavailable = false;
+        auto        records     = provider->debugRegisters(*request, invalidState, busy, error, unavailable);
         if (!records.has_value())
         {
             if (busy)
@@ -123,6 +140,13 @@ namespace mpfshost
                 sendError(requestId,
                           ErrorCode::InvalidState,
                           error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug register read failed" : error);
@@ -217,12 +241,20 @@ namespace mpfshost
 
         bool        busy = false;
         std::string error;
-        const auto  end = provider->debugWatch(*request, onHit, abortCheck, busy, error);
+        bool        unavailable = false;
+        const auto  end         = provider->debugWatch(*request, onHit, abortCheck, busy, error, unavailable);
         if (!end.has_value())
         {
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "the debug watch failed" : error);
@@ -297,7 +329,8 @@ namespace mpfshost
         bool        invalidState = false;
         bool        busy         = false;
         std::string error;
-        const auto  response = provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error);
+        bool        unavailable = false;
+        const auto  response = provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error, unavailable);
         if (!response.has_value())
         {
             if (busy)
@@ -310,6 +343,13 @@ namespace mpfshost
                 sendError(requestId,
                           ErrorCode::InvalidState,
                           error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "the debug breakpoint failed" : error);
@@ -352,7 +392,8 @@ namespace mpfshost
         bool        invalidState = false;
         bool        busy         = false;
         std::string error;
-        const auto  response = provider->debugStep(*request, invalidState, busy, error);
+        bool        unavailable = false;
+        const auto  response    = provider->debugStep(*request, invalidState, busy, error, unavailable);
         if (!response.has_value())
         {
             if (busy)
@@ -365,6 +406,13 @@ namespace mpfshost
                 sendError(requestId,
                           ErrorCode::InvalidState,
                           error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "the single step failed" : error);
@@ -397,12 +445,20 @@ namespace mpfshost
 
         bool        busy = false;
         std::string error;
-        const auto  response = provider->debugDetach(busy, error);
+        bool        unavailable = false;
+        const auto  response    = provider->debugDetach(busy, error, unavailable);
         if (!response.has_value())
         {
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
                 return;
             }
             sendError(requestId, ErrorCode::Internal, error.empty() ? "debug detach failed" : error);

@@ -6,8 +6,11 @@ Unit tests cover the protocol; anything that touches QMP, HMP or the GDB stub is
 ## Control plane
 
 Each VM target is a QEMU pid paired with a QMP Unix socket by the target scan (`list-targets` prints both). The host
-connects to that socket for every debug request, completes QMP's `qmp_capabilities` handshake, and closes the
-connection again.
+opens one QMP connection per target on first use and keeps it until the host exits, reconnecting after a transport
+failure or a protocol-desynchronizing reply. Commands are serialized with a QMP mutex rather than holding the whole
+operation lock, so `debug-status` and `debug-stop`/`debug-continue` remain usable while a watch or breakpoint is in
+flight. Every QMP wait uses the request's remaining deadline; work outside a request (teardown, shutdown) uses a
+bounded default of five seconds.
 
 | Need | Channel | Command |
 |------|---------|---------|
@@ -158,7 +161,8 @@ Run on 2026-11-09 against the `windows` target (12 vCPUs) with `guest-probe.exe`
 - `debug-stop` left the guest `paused` with `host-paused=yes`. `systemctl restart mpfshost` (SIGTERM) left it
   `running` with `stub-active=no`, `host-paused=no`, so the shutdown teardown resumed the pause this host made.
 - A 300-second `debug-watch` on `GuestProbeMarker` (`0x7ff7850e1480`, width 1) armed and waited. A second client's
-  `debug-status` returned `Busy`, confirming the watch held the controller.
+  `debug-status` returned `Busy`, confirming the watch held the controller. That run predates the persistent QMP
+  channel; the controller now answers `debug-status` and `debug-stop` while a watch is in flight.
 - `systemctl kill --signal=SIGKILL mpfshost` during the watch made the watch client end with
   `server closed the connection`. After the automatic restart, `debug-status` reported `stub-active=yes`,
   `stub-owned=no`, `foreign-stub=yes`, while the guest was still `running`.
@@ -216,10 +220,12 @@ Notepad or injected keystrokes.
 6. Run the same sequence through MCP `debug_watch`. Confirm that cancelling the client (Ctrl-C) still leaves the VM
    running and the stub stopped.
 
-Only one watch runs at a time: a second debug operation is refused with `Busy`, so a watch holds one of the four
-hardware debug-register slots. QEMU's debug registers are global rather than per vCPU; a second `Z2` for the same
-address on another thread is rejected with `E22`, so the host arms the watchpoint once. If the guest already uses
-that slot, arming fails and the request reports an error instead of silently missing writes.
+Only one exclusive debug operation runs at a time: a second registers, breakpoint, step or watch request is refused
+with `Busy`, so a watch holds one of the four hardware debug-register slots. `debug-status` and
+`debug-stop`/`debug-continue` still run during a watch because they only need QMP. QEMU's debug registers are global
+rather than per vCPU; a second `Z2` for the same address on another thread is rejected with `E22`, so the host arms
+the watchpoint once. If the guest already uses that slot, arming fails and the request reports an error instead of
+silently missing writes.
 
 Record here: the observed `cr3` values, whether the first hit was a reallocation vs the logical store, and whether
 repeated hits kept the guest responsive.

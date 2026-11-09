@@ -34,6 +34,10 @@ namespace mpfshost
     };
 
     [[nodiscard]] bool requestExpired() noexcept;
+
+    // How long a blocking call may still take: the running request's budget while one is active, otherwise
+    // `fallback` for work that has no request behind it (teardown, shutdown).
+    [[nodiscard]] std::chrono::milliseconds requestRemaining(std::chrono::milliseconds fallback) noexcept;
 } // namespace mpfshost
 
 #endif // MPFSHOST_CORE_SERVER_REQUEST_DEADLINE_HPP

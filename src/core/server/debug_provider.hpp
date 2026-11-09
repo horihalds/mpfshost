@@ -23,31 +23,40 @@ namespace mpfshost
         virtual ~DebugProvider() = default;
 
         // `busy` reports another debug operation holding the target, which the session maps to ErrorCode::Busy.
-        [[nodiscard]] virtual std::optional<DebugStatus> debugState(bool& busy, std::string& error) = 0;
+        // `unavailable` reports that QMP could not be reached, which the session maps to CapabilityUnavailable.
         [[nodiscard]] virtual std::optional<DebugStatus>
-        debugControl(DebugControlAction action, bool& busy, std::string& error) = 0;
+        debugState(bool& busy, std::string& error, bool& unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugStatus>
+        debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable) = 0;
         // `invalidState` reports a running guest or another owner's stub, which the session maps to
         // ErrorCode::InvalidState instead of Internal.
         [[nodiscard]] virtual std::optional<std::vector<DebugRegisterRecord>>
-        debugRegisters(const DebugRegistersRequest& request, bool& invalidState, bool& busy, std::string& error) = 0;
+                                                           debugRegisters(const DebugRegistersRequest& request,
+                                                                          bool&                        invalidState,
+                                                                          bool&                        busy,
+                                                                          std::string&                 error,
+                                                                          bool&                        unavailable) = 0;
         // `onHit` sends one data frame and returns false when it could not be written; `aborted` is polled
         // between short stops so cancellation, the request deadline and peer loss all end the watch quickly.
         [[nodiscard]] virtual std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
                                                                       const DebugWatchHitSink&    onHit,
                                                                       const DebugWatchAbortCheck& aborted,
                                                                       bool&                       busy,
-                                                                      std::string&                error)         = 0;
+                                                                      std::string&                error,
+                                                                      bool&                       unavailable)      = 0;
         // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
         [[nodiscard]] virtual std::optional<DebugBreakpointResponse>
-        debugBreakpoint(const DebugBreakpointRequest& request,
-                        const DebugWatchAbortCheck&   aborted,
-                        bool&                         invalidState,
-                        bool&                         busy,
-                        std::string&                  error) = 0;
-        [[nodiscard]] virtual std::optional<DebugStepResponse>
-        debugStep(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error)       = 0;
+                                                               debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                               const DebugWatchAbortCheck&   aborted,
+                                                                               bool&                         invalidState,
+                                                                               bool&                         busy,
+                                                                               std::string&                  error,
+                                                                               bool&                         unavailable) = 0;
+        [[nodiscard]] virtual std::optional<DebugStepResponse> debugStep(
+            const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
         // Stops an active stub, including a foreign one, and resumes the guest only when this host paused it.
-        [[nodiscard]] virtual std::optional<DebugDetachResponse> debugDetach(bool& busy, std::string& error) = 0;
+        [[nodiscard]] virtual std::optional<DebugDetachResponse>
+        debugDetach(bool& busy, std::string& error, bool& unavailable) = 0;
     };
 } // namespace mpfshost
 

@@ -2,6 +2,7 @@
 
 #include "core/debug/debug_controller.hpp"
 #include "core/debug/debug_inspector.hpp"
+#include "core/server/request_deadline.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,11 +13,13 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <future>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -46,11 +49,17 @@ namespace
 
     struct FakeQmpState
     {
-        std::deque<std::string>  incoming;
-        std::vector<std::string> written;
-        bool                     running {false};
-        bool                     stubActive {false};
-        bool                     startFails {false};
+        std::deque<std::string>   incoming;
+        std::vector<std::string>  written;
+        bool                      running {false};
+        bool                      stubActive {false};
+        bool                      startFails {false};
+        bool                      openFails {false};
+        bool                      closed {false};
+        bool                      stall {false};
+        std::string               failCommand;
+        std::size_t               opens {0};
+        std::chrono::milliseconds lastReadTimeout {0};
 
         FakeQmpState()
         {
@@ -75,15 +84,24 @@ namespace
 
         [[nodiscard]] bool open(const std::filesystem::path&, std::chrono::milliseconds, std::string&) override
         {
-            return true;
+            ++_state->opens;
+            return !_state->openFails;
         }
 
         [[nodiscard]] bool writeLine(std::string_view line, std::chrono::milliseconds, std::string&) override
         {
             _state->written.emplace_back(line);
+            if (_state->closed)
+            {
+                return true;
+            }
             const std::string text {line};
 
-            if (text.find("qmp_capabilities") != std::string::npos)
+            if (!_state->failCommand.empty() && text.find(_state->failCommand) != std::string::npos)
+            {
+                _state->incoming.emplace_back(R"({"error":{"class":"GenericError","desc":"the fake command failed"}})");
+            }
+            else if (text.find("qmp_capabilities") != std::string::npos)
             {
                 _state->incoming.emplace_back(R"({"return":{}})");
             }
@@ -145,8 +163,22 @@ namespace
         }
 
         [[nodiscard]] bool
-        readLine(std::string& line, std::chrono::milliseconds, bool& closed, std::string& error) override
+        readLine(std::string& line, std::chrono::milliseconds timeout, bool& closed, std::string& error) override
         {
+            _state->lastReadTimeout = timeout;
+            if (_state->closed)
+            {
+                closed = true;
+                error  = "the fake QMP connection closed";
+                return false;
+            }
+            if (_state->stall)
+            {
+                std::this_thread::sleep_for(timeout);
+                closed = false;
+                error  = "the fake QMP socket timed out";
+                return false;
+            }
             if (_state->incoming.empty())
             {
                 closed = true;
@@ -458,7 +490,8 @@ namespace
         std::optional<mpfshost::debug::DebugPdbHit> pdb {
             mpfshost::debug::DebugPdbHit {"memcpy", 4}
         };
-        bool hasModule {true};
+        bool                  hasModule {true};
+        std::function<void()> onWatchRead;
 
         [[nodiscard]] std::optional<mpfshost::debug::DebugProcessDtbs> processDtbs(std::uint32_t, std::string&) override
         {
@@ -496,6 +529,12 @@ namespace
             out.clear();
             if (address == watchAddress)
             {
+                if (onWatchRead)
+                {
+                    auto callback = std::move(onWatchRead);
+                    onWatchRead   = {};
+                    callback();
+                }
                 if (valueIndex >= values.size())
                 {
                     error = "the fake memory read failed";
@@ -537,7 +576,8 @@ TEST_CASE("the debug controller starts and tears down a stub for register reads"
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
     REQUIRE(records.has_value());
     REQUIRE_FALSE(invalidState);
     REQUIRE(records->size() == 1);
@@ -574,7 +614,8 @@ TEST_CASE("the debug controller refuses registers while the guest runs", "[core]
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
     REQUIRE_FALSE(records.has_value());
     REQUIRE(invalidState);
     REQUIRE(error.find("paused") != std::string::npos);
@@ -602,7 +643,8 @@ TEST_CASE("the debug controller refuses a stub owned by someone else", "[core][d
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
     REQUIRE_FALSE(records.has_value());
     REQUIRE(invalidState);
     REQUIRE(error.find("another GDB stub") != std::string::npos);
@@ -628,7 +670,8 @@ TEST_CASE("the debug controller reports a foreign stub as unowned", "[core][debu
 
     bool        busy = false;
     std::string error;
-    const auto  status = controller.state(busy, error);
+    bool        unavailable = false;
+    const auto  status      = controller.state(busy, error, unavailable);
     REQUIRE(status.has_value());
     REQUIRE(status->stubActive);
     REQUIRE_FALSE(status->stubOwned);
@@ -654,7 +697,8 @@ TEST_CASE("the debug controller detaches a foreign stub on request", "[core][deb
 
     bool        busy = false;
     std::string error;
-    const auto  response = controller.detach(busy, error);
+    bool        unavailable = false;
+    const auto  response    = controller.detach(busy, error, unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->stubStopped);
     REQUIRE(response->foreignStub);
@@ -682,12 +726,12 @@ TEST_CASE("detach resumes a guest the host paused", "[core][debug][controller]")
 
     bool        busy = false;
     std::string error;
-    const auto  stopped = controller.control(mpfshost::DebugControlAction::Stop, busy, error);
+    bool        unavailable = false;
+    const auto  stopped     = controller.control(mpfshost::DebugControlAction::Stop, busy, error, unavailable);
     REQUIRE(stopped.has_value());
     REQUIRE_FALSE(qmp->running);
 
-    qmp->incoming.emplace_back(R"({"QMP":{"version":{"qemu":{"major":10,"minor":2,"micro":2}}}})");
-    const auto response = controller.detach(busy, error);
+    const auto response = controller.detach(busy, error, unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->guestResumed);
     REQUIRE(response->status.runState == mpfshost::DebugRunState::Running);
@@ -712,11 +756,11 @@ TEST_CASE("shutdown resumes a guest the host paused", "[core][debug][controller]
 
     bool        busy = false;
     std::string error;
-    const auto  stopped = controller.control(mpfshost::DebugControlAction::Stop, busy, error);
+    bool        unavailable = false;
+    const auto  stopped     = controller.control(mpfshost::DebugControlAction::Stop, busy, error, unavailable);
     REQUIRE(stopped.has_value());
     REQUIRE_FALSE(qmp->running);
 
-    qmp->incoming.emplace_back(R"({"QMP":{"version":{"qemu":{"major":10,"minor":2,"micro":2}}}})");
     controller.shutdown();
     REQUIRE(qmp->running);
 }
@@ -743,7 +787,8 @@ TEST_CASE("the debug controller tears the stub down after a read failure", "[cor
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  records = controller.registers({}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  records     = controller.registers({}, invalidState, busy, error, unavailable);
     REQUIRE_FALSE(records.has_value());
     REQUIRE_FALSE(invalidState);
     REQUIRE(qmp->count("gdbserver unix:") == 1);
@@ -778,7 +823,8 @@ TEST_CASE("the debug controller arms, resolves and tears down a write watchpoint
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -787,7 +833,8 @@ TEST_CASE("the debug controller arms, resolves and tears down a write watchpoint
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE_FALSE(busy);
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
@@ -843,7 +890,8 @@ TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[cor
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -852,7 +900,8 @@ TEST_CASE("a watchpoint skips a hit whose CR3 belongs to another process", "[cor
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
     REQUIRE(end->hitCount == 1);
@@ -890,7 +939,8 @@ TEST_CASE("a watchpoint accepts a CR3 mismatch when the target memory changed", 
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -899,7 +949,8 @@ TEST_CASE("a watchpoint accepts a CR3 mismatch when the target memory changed", 
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
     REQUIRE(end->hitCount == 1);
@@ -940,7 +991,8 @@ TEST_CASE("a watchpoint accepts its quoted stop address without a CR3 match", "[
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -949,7 +1001,8 @@ TEST_CASE("a watchpoint accepts its quoted stop address without a CR3 match", "[
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
     REQUIRE(end->hitCount == 1);
@@ -989,7 +1042,8 @@ TEST_CASE("a watchpoint skips a stop for another address", "[core][debug][contro
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 100},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -998,7 +1052,8 @@ TEST_CASE("a watchpoint skips a stop for another address", "[core][debug][contro
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
     REQUIRE(end->hitCount == 0);
@@ -1036,7 +1091,8 @@ TEST_CASE("a watchpoint ignores a stale hit outside the target's modules", "[cor
     std::vector<mpfshost::DebugWatchData> hits;
     bool                                  busy = false;
     std::string                           error;
-    const auto                            end = controller.watch(
+    bool                                  unavailable = false;
+    const auto                            end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 100},
         [&hits](const mpfshost::DebugWatchData& hit)
         {
@@ -1045,7 +1101,8 @@ TEST_CASE("a watchpoint ignores a stale hit outside the target's modules", "[cor
         },
         {},
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
     REQUIRE(end->hitCount == 0);
@@ -1083,7 +1140,9 @@ TEST_CASE("the watchpoint is armed once even with several vCPUs", "[core][debug]
 
     bool        busy = false;
     std::string error;
-    const auto end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error);
+    bool        unavailable = false;
+    const auto  end =
+        controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error, unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
     REQUIRE(rsp->watchInserts == 1);
@@ -1117,7 +1176,9 @@ TEST_CASE("a watchpoint times out and still restores the guest", "[core][debug][
 
     bool        busy = false;
     std::string error;
-    const auto  end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5}, {}, {}, busy, error);
+    bool        unavailable = false;
+    const auto  end =
+        controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5}, {}, {}, busy, error, unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
     REQUIRE(end->hitCount == 0);
@@ -1152,7 +1213,8 @@ TEST_CASE("cancelling a watchpoint tears the stub down", "[core][debug][controll
 
     bool        busy = false;
     std::string error;
-    const auto  end = controller.watch(
+    bool        unavailable = false;
+    const auto  end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
         {},
         []
@@ -1160,7 +1222,8 @@ TEST_CASE("cancelling a watchpoint tears the stub down", "[core][debug][controll
             return true;
         },
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
     REQUIRE(rsp->watchRemoves == 1);
@@ -1198,7 +1261,8 @@ TEST_CASE("cancelling a watchpoint after its first hit stops the watch", "[core]
     std::size_t hits  = 0;
     bool        busy  = false;
     std::string error;
-    const auto  end = controller.watch(
+    bool        unavailable = false;
+    const auto  end         = controller.watch(
         {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 2, 5000},
         [&hits](const mpfshost::DebugWatchData&)
         {
@@ -1212,7 +1276,8 @@ TEST_CASE("cancelling a watchpoint after its first hit stops the watch", "[core]
             return result;
         },
         busy,
-        error);
+        error,
+        unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Cancelled);
     REQUIRE(end->hitCount == 1);
@@ -1249,7 +1314,9 @@ TEST_CASE("a memory read failure during a watchpoint ends it as an error", "[cor
 
     bool        busy = false;
     std::string error;
-    const auto end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error);
+    bool        unavailable = false;
+    const auto  end =
+        controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000}, {}, {}, busy, error, unavailable);
     REQUIRE(end.has_value());
     REQUIRE(end->status == mpfshost::DebugWatchStatus::Error);
     REQUIRE(end->error.find("fake memory read") != std::string::npos);
@@ -1287,8 +1354,14 @@ TEST_CASE("the debug controller arms and tears down software and hardware breakp
         bool        invalidState = false;
         bool        busy         = false;
         std::string error;
-        const auto  response = controller.breakpoint(
-            {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5000}, {}, invalidState, busy, error);
+        bool        unavailable = false;
+        const auto  response =
+            controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5000},
+                                  {},
+                                  invalidState,
+                                  busy,
+                                  error,
+                                  unavailable);
         REQUIRE(response.has_value());
         REQUIRE_FALSE(invalidState);
         REQUIRE_FALSE(busy);
@@ -1333,8 +1406,14 @@ TEST_CASE("the debug controller arms and tears down software and hardware breakp
         bool        invalidState = false;
         bool        busy         = false;
         std::string error;
-        const auto  response = controller.breakpoint(
-            {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+        bool        unavailable = false;
+        const auto  response =
+            controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000},
+                                  {},
+                                  invalidState,
+                                  busy,
+                                  error,
+                                  unavailable);
         REQUIRE(response.has_value());
         REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
         REQUIRE(rsp->breakpointInserts == 1);
@@ -1372,8 +1451,13 @@ TEST_CASE("a breakpoint skips a stop that belongs to another process", "[core][d
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  response = controller.breakpoint(
-        {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  response = controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000},
+                                                 {},
+                                                 invalidState,
+                                                 busy,
+                                                 error,
+                                                 unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
     REQUIRE(response->skippedCount == 1);
@@ -1409,8 +1493,13 @@ TEST_CASE("a breakpoint skips a matching CR3 stop away from the breakpoint addre
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  response = controller.breakpoint(
-        {42, 0x7ff8451b1234ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  response = controller.breakpoint({42, 0x7ff8451b1234ull, mpfshost::DebugBreakpointKind::Hardware, 5000},
+                                                 {},
+                                                 invalidState,
+                                                 busy,
+                                                 error,
+                                                 unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
     REQUIRE(response->skippedCount == 1);
@@ -1444,8 +1533,13 @@ TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  response = controller.breakpoint(
-        {42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5}, {}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  response    = controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5},
+                                                    {},
+                                                    invalidState,
+                                                    busy,
+                                                    error,
+                                                    unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Timeout);
     REQUIRE(rsp->breakpointRemoves == 1);
@@ -1477,7 +1571,8 @@ TEST_CASE("the debug controller single-steps a paused guest", "[core][debug][con
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  response = controller.step({0}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  response    = controller.step({0}, invalidState, busy, error, unavailable);
     REQUIRE(response.has_value());
     REQUIRE_FALSE(invalidState);
     REQUIRE_FALSE(busy);
@@ -1511,9 +1606,220 @@ TEST_CASE("a single step refuses a running guest", "[core][debug][controller]")
     bool        invalidState = false;
     bool        busy         = false;
     std::string error;
-    const auto  response = controller.step({0}, invalidState, busy, error);
+    bool        unavailable = false;
+    const auto  response    = controller.step({0}, invalidState, busy, error, unavailable);
     REQUIRE_FALSE(response.has_value());
     REQUIRE(invalidState);
     REQUIRE(error.find("paused") != std::string::npos);
     REQUIRE(qmp->count("gdbserver") == 0);
+}
+
+TEST_CASE("the debug controller reuses one QMP connection across requests", "[core][debug][controller]")
+{
+    auto qmp = std::make_shared<FakeQmpState>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(qmp->opens == 1);
+}
+
+TEST_CASE("a watch in progress still answers status and control", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+
+    FakeInspector inspector;
+    inspector.values = {0xAA};
+    std::promise<void> armed;
+    auto               armedFuture = armed.get_future();
+    inspector.onWatchRead          = [&armed]
+    {
+        armed.set_value();
+    };
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::optional<mpfshost::DebugWatchEnd> end;
+    bool                                   watchBusy        = false;
+    bool                                   watchUnavailable = false;
+    std::string                            watchError;
+    std::thread                            watcher {[&]
+                                                    {
+                             end = controller.watch({42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 300},
+                                                    {},
+                                                    {},
+                                                    watchBusy,
+                                                    watchError,
+                                                    watchUnavailable);
+                                                    }};
+
+    // The initial watch-value read happens after the guest is paused and the stub is armed.
+    armedFuture.wait();
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    const auto  status = controller.state(busy, error, unavailable);
+    REQUIRE(status.has_value());
+    REQUIRE_FALSE(busy);
+    REQUIRE(status->runState == mpfshost::DebugRunState::Paused);
+    REQUIRE(status->stubActive);
+
+    const auto resumed = controller.control(mpfshost::DebugControlAction::Continue, busy, error, unavailable);
+    REQUIRE(resumed.has_value());
+    REQUIRE(resumed->runState == mpfshost::DebugRunState::Running);
+    REQUIRE(qmp->running);
+
+    watcher.join();
+    REQUIRE(end.has_value());
+    REQUIRE(qmp->running);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("a dropped QMP connection is re-established on the next call", "[core][debug][controller]")
+{
+    auto qmp = std::make_shared<FakeQmpState>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(qmp->opens == 1);
+
+    qmp->closed = true;
+    REQUIRE_FALSE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(error.find("closed") != std::string::npos);
+
+    qmp->closed = false;
+    qmp->incoming.emplace_back(R"({"QMP":{"version":{"qemu":{"major":10,"minor":2,"micro":2}}}})");
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(qmp->opens == 2);
+}
+
+TEST_CASE("a QMP command failure does not poison the cached connection", "[core][debug][controller]")
+{
+    auto qmp = std::make_shared<FakeQmpState>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+
+    qmp->failCommand = "query-status";
+    REQUIRE_FALSE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(error.find("fake command failed") != std::string::npos);
+
+    qmp->failCommand.clear();
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(qmp->opens == 1);
+}
+
+TEST_CASE("a QMP connect failure is reported as unavailable", "[core][debug][controller]")
+{
+    auto qmp       = std::make_shared<FakeQmpState>();
+    qmp->openFails = true;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE_FALSE(controller.state(busy, error, unavailable).has_value());
+    REQUIRE(unavailable);
+    REQUIRE_FALSE(error.empty());
+}
+
+TEST_CASE("the request deadline bounds a pending QMP command", "[core][debug][controller]")
+{
+    auto qmp = std::make_shared<FakeQmpState>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        busy        = false;
+    bool        unavailable = false;
+    std::string error;
+    REQUIRE(controller.state(busy, error, unavailable).has_value());
+
+    qmp->stall = true;
+    mpfshost::RequestDeadline deadline;
+    deadline.restart(40ms);
+    mpfshost::RequestDeadlineScope scope {deadline};
+
+    const auto start = std::chrono::steady_clock::now();
+    REQUIRE_FALSE(controller.state(busy, error, unavailable).has_value());
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(elapsed < std::chrono::seconds {1});
+    REQUIRE(qmp->lastReadTimeout > 0ms);
+    REQUIRE(qmp->lastReadTimeout <= 40ms);
 }

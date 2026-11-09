@@ -15,27 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 1. Keep one QMP connection for the debug controller
-
-QEMU accepts only one QMP client, so a running watch holds the channel for its whole duration and `debug-status` or
-`debug-stop` from another request either returns `Busy` or cannot connect. The host also reconnects for every
-single-frame request.
-
-- Open the QMP connection on first use and keep it in `DebugController`, reconnecting when the transport reports EOF
-  or a command fails. Guard commands with a QMP mutex rather than holding the controller-wide operation mutex.
-- Split the locking: an exclusive operation mutex for watch/break/step/registers, and a separate state mutex for
-  `state()` and `control()` so they can run while a watch or breakpoint is in flight. QMP commands are serialized,
-  not the whole request.
-- Route every QMP call through the session's request deadline instead of the fixed `kQmpTimeout`; keep a bounded
-  default for calls made outside a request (teardown, shutdown). Surface a QMP connect failure as
-  `CapabilityUnavailable` when the socket is absent and `Internal` only for a real command error.
-- Tests: a watch in progress still answers `debug-status` and `debug-stop`; a dropped QMP connection is re-established
-  on the next call; a command failure does not poison the cached connection; deadline expiry cancels a pending QMP
-  command.
-
-Acceptance: during a live watch, `debug-status` reports the real run state and a second client can pause or resume
-the guest.
-
 ### 2. Reject guests whose architecture the debugger cannot read
 
 The register layout, `rip`/`cr3` lookups and `x86_decoder` assume x86-64. An aarch64 or 32-bit guest fails late with

@@ -73,6 +73,11 @@ namespace mpfshost::debug
         [[nodiscard]] bool queryStatus(QmpStatusInfo& info, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool queryVcpuCount(std::uint32_t& count, std::chrono::milliseconds timeout, std::string& error);
 
+        [[nodiscard]] bool isOpen() const noexcept
+        {
+            return _open;
+        }
+
     private:
         [[nodiscard]] bool waitForReply(std::string& resultJson, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool executeMessage(std::string_view          messageJson,
