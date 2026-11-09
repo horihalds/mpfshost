@@ -24,6 +24,8 @@
 #define PROBE_DEFAULT_WATCH_MS     500u
 #define PROBE_PATTERN_SIZE         64u
 
+static const unsigned char kBreakpointStub[] = {0xF3, 0x0F, 0x1E, 0xFA, 0xC3};
+
 #if defined(__GNUC__)
 #define PROBE_NOINLINE __attribute__((noinline, used))
 #else
@@ -46,6 +48,7 @@ typedef struct
     int         logEnabled;
     int         help;
     const char* logPath;
+    unsigned    heartbeatCpu;
 } Options;
 
 typedef struct
@@ -62,12 +65,14 @@ static Region g_regions[8];
 static size_t g_regionCount    = 0;
 static size_t g_regionCapacity = sizeof(g_regions) / sizeof(g_regions[0]);
 
-static volatile unsigned char* g_trigger         = NULL;
-static unsigned                g_heartbeatMs     = PROBE_DEFAULT_HEARTBEAT_MS;
-static unsigned char*          g_watchBuffer     = NULL;
-static unsigned char*          g_watchSnapshot   = NULL;
-static size_t                  g_watchSize       = 0;
-static unsigned                g_watchIntervalMs = PROBE_DEFAULT_WATCH_MS;
+static volatile unsigned char* g_trigger      = NULL;
+static unsigned                g_heartbeatMs  = PROBE_DEFAULT_HEARTBEAT_MS;
+static unsigned                g_heartbeatCpu = 0;
+static void (*g_breakpointTarget)(void)       = NULL;
+static unsigned char* g_watchBuffer           = NULL;
+static unsigned char* g_watchSnapshot         = NULL;
+static size_t         g_watchSize             = 0;
+static unsigned       g_watchIntervalMs       = PROBE_DEFAULT_WATCH_MS;
 
 #if defined(__cplusplus)
 extern "C"
@@ -89,6 +94,10 @@ extern "C"
         if (g_trigger != NULL)
         {
             g_trigger[0] = (unsigned char)((tick & 1u) != 0 ? 0xA5u : 0x5Au);
+        }
+        if (g_breakpointTarget != NULL)
+        {
+            g_breakpointTarget();
         }
         GuestProbeMarker(tick);
     }
@@ -137,6 +146,7 @@ static void print_usage(const char* program)
             "  --regions               Create the ro/rx/noaccess/guard/reserve regions (default: on)\n"
             "  --no-regions            Create only the main buffer and the trigger page\n"
             "  --heartbeat <ms>        Toggle the trigger byte and call GuestProbeMarker (default: 500)\n"
+            "  --heartbeat-cpu <n>     Pin the heartbeat thread to this vCPU (default: 0, max 63)\n"
             "  --no-heartbeat          Disable the trigger byte and the marker calls\n"
             "  --threads <n>           Number of idle worker threads (default: 2, max 64)\n"
             "  --duration <seconds>    Exit after this many seconds (default: run until Ctrl-C)\n"
@@ -245,6 +255,14 @@ static int parse_options(int argc, char** argv, Options* options)
             if (!parse_uint(argv[++index], 0, 600000, &options->heartbeatMs))
             {
                 fprintf(stderr, "guest-probe: --heartbeat needs milliseconds between 0 and 600000\n");
+                return 0;
+            }
+        }
+        else if (strcmp(argument, "--heartbeat-cpu") == 0 && index + 1 < argc)
+        {
+            if (!parse_uint(argv[++index], 0, 63, &options->heartbeatCpu))
+            {
+                fprintf(stderr, "guest-probe: --heartbeat-cpu needs a vCPU number between 0 and 63\n");
                 return 0;
             }
         }
@@ -391,7 +409,13 @@ static void print_export_inventory(void)
     emit("PROBE-EXPORT name=GuestProbeCounter address=0x%llx\n", (unsigned long long)(uintptr_t)&GuestProbeCounter);
 }
 
-static void create_region(const char* name, unsigned char fill, const char* protection, DWORD protect, int isReserve)
+static void* create_region(const char*          name,
+                           unsigned char        fill,
+                           const char*          protection,
+                           DWORD                protect,
+                           int                  isReserve,
+                           const unsigned char* code,
+                           size_t               codeSize)
 {
     DWORD oldProtection = 0;
     void* address       = NULL;
@@ -402,36 +426,46 @@ static void create_region(const char* name, unsigned char fill, const char* prot
         if (address == NULL)
         {
             report_last_error("VirtualAlloc(reserve)");
-            return;
+            return NULL;
         }
         remember_region(name, address, PROBE_REGION_SIZE);
         emit_region(name, address, PROBE_REGION_SIZE, "reserve", protection);
-        return;
+        return address;
     }
 
     address = VirtualAlloc(NULL, PROBE_REGION_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (address == NULL)
     {
         report_last_error("VirtualAlloc");
-        return;
+        return NULL;
     }
 
     memset(address, fill, PROBE_REGION_SIZE);
+    if (code != NULL && codeSize > 0 && codeSize <= PROBE_REGION_SIZE)
+    {
+        memcpy(address, code, codeSize);
+    }
     if (!VirtualProtect(address, PROBE_REGION_SIZE, protect, &oldProtection))
     {
         report_last_error("VirtualProtect");
         VirtualFree(address, 0, MEM_RELEASE);
-        return;
+        return NULL;
     }
 
     remember_region(name, address, PROBE_REGION_SIZE);
     emit_region(name, address, PROBE_REGION_SIZE, "commit", protection);
+    return address;
 }
 
 static DWORD WINAPI heartbeat_thread(void* parameter)
 {
     unsigned long long tick = 0;
     (void)parameter;
+
+    if (g_heartbeatCpu < 64)
+    {
+        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1u << g_heartbeatCpu);
+    }
 
     for (;;)
     {
@@ -507,6 +541,7 @@ int main(int argc, char** argv)
     options.durationSeconds = 0;
     options.logEnabled      = 1;
     options.logPath         = NULL;
+    options.heartbeatCpu    = 0;
 
     if (!parse_options(argc, argv, &options))
     {
@@ -607,11 +642,16 @@ int main(int argc, char** argv)
 
         if (options.regions)
         {
-            create_region("ro", 0x52, "r", PAGE_READONLY, 0);
-            create_region("rx", 0x90, "rx", PAGE_EXECUTE_READ, 0);
-            create_region("noaccess", 0x4E, "noaccess", PAGE_NOACCESS, 0);
-            create_region("guard", 0x47, "guard", PAGE_READWRITE | PAGE_GUARD, 0);
-            create_region("reserve", 0, "noaccess", PAGE_NOACCESS, 1);
+            create_region("ro", 0x52, "r", PAGE_READONLY, 0, NULL, 0);
+            void* rx = create_region("rx", 0x90, "rx", PAGE_EXECUTE_READ, 0, kBreakpointStub, sizeof(kBreakpointStub));
+            if (rx != NULL)
+            {
+                g_breakpointTarget = (void (*)(void))rx;
+                emit("PROBE-BREAKPOINT address=0x%llx\n", (unsigned long long)(uintptr_t)rx);
+            }
+            create_region("noaccess", 0x4E, "noaccess", PAGE_NOACCESS, 0, NULL, 0);
+            create_region("guard", 0x47, "guard", PAGE_READWRITE | PAGE_GUARD, 0, NULL, 0);
+            create_region("reserve", 0, "noaccess", PAGE_NOACCESS, 1, NULL, 0);
         }
 
         if (options.heartbeatMs > 0)
@@ -627,9 +667,10 @@ int main(int argc, char** argv)
                 memset((void*)g_trigger, 0, PROBE_REGION_SIZE);
                 remember_region("trigger", (void*)g_trigger, PROBE_REGION_SIZE);
                 emit_region("trigger", (void*)g_trigger, PROBE_REGION_SIZE, "commit", "rw");
-                emit("PROBE-TRIGGER address=0x%llx width=1 interval-ms=%u\n",
+                emit("PROBE-TRIGGER address=0x%llx width=1 interval-ms=%u cpu=%u\n",
                      (unsigned long long)(uintptr_t)g_trigger,
-                     options.heartbeatMs);
+                     options.heartbeatMs,
+                     options.heartbeatCpu);
             }
         }
 
@@ -655,6 +696,7 @@ int main(int argc, char** argv)
         {
             DWORD threadId = 0;
             g_heartbeatMs  = options.heartbeatMs;
+            g_heartbeatCpu = options.heartbeatCpu;
             HANDLE thread  = CreateThread(NULL, 0, heartbeat_thread, NULL, 0, &threadId);
             if (thread == NULL)
             {

@@ -19,8 +19,8 @@ fixture is:
 guest-probe.exe
 ```
 
-That creates the buffer and regions, starts the heartbeat, creates two worker threads and mirrors output to
-`%TEMP%\guest-probe-<pid>.log`.
+That creates the buffer and regions, starts the heartbeat on vCPU 0, creates two worker threads and mirrors output
+to `%TEMP%\guest-probe-<pid>.log`.
 
 ## Options
 
@@ -33,6 +33,7 @@ That creates the buffer and regions, starts the heartbeat, creates two worker th
 | `--watch` / `--no-watch` | on | Scan the main buffer for external writes and print `CHANGE` lines. |
 | `--watch-interval <ms>` | `500` | Delay between main-buffer scans (minimum 50 ms). |
 | `--heartbeat <ms>` / `--no-heartbeat` | `500` | Toggle the trigger byte and call `GuestProbeMarker`; `0` disables it. |
+| `--heartbeat-cpu <n>` | `0` | Pin the heartbeat thread to this vCPU (maximum 63). |
 | `--threads <n>` | `2` | Idle worker threads (maximum 64). |
 | `--duration <seconds>` | infinite | Exit cleanly after this many seconds. |
 | `--log <path>` / `--no-log` | temp file | Mirror output to a file. |
@@ -55,16 +56,21 @@ PROBE-PATTERN offset=0x0 size=64 hex=4d504653...
 PROBE-REGION name=main address=0x... size=4096 state=commit protection=rw
 PROBE-REGION name=ro address=0x... size=4096 state=commit protection=r
 PROBE-REGION name=rx address=0x... size=4096 state=commit protection=rx
+PROBE-BREAKPOINT address=0x...
 PROBE-REGION name=noaccess address=0x... size=4096 state=commit protection=noaccess
 PROBE-REGION name=guard address=0x... size=4096 state=commit protection=guard
 PROBE-REGION name=reserve address=0x... size=4096 state=reserve protection=noaccess
 PROBE-REGION name=trigger address=0x... size=4096 state=commit protection=rw
-PROBE-TRIGGER address=0x... width=1 interval-ms=500
+PROBE-TRIGGER address=0x... width=1 interval-ms=500 cpu=0
 PROBE-THREAD role=heartbeat index=0 tid=...
 PROBE-THREAD role=watch index=0 tid=...
 PROBE-THREAD role=worker index=0 tid=...
 PROBE-THREAD role=worker index=1 tid=...
 ```
+
+`PROBE-BREAKPOINT` is the entry of a small `endbr64; ret` stub in the probe's own RX page. It is called by the
+heartbeat every interval, so it is a breakpoint target whose address is not shared with another process's module.
+The exported `GuestProbeMarker` remains available for symbol and export tests.
 
 `CHANGE offset=0x.. old=0x.. new=0x..` is printed for every byte of the main buffer changed from outside. The
 heartbeat writes to the separate `trigger` region, so `--watch` does not report the probe's own heartbeat.
@@ -100,8 +106,10 @@ wildcard hex searches have a known hit.
 ./build/mpfshost --client virt2phys win11 --pid 1234 --address <main address>
 ```
 
-The `noaccess`, `guard` and `reserve` regions are never touched by the probe after they are protected, so a page
-read can be expected to fail there. The `rx` region is executable but is not called.
+The probe never touches the `noaccess`, `guard` and `reserve` regions after protecting them, so `vquery` and the
+map/PTE views report their protections accurately. A `page` read may still succeed, because MemProcFS reads guest
+physical memory instead of going through the guest's protection checks; use these regions for protection and
+metadata tests, not as read-denial tests. The `rx` region is executable but is not called.
 
 ### Module, symbols and exports
 
@@ -141,14 +149,18 @@ The trap should resolve inside `guest-probe.exe` (near `GuestProbeHeartbeat`). T
 
 ### Breakpoint and single step
 
-`GuestProbeMarker` is called once per heartbeat, so it is a reliable hardware breakpoint target:
+Use `PROBE-BREAKPOINT` as the hardware breakpoint target. It is called once per heartbeat and lives in a page owned
+only by the probe, so a global hardware breakpoint cannot collide with a hot address in another process:
 
 ```sh
-./build/mpfshost --client debug-break win11 --pid 1234 --address <GuestProbeMarker address> \
+./build/mpfshost --client debug-break win11 --pid 1234 --address <PROBE-BREAKPOINT address> \
     --kind hardware --timeout 30
 ```
 
-The guest must be running before the breakpoint is armed. For single-step checks, use the same paused-guest sequence
+`GuestProbeMarker` is still exported and callable, but its address is inside `guest-probe.exe`; on a guest where
+another process maps a module at the same base, a hardware breakpoint there can trap far more often than the
+heartbeat. The guest must be running before the breakpoint is armed. For single-step checks, use the same
+paused-guest sequence
 as any other process:
 
 ```sh
@@ -161,13 +173,20 @@ as any other process:
 ### Log
 
 With the default `--log`, the probe writes the same lines to `%TEMP%\guest-probe-<pid>.log` and prints the exact
-path in `PROBE-LOG`. If your MemProcFS VFS view exposes the guest volume, that file can be read with `vfs-read`
-without a network or serial channel.
+path in `PROBE-LOG`. If your MemProcFS VFS view exposes a filesystem module, that file can be read with `vfs-read`
+without a network or serial channel. The stock MemProcFS VFS has no filesystem view, so this is only available when
+that module is present.
 
 ## Notes
 
 - The probe is a Windows program; it is cross-compiled with mingw and is never linked into the host or the tests.
+- `PROBE-BREAKPOINT` only exists with `--regions` (the default). `--no-regions` removes it along with the protection
+  regions.
+- The heartbeat is pinned to vCPU 0 by default. If a debug test targets a different vCPU, pass `--heartbeat-cpu <n>`
+  and use the `cpu=` value in `PROBE-TRIGGER`.
 - A heartbeat interval below 500 ms makes a watch hit sooner, but also makes `--max-hits` fill quickly.
+- The live results and the remaining debug-controller issue are recorded in
+  [`docs/DEBUGGING.md`](../../docs/DEBUGGING.md).
 - The `guard` and `noaccess` pages immediately fault on access from inside the guest; do not add code that touches
   them.
 - The probe stays idle except for the heartbeat and worker threads. Use `--duration` for scripted runs that should
