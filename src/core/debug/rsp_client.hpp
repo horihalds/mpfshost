@@ -87,6 +87,9 @@ namespace mpfshost::debug
         RspClient& operator=(const RspClient&) = delete;
 
         [[nodiscard]] bool connect(const RspEndpoint& endpoint, std::chrono::milliseconds timeout, std::string& error);
+        // Closes the transport without destroying the state, so QEMU detaches the GDB client before the stub
+        // is stopped and the guest is resumed.
+        void               disconnect() noexcept;
         // Sends qSupported and, when the stub offers it, enters no-ack mode.
         [[nodiscard]] bool negotiate(std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool

@@ -189,7 +189,9 @@ Record the remaining answers here after the next live run.
 Any future slice that starts a stub or arms a watchpoint must:
 
 - remember whether the host started the stub and never stop one it did not start;
-- remove the watchpoint and stop the stub on success, timeout, cancellation, error and client death;
+- remove the watchpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its gdb stop
+  state and ignore the resume;
+- stop the stub on success, timeout, cancellation, error and client death;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
 - refuse concurrent debug operations with `Busy`;
 - never log guest memory contents.

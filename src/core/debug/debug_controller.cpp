@@ -748,6 +748,10 @@ namespace mpfshost::debug
                 }
                 self._watchCount = 0;
 
+                // Detach the RSP client before stopping the stub; otherwise QEMU can stay in its gdb stop
+                // state and the QMP continue below has no effect.
+                rsp.disconnect();
+
                 if (self._stubActive && !self.stopStub(client, ignored))
                 {
                     log::warn("host", "could not stop the GDB stub during watchpoint teardown: ", ignored);

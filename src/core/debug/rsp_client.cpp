@@ -532,6 +532,15 @@ namespace mpfshost::debug
         return _transport->open(endpoint, timeout, error);
     }
 
+    void RspClient::disconnect() noexcept
+    {
+        if (_transport)
+        {
+            _transport->close();
+        }
+        _buffer.clear();
+    }
+
     bool RspClient::negotiate(std::chrono::milliseconds timeout, std::string& error)
     {
         std::string reply;
