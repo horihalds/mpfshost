@@ -631,6 +631,7 @@ namespace mpfshost
         writer.writeU32(message.guestTid);
         writer.writeU8(message.processFound ? 1 : 0);
         writer.writeU8(message.threadFound ? 1 : 0);
+        writer.writeU8(message.unverified ? 1 : 0);
         return writer.take();
     }
 
@@ -661,6 +662,7 @@ namespace mpfshost
         message.guestTid        = reader.readU32();
         message.processFound    = reader.readU8() != 0;
         message.threadFound     = reader.readU8() != 0;
+        message.unverified      = reader.readU8() != 0;
         if (!reader.ok() || !reader.atEnd() || message.bytesAtRip.size() > kDebugBreakpointBytes)
         {
             return std::nullopt;
@@ -1157,6 +1159,7 @@ namespace mpfshost
         writer.writeU8(message.pdbFound ? 1 : 0);
         writer.writeString(message.pdbSymbol);
         writer.writeU32(message.pdbDisplacement);
+        writer.writeU8(message.unverified ? 1 : 0);
         return writer.take();
     }
 
@@ -1178,6 +1181,7 @@ namespace mpfshost
         message.pdbFound        = reader.readU8() != 0;
         message.pdbSymbol       = reader.readString();
         message.pdbDisplacement = reader.readU32();
+        message.unverified      = reader.readU8() != 0;
         if (!reader.ok() || !reader.atEnd())
         {
             return std::nullopt;

@@ -469,13 +469,16 @@ first hit, and removes it again.
   guest kernel debugger or a guest driver can still own the register the host tries to use; arming then fails
   instead of silently missing the breakpoint.
 - A software breakpoint (`Z0`) patches the instruction byte. QEMU applies the patch through the address space of the
-  vCPU the stub currently has selected, so a user-mode address can be rejected with `E22` when that vCPU is not in the
-  target process. Kernel addresses work because the kernel CR3 maps them, and the host logs the stub reply. Use the
-  hardware form for user-mode addresses.
+  vCPU the stub currently has selected. For a user-mode address the host now selects a stub thread whose CR3 equals
+  the target `dtb` or `dtbUser` before arming; when no thread is in the target process it answers `InvalidState` with
+  an explanation instead of forwarding QEMU's `E22`. Kernel addresses work because the kernel CR3 maps them. The same
+  selection applies to `debug-arm-break`; use the hardware form when no vCPU is currently in the target process.
 - A hardware breakpoint is armed once and fires globally, like a watchpoint. The host requires the stop PC to equal
-  the requested address, so an unrelated vCPU stop is not reported as a hit. It then accepts a hit when CR3 matches the
-  process or when the address is inside one of the target's modules, which covers a shadow user CR3. The same
-  reallocation/relocation caveat as a watchpoint applies.
+  the requested address, so an unrelated vCPU stop is not reported as a hit. A stop whose CR3 matches the process
+  `dtb` or `dtbUser` is verified. Because a hot system-DLL address traps in every process that maps it, a CR3 mismatch
+  is accepted only when the address lies inside one of the target's modules (the shadow-page-table case), and that hit
+  is reported as `unverified`. Anything else is skipped. The same reallocation/relocation caveat as a watchpoint
+  applies.
 - Snapshots, `system_reset` and migration drop debug registers and the stub. Treat every breakpoint, watchpoint and
   step as ephemeral and tear it down before one of those operations.
 - Single-step requires a paused guest. It selects one thread, executes one instruction, captures registers and leaves
@@ -500,6 +503,25 @@ Run on 2026-11-09 against the `windows` target (12 vCPU, QEMU 10.2.2):
   client during a pending breakpoint (`timeout 2 ...`) also left the guest running with `stub-active=no`.
 - MCP `debug_break` returned the same hit structure as the CLI. MCP `debug_step` returned the same register record as
   `debug-registers` for the stepped vCPU.
+
+### Shared-address breakpoint validation record
+
+Run on 2026-11-09 against the `windows` target (12 vCPUs, QEMU 10.2.2), with `guest-probe.exe` pid 10208 and
+`ntdll.dll` based at `0x7ffab6ac0000` (`RtlEnterCriticalSection` at `0x7ffab6adcea0`):
+
+- `debug-break --pid 10208 --address 'ntdll.dll!RtlEnterCriticalSection' --kind hardware --timeout 20` timed out
+  with `skipped=7977`. The first skipped stop was at the reset vector (`rip=0xfff0`, `cr3=0`); the host skipped the
+  remaining 7976 stops and reported none of them as the target's hit.
+- Repeats against `explorer.exe` pid 6152 (`skipped=7857`) and `dwm.exe` pid 1732 (`skipped=6141`) timed out the
+  same way. The guest returned to `running`, `stub-active=no` after each. The shared address therefore did not
+  produce a target-process hit during the run, and no other process's stop was silently attributed to the target.
+- A first attempt started while the guest was still at the reset vector timed out at the same moment as the 30 s
+  server budget. Teardown's QMP calls then had no time left, `gdbserver none` timed out, and the stub stayed active
+  with the guest stopped. Teardown now falls back to the bounded five-second QMP timeout when the request budget is
+  already exhausted; `an expired request budget still tears down a timed-out breakpoint` covers it. `debug-detach`
+  followed by `debug-continue` recovered the guest after the original failure.
+- The run did not observe the shadow-CR3/module `unverified` path live; it is covered by
+  `a shadow-CR3 hardware hit in a target module is accepted and flagged` and the wait equivalent.
 
 ### Guest-probe fixture validation record
 
@@ -549,9 +571,12 @@ build:
   QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
-- Characterize whether a hardware breakpoint on a hot shared user address (such as `ntdll!RtlEnterCriticalSection`)
-  can ever be attributed to the target process. It traps in every process that maps the address; a fresh probe
-  restart gives the module marker a new ASLR base if a shared base causes a stop storm.
+- ~~Characterize whether a hardware breakpoint on a hot shared user address (such as
+  `ntdll!RtlEnterCriticalSection`) can ever be attributed to the target process.~~ Answered on 2026-11-09 against
+  `windows`: a 20 s run against `guest-probe.exe` skipped 7977 stops and never reported a target hit, and repeats
+  against `explorer.exe` and `dwm.exe` behaved the same. The host now requires the stop CR3 to match the process DTB
+  before a hit is verified, and marks a shadow-CR3 module match as `unverified`; see the shared-address validation
+  record above.
 - The first watch hit immediately after a host restart once reported RIP and CR3 from the previous probe process;
   a rerun was correct. Check whether a queued stop needs draining when a new stub session starts.
 
@@ -565,7 +590,8 @@ Any future slice that starts a stub or arms a watchpoint must:
 - remember whether the host started the stub and never stop one it did not start;
 - remove the watchpoint or breakpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its
   gdb stop state and ignore the resume;
-- stop the stub on success, timeout, cancellation, error and client death;
+- stop the stub on success, timeout, cancellation, error and client death, using the bounded QMP timeout even when
+  the request budget has already expired;
 - stop an owned stub and resume a host-paused guest during host shutdown; use `debug-detach` to stop a stale foreign
   stub, never the shutdown path;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;

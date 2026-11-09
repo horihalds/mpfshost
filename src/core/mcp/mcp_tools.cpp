@@ -622,7 +622,8 @@ namespace mpfshost::mcp
                 {   "process_found",                                    response.processFound},
                 {             "pid",                                        response.guestPid},
                 {    "thread_found",                                     response.threadFound},
-                {             "tid",                                        response.guestTid}
+                {             "tid",                                        response.guestTid},
+                {      "unverified",                                      response.unverified}
             };
         }
 
@@ -672,7 +673,8 @@ namespace mpfshost::mcp
                 {   "process_found",                                                 hit.record.processFound},
                 {             "pid",                                                     hit.record.guestPid},
                 {    "thread_found",                                                  hit.record.threadFound},
-                {             "tid",                                                     hit.record.guestTid}
+                {             "tid",                                                     hit.record.guestTid},
+                {      "unverified",                                                          hit.unverified}
             };
         }
 

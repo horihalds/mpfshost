@@ -2005,6 +2005,10 @@ namespace mpfshost::cli
                             static_cast<unsigned long long>(response->rip),
                             static_cast<unsigned long long>(response->rsp),
                             static_cast<unsigned long long>(response->cr3));
+                if (response->unverified)
+                {
+                    std::printf("  unverified=yes  the stop CR3 did not match the target process\n");
+                }
                 if (!response->module.empty())
                 {
                     std::printf("  module=%s+0x%llx\n",
@@ -2172,6 +2176,10 @@ namespace mpfshost::cli
                                 static_cast<unsigned long long>(hit.record.rip),
                                 static_cast<unsigned long long>(hit.record.rsp),
                                 static_cast<unsigned long long>(hit.record.cr3));
+                    if (hit.unverified)
+                    {
+                        std::printf("  unverified=yes  the stop CR3 did not match the target process\n");
+                    }
                     if (!hit.module.empty())
                     {
                         std::printf("  module=%s+0x%llx\n",

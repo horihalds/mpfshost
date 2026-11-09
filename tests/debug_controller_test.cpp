@@ -57,6 +57,7 @@ namespace
         bool                      openFails {false};
         bool                      closed {false};
         bool                      stall {false};
+        bool                      failZeroTimeout {false};
         std::string               failCommand;
         std::string               architecture {"x86_64"};
         std::size_t               opens {0};
@@ -176,6 +177,12 @@ namespace
         readLine(std::string& line, std::chrono::milliseconds timeout, bool& closed, std::string& error) override
         {
             _state->lastReadTimeout = timeout;
+            if (_state->failZeroTimeout && timeout <= std::chrono::milliseconds::zero())
+            {
+                closed = false;
+                error  = "the fake QMP has no time budget";
+                return false;
+            }
             if (_state->closed)
             {
                 closed = true;
@@ -241,24 +248,25 @@ namespace
             return packet;
         }
 
-        std::string                                      pending;
-        std::string                                      registersXml;
-        std::string                                      registerBytes;
-        std::string                                      selectedThread;
-        std::vector<std::pair<std::string, std::string>> registerBytesByThread;
-        bool                                             noAck {false};
-        bool                                             fail {false};
-        std::deque<StopReply>                            stops;
-        std::vector<std::string>                         threads {"1.1"};
-        std::uint64_t                                    currentRip {};
-        std::uint64_t                                    currentRsp {};
-        std::uint64_t                                    currentCr3 {};
-        std::size_t                                      watchInserts {0};
-        std::size_t                                      watchRemoves {0};
-        std::size_t                                      breakpointInserts {0};
-        std::size_t                                      breakpointRemoves {0};
-        std::size_t                                      continues {0};
-        std::size_t                                      steps {0};
+        std::string                                        pending;
+        std::string                                        registersXml;
+        std::string                                        registerBytes;
+        std::string                                        selectedThread;
+        std::vector<std::pair<std::string, std::string>>   registerBytesByThread;
+        std::vector<std::pair<std::string, std::uint64_t>> cr3ByThread;
+        bool                                               noAck {false};
+        bool                                               fail {false};
+        std::deque<StopReply>                              stops;
+        std::vector<std::string>                           threads {"1.1"};
+        std::uint64_t                                      currentRip {};
+        std::uint64_t                                      currentRsp {};
+        std::uint64_t                                      currentCr3 {};
+        std::size_t                                        watchInserts {0};
+        std::size_t                                        watchRemoves {0};
+        std::size_t                                        breakpointInserts {0};
+        std::size_t                                        breakpointRemoves {0};
+        std::size_t                                        continues {0};
+        std::size_t                                        steps {0};
 
         [[nodiscard]] bool open(const RspEndpoint&, std::chrono::milliseconds, std::string&) override
         {
@@ -426,7 +434,17 @@ namespace
                 }
                 else if (number == 19)
                 {
-                    value = currentCr3;
+                    value             = currentCr3;
+                    const auto thread = std::find_if(cr3ByThread.begin(),
+                                                     cr3ByThread.end(),
+                                                     [this](const auto& entry)
+                                                     {
+                                                         return entry.first == selectedThread;
+                                                     });
+                    if (thread != cr3ByThread.end())
+                    {
+                        value = thread->second;
+                    }
                 }
                 static constexpr char digits[] = "0123456789abcdef";
                 std::string           hex;
@@ -1472,6 +1490,9 @@ TEST_CASE("the debug controller arms and tears down software and hardware breakp
         auto  rspTransport = std::make_unique<FakeRspTransport>();
         auto* rsp          = rspTransport.get();
         rsp->registersXml  = x86RegisterXml();
+        rsp->cr3ByThread   = {
+            {"1.1", 0x200123}
+        };
         rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
 
         FakeInspector inspector;
@@ -1510,6 +1531,8 @@ TEST_CASE("the debug controller arms and tears down software and hardware breakp
         REQUIRE(response->module == "msvcrt.dll");
         REQUIRE(response->exportName == "memcpy");
         REQUIRE(response->bytesAtRip.size() == mpfshost::kDebugBreakpointBytes);
+        REQUIRE_FALSE(response->unverified);
+        REQUIRE(rsp->selectedThread == "1.1");
         REQUIRE(rsp->breakpointInserts == 1);
         REQUIRE(rsp->breakpointRemoves == 1);
         REQUIRE_FALSE(qmp->stubActive);
@@ -1859,6 +1882,185 @@ TEST_CASE("a breakpoint skips a matching CR3 stop away from the breakpoint addre
     REQUIRE(rsp->continues == 2);
 }
 
+TEST_CASE("a shadow-CR3 hardware hit in a target module is accepted and flagged", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x999000});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response =
+        controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Hardware, 5000, {}, {}},
+                              {},
+                              invalidState,
+                              busy,
+                              error,
+                              unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(response->skippedCount == 0);
+    REQUIRE(response->cr3 == 0x999000);
+    REQUIRE(response->unverified);
+}
+
+TEST_CASE("a matching-PC hardware stop in another process is skipped", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x12345678, 0x1234, 0x999000});
+    rsp->stops.push_back({"1.1", 0x12345678, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto response = controller.breakpoint({42, 0x12345678, mpfshost::DebugBreakpointKind::Hardware, 5000, {}, {}},
+                                                {},
+                                                invalidState,
+                                                busy,
+                                                error,
+                                                unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(response->skippedCount == 1);
+    REQUIRE(response->cr3 == 0x200123);
+    REQUIRE_FALSE(response->unverified);
+    REQUIRE(rsp->continues == 2);
+}
+
+TEST_CASE("a software user-mode breakpoint selects a vCPU in the target process", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->threads       = {"1.1", "1.2"};
+    rsp->cr3ByThread   = {
+        {"1.1", 0x999000},
+        {"1.2", 0x200123}
+    };
+    rsp->stops.push_back({"1.2", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response =
+        controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5000, {}, {}},
+                              {},
+                              invalidState,
+                              busy,
+                              error,
+                              unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(rsp->selectedThread == "1.2");
+    REQUIRE(rsp->breakpointInserts == 1);
+}
+
+TEST_CASE("a software user-mode breakpoint without a target vCPU reports invalid state", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->threads       = {"1.1", "1.2"};
+    rsp->cr3ByThread   = {
+        {"1.1", 0x999000},
+        {"1.2", 0x999000}
+    };
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response =
+        controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5000, {}, {}},
+                              {},
+                              invalidState,
+                              busy,
+                              error,
+                              unavailable);
+    REQUIRE_FALSE(response.has_value());
+    REQUIRE(invalidState);
+    REQUIRE_FALSE(busy);
+    REQUIRE(error.find("user-mode address") != std::string::npos);
+    REQUIRE(rsp->breakpointInserts == 0);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
 TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][controller]")
 {
     auto qmp           = std::make_shared<FakeQmpState>();
@@ -1867,6 +2069,9 @@ TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][
     auto  rspTransport = std::make_unique<FakeRspTransport>();
     auto* rsp          = rspTransport.get();
     rsp->registersXml  = x86RegisterXml();
+    rsp->cr3ByThread   = {
+        {"1.1", 0x200123}
+    };
 
     FakeInspector inspector;
 
@@ -1888,6 +2093,52 @@ TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][
     bool        unavailable = false;
     const auto  response =
         controller.breakpoint({42, 0x7ff84522b1f1ull, mpfshost::DebugBreakpointKind::Software, 5, {}, {}},
+                              {},
+                              invalidState,
+                              busy,
+                              error,
+                              unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Timeout);
+    REQUIRE(rsp->breakpointRemoves == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("an expired request budget still tears down a timed-out breakpoint", "[core][debug][controller]")
+{
+    auto qmp             = std::make_shared<FakeQmpState>();
+    qmp->running         = true;
+    qmp->failZeroTimeout = true;
+    auto  qmpTransport   = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport   = std::make_unique<FakeRspTransport>();
+    auto* rsp            = rspTransport.get();
+    rsp->registersXml    = x86RegisterXml();
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    mpfshost::RequestDeadline deadline;
+    deadline.restart(100ms);
+    mpfshost::RequestDeadlineScope scope {deadline};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response =
+        controller.breakpoint({42, 0xfffff80000123456ull, mpfshost::DebugBreakpointKind::Hardware, 5000, {}, {}},
                               {},
                               invalidState,
                               busy,
@@ -2665,8 +2916,12 @@ TEST_CASE("persistent breakpoints share four hardware slots and keep their ids",
     REQUIRE(invalidState);
     REQUIRE(error.find("hardware debug slots") != std::string::npos);
 
-    const auto software = controller.armBreakpoint(
-        7, {42, 0x3000, mpfshost::DebugBreakpointKind::Software}, invalidState, busy, error, unavailable);
+    const auto software = controller.armBreakpoint(7,
+                                                   {42, 0xfffff80000123456ull, mpfshost::DebugBreakpointKind::Software},
+                                                   invalidState,
+                                                   busy,
+                                                   error,
+                                                   unavailable);
     REQUIRE(software.has_value());
     REQUIRE(software->slot == mpfshost::kNoDebugHardwareSlot);
 
@@ -2766,6 +3021,8 @@ TEST_CASE("a wait reports breakpoint and watchpoint hits over repeated requests"
     REQUIRE(hits.front().kind == mpfshost::DebugResourceKind::Breakpoint);
     REQUIRE(hits.front().record.rip == 0x7ff84522b1f1ull);
     REQUIRE(hits.front().module == "msvcrt.dll");
+    // The stop CR3 is not the process DTB, so the module match is accepted but marked unverified.
+    REQUIRE(hits.front().unverified);
 
     // The second wait resumes the stopped guest and reports the watchpoint hit with its own id.
     rsp->registerBytes = registerBytes(0x7ff84522b200ull);
@@ -2802,6 +3059,70 @@ TEST_CASE("a wait reports breakpoint and watchpoint hits over repeated requests"
     REQUIRE(detached.has_value());
     REQUIRE(detached->detached);
     REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("a wait skips a hardware breakpoint stop from another process", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->running               = false;
+    auto  qmpTransport         = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport         = std::make_unique<FakeRspTransport>();
+    auto* rsp                  = rspTransport.get();
+    rsp->registersXml          = x86RegisterXml();
+    rsp->threads               = {"1.1", "1.2"};
+    rsp->registerBytesByThread = {
+        {"1.1", registerBytes(0x12345678, 0x1234, 0x1ae000)},
+        {"1.2", registerBytes(0x12345678, 0x1234, 0x999000)},
+    };
+    rsp->stops.push_back({"1.2", 0x12345678, 0x1234, 0x999000});
+    rsp->stops.push_back({"1.1", 0x12345678, 0x1234, 0x1ae000});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+    REQUIRE(
+        controller
+            .armBreakpoint(
+                7, {42, 0x12345678, mpfshost::DebugBreakpointKind::Hardware}, invalidState, busy, error, unavailable)
+            .has_value());
+
+    std::vector<mpfshost::DebugWaitHit> hits;
+    const auto                          end = controller.wait(
+        {5000, 1},
+        [&hits](const mpfshost::DebugWaitHit& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        7,
+        invalidState,
+        busy,
+        error,
+        unavailable);
+    REQUIRE(end.has_value());
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(end->skippedCount == 1);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits.front().record.cr3 == 0x1ae000);
+    REQUIRE_FALSE(hits.front().unverified);
+    REQUIRE(rsp->continues == 2);
 }
 
 TEST_CASE("a cancelled wait keeps the armed resources and detach clears them", "[core][debug][controller]")
@@ -2898,8 +3219,12 @@ TEST_CASE("resource requests require the owning attachment and a paused guest", 
                 .has_value());
 
     // A different client bound to the same target shares the attachment.
-    const auto shared = controller.armBreakpoint(
-        8, {42, 0x7000, mpfshost::DebugBreakpointKind::Software}, invalidState, busy, error, unavailable);
+    const auto shared = controller.armBreakpoint(8,
+                                                 {42, 0xfffff80000123456ull, mpfshost::DebugBreakpointKind::Software},
+                                                 invalidState,
+                                                 busy,
+                                                 error,
+                                                 unavailable);
     REQUIRE(shared.has_value());
 
     // Further resources are refused only once the guest is running again.

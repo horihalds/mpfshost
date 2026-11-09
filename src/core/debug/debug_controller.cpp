@@ -164,6 +164,52 @@ namespace mpfshost::debug
             return false;
         }
 
+        // An x86-64 canonical address below the halfway point belongs to the user half of the address space.
+        bool isUserModeAddress(std::uint64_t address) noexcept
+        {
+            return address < (1ull << 47);
+        }
+
+        enum class ThreadSelection
+        {
+            Found,
+            NotInProcess,
+            Error,
+        };
+
+        // A software breakpoint patches the selected vCPU's address space, so arming a user-mode address from a
+        // vCPU in another process makes QEMU reject the write. Pick a vCPU that is already in the target process.
+        ThreadSelection selectThreadInProcess(RspClient&                      rsp,
+                                              const RspTargetDescription&     description,
+                                              const std::vector<std::string>& threads,
+                                              std::uint64_t                   dtb,
+                                              std::uint64_t                   dtbUser,
+                                              std::string&                    chosen,
+                                              std::string&                    error)
+        {
+            for (const auto& thread : threads)
+            {
+                if (!rsp.selectThread(thread, kRspTimeout, error))
+                {
+                    return ThreadSelection::Error;
+                }
+                std::uint64_t cr3 = 0;
+                if (!readNamedRegister(rsp, description, "cr3", cr3, kRspTimeout, error))
+                {
+                    return ThreadSelection::Error;
+                }
+                const auto candidate = canonicalDtb(cr3);
+                if (candidate == canonicalDtb(dtb) || candidate == canonicalDtb(dtbUser))
+                {
+                    chosen = thread;
+                    return ThreadSelection::Found;
+                }
+            }
+            error = "no vCPU is executing in the target process; a software breakpoint on a user-mode address "
+                    "cannot be armed from another address space (use a hardware breakpoint instead)";
+            return ThreadSelection::NotInProcess;
+        }
+
         bool isSupportedArchitecture(std::string_view architecture)
         {
             return architecture == kSupportedArchitecture;
@@ -330,7 +376,13 @@ namespace mpfshost::debug
     bool DebugController::qmpCall(const QmpCall& call, std::string& error, bool& unavailable)
     {
         std::lock_guard lock {_qmpMutex};
-        const auto      timeout = requestRemaining(kQmpTimeout);
+        auto            timeout = requestRemaining(kQmpTimeout);
+        if (timeout <= std::chrono::milliseconds::zero())
+        {
+            // The request budget can expire exactly when a watch or breakpoint times out. Teardown still has to
+            // stop the stub and restore the guest, so give those trailing QMP commands a bounded budget too.
+            timeout = kQmpTimeout;
+        }
 
         if (_qmp && !_qmp->isOpen())
         {
@@ -2050,7 +2102,22 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
-        if (!rsp->selectThread(threads.front(), kRspTimeout, error))
+        std::string selectedThread = threads.front();
+        if (!hardware && isUserModeAddress(request.address))
+        {
+            const auto selection =
+                selectThreadInProcess(*rsp, description, threads, dtbs->dtb, dtbs->dtbUser, selectedThread, error);
+            if (selection == ThreadSelection::Error)
+            {
+                return std::nullopt;
+            }
+            if (selection == ThreadSelection::NotInProcess)
+            {
+                invalidState = true;
+                return std::nullopt;
+            }
+        }
+        if (!rsp->selectThread(selectedThread, kRspTimeout, error))
         {
             return std::nullopt;
         }
@@ -2178,18 +2245,30 @@ namespace mpfshost::debug
             }
 
             // The stub's breakpoint is global to the VM, and vCont can also deliver an unrelated stop that is not
-            // caused by the breakpoint. Require the PC to be at the requested address, then accept either a CR3
-            // match or a hit inside one of the target's modules, which covers a user CR3 that MemProcFS does not
-            // report as the process DTB.
-            const auto hitDtb    = canonicalDtb(cr3);
-            bool       moduleHit = false;
-            bool       matches =
-                rip == request.address && (hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser));
-            if (!matches && rip == request.address)
+            // caused by the breakpoint. Require the PC to be at the requested address. A hardware breakpoint on
+            // a shared user address traps in every process that maps it, so a matching CR3 is the only verified
+            // attribution; a stop whose CR3 is a shadow page table MemProcFS does not report may still lie inside
+            // one of the target's modules, but it is reported as unverified rather than accepted silently.
+            bool matches    = false;
+            bool unverified = false;
+            bool moduleHit  = false;
+            if (rip == request.address)
             {
-                std::string moduleError;
-                moduleHit = _inspector->moduleForAddress(request.pid, request.address, moduleError).has_value();
-                matches   = moduleHit;
+                const auto hitDtb = canonicalDtb(cr3);
+                if (hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser))
+                {
+                    matches = true;
+                }
+                else
+                {
+                    std::string moduleError;
+                    moduleHit = _inspector->moduleForAddress(request.pid, request.address, moduleError).has_value();
+                    if (moduleHit)
+                    {
+                        matches    = true;
+                        unverified = hardware;
+                    }
+                }
             }
             if (!matches)
             {
@@ -2223,12 +2302,13 @@ namespace mpfshost::debug
                 continue;
             }
 
-            response.status   = DebugBreakpointStatus::Hit;
-            response.vcpu     = 0;
-            response.rip      = rip;
-            response.rsp      = rspValue;
-            response.cr3      = cr3;
-            response.threadId = thread ? *thread : std::string {};
+            response.status     = DebugBreakpointStatus::Hit;
+            response.vcpu       = 0;
+            response.rip        = rip;
+            response.rsp        = rspValue;
+            response.cr3        = cr3;
+            response.unverified = unverified;
+            response.threadId   = thread ? *thread : std::string {};
             if (!response.threadId.empty())
             {
                 const auto found = std::find(threads.begin(), threads.end(), response.threadId);
@@ -2638,7 +2718,40 @@ namespace mpfshost::debug
             error = "the GDB stub reported no threads";
             return std::nullopt;
         }
-        if (!_attachedRsp->selectThread(threads.front(), kRspTimeout, error))
+        std::string selectedThread = threads.front();
+        if (!hardware && isUserModeAddress(request.address))
+        {
+            if (_inspector == nullptr)
+            {
+                releaseSlot();
+                invalidState = true;
+                error        = "the breakpoint service cannot identify the target process";
+                return std::nullopt;
+            }
+            std::string dtbError;
+            const auto  dtbs = _inspector->processDtbs(request.pid, dtbError);
+            if (!dtbs)
+            {
+                releaseSlot();
+                invalidState = true;
+                error = dtbError.empty() ? "process " + std::to_string(request.pid) + " is not available" : dtbError;
+                return std::nullopt;
+            }
+            const auto selection = selectThreadInProcess(
+                *_attachedRsp, _attachedDescription, threads, dtbs->dtb, dtbs->dtbUser, selectedThread, error);
+            if (selection == ThreadSelection::Error)
+            {
+                releaseSlot();
+                return std::nullopt;
+            }
+            if (selection == ThreadSelection::NotInProcess)
+            {
+                releaseSlot();
+                invalidState = true;
+                return std::nullopt;
+            }
+        }
+        if (!_attachedRsp->selectThread(selectedThread, kRspTimeout, error))
         {
             releaseSlot();
             return std::nullopt;
@@ -2657,7 +2770,7 @@ namespace mpfshost::debug
         resource.pid            = request.pid;
         resource.address        = request.address;
         resource.slot           = slot;
-        resource.threadId       = threads.front();
+        resource.threadId       = selectedThread;
         _resources.push_back(resource);
 
         return DebugBreakpointArmResponse {resource.id, resource.pid, resource.address, resource.breakpointKind, slot};
@@ -3194,11 +3307,52 @@ namespace mpfshost::debug
                 break;
             }
 
+            // A matching PC alone does not prove that a hardware breakpoint on a shared user address trapped in
+            // the target process. Require the stop's CR3 to match one of the process DTBs; a shadow page table
+            // that MemProcFS does not report may still be accepted when the address lies inside a target module,
+            // but the hit is marked unverified. Anything else belongs to another process and is skipped.
+            bool hitUnverified = false;
+            if (resource->kind == DebugResourceKind::Breakpoint
+                && resource->breakpointKind == DebugBreakpointKind::Hardware)
+            {
+                if (_inspector == nullptr)
+                {
+                    hitUnverified = true;
+                }
+                else
+                {
+                    std::string lookupError;
+                    const auto  hitDtb = canonicalDtb(record->cr3);
+                    const auto  dtbs   = _inspector->processDtbs(resource->pid, lookupError);
+                    const bool  verified =
+                        dtbs && (hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser));
+                    if (!verified)
+                    {
+                        const bool moduleHit =
+                            _inspector->moduleForAddress(resource->pid, resource->address, lookupError).has_value();
+                        if (!moduleHit)
+                        {
+                            ++end.skippedCount;
+                            if (!_attachedRsp->continueExecution(kRspTimeout, error))
+                            {
+                                end.status = DebugWatchStatus::Error;
+                                end.error  = error;
+                                break;
+                            }
+                            _sessionRunning = true;
+                            continue;
+                        }
+                        hitUnverified = true;
+                    }
+                }
+            }
+
             DebugWaitHit hit;
             hit.id             = resource->id;
             hit.kind           = resource->kind;
             hit.breakpointKind = resource->breakpointKind;
             hit.address        = resource->address;
+            hit.unverified     = hitUnverified;
             hit.record         = std::move(*record);
             if (_inspector != nullptr)
             {

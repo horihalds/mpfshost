@@ -834,6 +834,9 @@ namespace mpfshost
         std::uint32_t          guestTid {}; // guest thread whose saved rip/rsp match, zero when unknown
         bool                   processFound {};
         bool                   threadFound {};
+        // A hardware-breakpoint hit accepted through the target's module map because the stop CR3 does not match
+        // either process DTB. The hit may belong to another process sharing the address.
+        bool                   unverified {};
     };
 
     struct DebugStepRequest
@@ -992,6 +995,9 @@ namespace mpfshost
         bool                pdbFound {};
         std::string         pdbSymbol;
         std::uint32_t       pdbDisplacement {};
+        // A hardware-breakpoint hit accepted through the target's module map because the stop CR3 does not match
+        // either process DTB. See DebugBreakpointResponse.unverified.
+        bool                unverified {};
     };
 
     struct DebugWaitEnd

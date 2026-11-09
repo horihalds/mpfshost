@@ -275,6 +275,11 @@ The responses carry the assigned `id`, the original fields, and a `slot` (`u32`)
 0–3, or `0xFFFFFFFF` for a software breakpoint. At most four hardware slots exist and hardware breakpoints and
 watchpoints share them, so arming a fifth answers `InvalidState`. Software breakpoints consume no slot.
 
+A software breakpoint on a user-mode address is armed from a vCPU that is already in the target process, because
+QEMU applies the instruction patch through the selected vCPU's address space. If no stub thread has the target
+process DTB or `dtbUser`, arming answers `InvalidState` and names the limitation instead of forwarding QEMU's raw
+`E22`. Kernel addresses and hardware breakpoints keep selecting the first stub thread.
+
 `DebugBreakpointRemoveRequest` and `DebugWatchRemoveRequest` carry one `u32` id and share
 `DebugResourceRemoveResponse` (`u32 id`, `u8 removed`); an unknown id is not an error and reports `removed = 0`.
 `DebugBreakpointListRequest` and `DebugWatchListRequest` have no payload and answer a `u32` count followed by the
@@ -288,8 +293,12 @@ them. The guest is left stopped at the last reported hit, so a later `DebugWaitR
 
 A `DebugWaitHit` carries `id` (`u32`), `kind` (`u8`: `0` breakpoint, `1` watchpoint), `breakpointKind` (`u8`),
 `address` (`u64`), one fixed `DebugRegisterRecord`, then `module`, `moduleOffset`, the export fields and the PDB
-symbol fields with the same layout as `DebugBreakpointResponse` below. `DebugWaitEnd` uses the `DebugWatchEnd`
-layout: status (`0` completed, `1` timeout, `2` cancelled, `3` error), hit count, skipped count and an error string.
+symbol fields with the same layout as `DebugBreakpointResponse` below, and finally `unverified` (`u8`). A hardware
+breakpoint whose stop CR3 matches neither process DTB is accepted through the target's module map only when the
+address lies in a target module, and then `unverified = 1`; a stop at the same PC outside those modules belongs to
+another process and is skipped. Watchpoints keep their watch-address attribution. `DebugWaitEnd` uses the
+`DebugWatchEnd` layout: status (`0` completed, `1` timeout, `2` cancelled, `3` error), hit count, skipped count and
+an error string.
 A stop that matches no armed resource is skipped and counted; a stub close, guest exit or snapshot while waiting
 clears the resources and ends as `Error`.
 
@@ -462,24 +471,31 @@ armed. A missing or ambiguous module/symbol is `NotFound`. The resolved absolute
 `DebugBreakpointResponse.address` and in every `DebugWatchData.address`.
 
 The host pauses the guest if needed, starts a stub it owns, reads the process DTBs, selects one thread and arms the
-breakpoint once (QEMU's debug registers are global). It then resumes execution and polls with short timeouts so
-cancellation, the request deadline and peer loss are observed. A stop reply whose CR3 does not match either process
-DTB is skipped and execution resumes; as with a watchpoint, a hit at the requested address inside one of the target's
-modules is accepted because a user CR3 may be a shadow table that MemProcFS does not report.
+breakpoint once (QEMU's debug registers are global). A software breakpoint on a user-mode address selects a thread
+whose CR3 is the target `dtb` or `dtbUser`; when no stub thread is in the target process the request answers
+`InvalidState` rather than letting QEMU reject the patch with `E22`. It then resumes execution and polls with short
+timeouts so cancellation, the request deadline and peer loss are observed. The stop PC must equal the requested
+address. A stop reply whose CR3 matches either process DTB is a verified hit. A hardware breakpoint on a shared user
+address traps in every process that maps it, so a CR3 mismatch is accepted only when the address lies inside one of
+the target's modules — the case where a user CR3 is a shadow table MemProcFS does not report — and that hit reports
+`unverified = 1`. Any other mismatch is skipped and execution resumes.
 
 `DebugBreakpointResponse` carries a `u8` status (`0` hit, `1` timeout, `2` cancelled, `3` error), the `u32` skipped
 count, an error string, then the hit fields: `vcpu`, `threadId`, `rip`, `rsp`, `cr3`, `address`, `bytesAtRip` (up to
 `kDebugBreakpointBytes` 16 bytes), `module`, `moduleOffset`, `exportFound/exportAddress/exportOffset/exportName` and
 `pdbFound/pdbSymbol/pdbDisplacement`, then `guestPid`, `guestTid`, `processFound` and `threadFound` with the same
-meaning as in `DebugRegisterRecord`. Teardown removes the breakpoint, closes the RSP connection, stops a stub the
+meaning as in `DebugRegisterRecord`, and finally `unverified` (`u8`). `unverified = 1` marks a hardware-breakpoint hit
+accepted through the target module map because the stop CR3 matched neither process DTB; the hit may belong to
+another process that shares the address. Teardown removes the breakpoint, closes the RSP connection, stops a stub the
 host started, then resumes a guest it paused or re-pauses an already-paused one.
 
 A hardware breakpoint uses one of the four debug-register slots, so it competes with an active watchpoint; the host
 already refuses concurrent debug operations with `Busy`, which keeps the slot budget simple. A software breakpoint
-patches guest memory through the selected vCPU's address space, so a user-mode address can be rejected with QEMU's
-`E22` when that vCPU is not in the target process; kernel addresses are always mapped. The host requires the stop PC
-to equal the requested address, so an unrelated stop is skipped rather than reported as a hit. Snapshots,
-`system_reset` and migration drop both the breakpoint and the stub; a request must not span one of those operations.
+patches guest memory through the selected vCPU's address space; the host therefore selects a thread in the target
+process for a user-mode address, and answers `InvalidState` when none is identifiable. Kernel addresses are always
+mapped. The host requires the stop PC to equal the requested address, so an unrelated stop is skipped rather than
+reported as a hit. Snapshots, `system_reset` and migration drop both the breakpoint and the stub; a request must not
+span one of those operations.
 
 ## Debug single step
 
@@ -540,7 +556,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
- 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, or a step/backtrace selects an unknown thread |
+ 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, a step/backtrace selects an unknown thread, or a software user-mode breakpoint cannot find a vCPU in the target process |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.

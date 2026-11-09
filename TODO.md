@@ -15,26 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 8. Harden breakpoint attribution for shared user addresses
-
-A hardware breakpoint on a hot system-DLL address traps in every process that maps it. The host currently accepts a
-hit when the stop PC matches and the CR3 or module map agrees, so a shared address can be attributed to the wrong
-process.
-
-- For a hardware breakpoint, require the stop thread's CR3 to be the target process DTB or `dtbUser` before reporting
-  a hit. When a shadow page table defeats that check, mark the hit as unverified in the response instead of silently
-  accepting it, and add a response flag for that state.
-- Keep the existing PC-equality requirement and the current watch-address rule. Do not weaken either to reduce
-  `skippedCount`.
-- For software breakpoints on user-mode addresses, select a vCPU that is in the target process before arming when one
-  is identifiable, and otherwise return `InvalidState` with a clear explanation instead of a raw `E22`.
-- Record the outcome of a live run on `ntdll!RtlEnterCriticalSection` in `docs/DEBUGGING.md`, then close the
-  corresponding "Checks still owed to a live guest" item.
-- Tests: a matching-PC stop from another process is rejected or flagged, a shadow-CR3 hit in a target module is
-  accepted and flagged as appropriate, and a software user-mode breakpoint reports the new state.
-
-Acceptance: a shared-address breakpoint no longer reports another process's hit as the target's without saying so.
-
 ### 9. Allow read/access watchpoints and unbounded runs
 
 `DebugWatchAccess` has only `Write`, and `maxHits` defaults to 1 with a hard cap of 64, which makes a watch a

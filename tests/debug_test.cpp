@@ -429,6 +429,7 @@ TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]
     response.guestTid        = 100;
     response.processFound    = true;
     response.threadFound     = true;
+    response.unverified      = true;
 
     const auto decoded = mpfshost::decodeDebugBreakpointResponse(mpfshost::encodeDebugBreakpointResponse(response));
     REQUIRE(decoded.has_value());
@@ -444,6 +445,7 @@ TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]
     REQUIRE(decoded->guestTid == 100);
     REQUIRE(decoded->processFound);
     REQUIRE(decoded->threadFound);
+    REQUIRE(decoded->unverified);
 
     const auto stepRequest = mpfshost::decodeDebugStepRequest(mpfshost::encodeDebugStepRequest({2}));
     REQUIRE(stepRequest.has_value());
@@ -1047,7 +1049,8 @@ TEST_CASE("persistent debug resource messages round trip", "[core][debug][codec]
         "GuestProbeMarker",
         true,
         "GuestProbeMarker",
-        4
+        4,
+        true
     };
     const auto decodedHit = mpfshost::decodeDebugWaitHit(mpfshost::encodeDebugWaitHit(hit));
     REQUIRE(decodedHit.has_value());
@@ -1055,6 +1058,7 @@ TEST_CASE("persistent debug resource messages round trip", "[core][debug][codec]
     REQUIRE(decodedHit->record.threadId == "p01.01");
     REQUIRE(decodedHit->module == "guest-probe.exe");
     REQUIRE(decodedHit->pdbDisplacement == 4);
+    REQUIRE(decodedHit->unverified);
 
     const mpfshost::DebugWaitEnd end {mpfshost::DebugWatchStatus::Completed, 1, 2, {}};
     const auto                   decodedEnd = mpfshost::decodeDebugWaitEnd(mpfshost::encodeDebugWaitEnd(end));
