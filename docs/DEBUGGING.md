@@ -139,6 +139,18 @@ On 2026-11-09 against the same `windows` target (12 vCPUs), with the rebuilt hos
   had no `gdb:` line, and `/tmp/mpfshost-gdb-<pid>.sock` was gone.
 - `debug-continue` reported `running`, `host-paused=no`, and the next status stayed `running`.
 
+## Register writes
+
+`debug-set-register` (wire `DebugSetRegisterRequest`) writes one register of a stopped thread. The guest must be
+paused and the requesting connection must own the debug attachment; the name is resolved through the stub's
+`target.xml`, with the x86-64 fallback names when the description omits a register. The host sends a GDB `P` packet
+using the register width the stub advertises and returns the thread's register record after the write, so a caller
+can verify the result without a second `debug-registers` round trip.
+
+Only the x86-64 register names are supported today. A name the stub does not expose, or a `P` packet it rejects, is
+reported as `InvalidState` or `Internal`; the request never changes the run state. The slopkit plugin uses this to
+restore `RIP` after software breakpoints and to make the Debugger's register editor work for guest targets.
+
 ## Thread discovery and selection
 
 `debug-threads` lists every thread the GDB stub reports. It is the same list `debug-registers` reads, but each record

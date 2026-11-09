@@ -63,6 +63,10 @@ These rules are what clients rely on. Breaking them desynchronises the stream.
 The client side checks rule 2: `exchangeStreamed` collects data frames until the expected `*End` type, and each call
 verifies the `*End` status and that the number of delivered entries equals the count in the `*End` frame.
 
+`MemoryReadRequest` carries a `u8 flags` field. `kMemoryReadFlagPartial` (`0x01`) asks for the readable prefix: the
+host reads page by page and stops at the first unreadable page, then sends the prefix with `status = 0` and the
+shorter `bytesDelivered`. Without the flag a short read is a failure, as before.
+
 ## Message types
 
 Requests are `0x0001`–`0x004D`; responses are `0x8001`–`0x8071` plus `ErrorResponse` = `0x8FFF`. Values
@@ -138,6 +142,7 @@ range.
  `DebugWatchRequest` | `0x003E` | `DebugWatchHeartbeat` `0x8072` / `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
+ `DebugSetRegisterRequest` | `0x004E` | `DebugSetRegisterResponse` `0x8073` | single | — |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
  `DebugAttachRequest` | `0x0042` | `DebugAttachResponse` `0x8066` | single | `debug-attach` |
  `DebugBreakpointArmRequest` | `0x0043` | `DebugBreakpointArmResponse` `0x8067` | single | `debug-arm-break` |
@@ -519,6 +524,15 @@ fixed `DebugRegisterRecord`, the same layout as one entry of `DebugRegistersResp
 the thread that actually stepped. A vCPU index or thread id that is not present in the stub's thread list is
 reported as `InvalidState` with the reason; use `debug-threads` to discover them.
 
+## Debug register writes
+
+`DebugSetRegisterRequest` carries a `u32` vCPU index, a string GDB thread id, a string register name and a `u64`
+value. A non-empty `threadId` selects that thread instead of the vCPU index. The guest must be paused and the
+requesting session must own the debug attachment; otherwise the host answers `InvalidState`. The host resolves the
+register name through `target.xml` (with the x86-64 fallback table), sends a GDB `P` packet with the register's
+advertised width, and returns `DebugSetRegisterResponse`, one `DebugRegisterRecord` read back after the write. A
+name the stub does not expose is `InvalidState`; a rejected write is `Internal`.
+
 ## Physical memory variants
 
 `PageReadRequest`, `PrefetchRequest` and `MemorySearchRequest` carry a `pid` field. Sending `kPhysicalPid`
@@ -567,7 +581,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
- 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, a step/backtrace selects an unknown thread, or a software user-mode breakpoint cannot find a vCPU in the target process |
+ 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest`, `DebugSetRegisterRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, a step/backtrace/register write selects an unknown thread or register, or a software user-mode breakpoint cannot find a vCPU in the target process |
  21 | `ConnectionFailed` | client-side only: connect, write or read failed |
  22 | `ProtocolError` | client-side only: a malformed or mismatched response |
  23 | `InvalidArgument` | client-side only: local argument validation failed |

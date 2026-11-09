@@ -21,6 +21,18 @@ namespace mpfshost
                                               std::uint32_t           size,
                                               std::vector<std::byte>& out,
                                               std::string&            error) = 0;
+
+        // Returns the readable prefix of the range. The default is all-or-nothing because only the MemProcFS
+        // backend can read a range page by page without failing the whole request.
+        [[nodiscard]] virtual bool readMemoryPartial(std::uint32_t           pid,
+                                                     std::uint64_t           address,
+                                                     std::uint32_t           size,
+                                                     std::vector<std::byte>& out,
+                                                     std::string&            error)
+        {
+            return readMemory(pid, address, size, out, error);
+        }
+
         [[nodiscard]] virtual bool
         writeMemory(std::uint32_t pid, std::uint64_t address, std::span<const std::byte> data, std::string& error) = 0;
         [[nodiscard]] virtual bool

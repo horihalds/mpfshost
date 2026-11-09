@@ -1956,6 +1956,35 @@ TEST_CASE("client session reads memory through its persistent connection", "[ipc
     REQUIRE(backend.acquireCount() == 1);
 }
 
+TEST_CASE("client session returns a partial read prefix and fills a caller buffer", "[ipc][client][session][memory]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-alpha", 111, fixture.root() / "vm-alpha.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.setMemoryBytes({std::byte {1}, std::byte {2}, std::byte {3}, std::byte {4}});
+    backend.setPartialReadBytes(2);
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-alpha");
+    REQUIRE(session.has_value());
+
+    std::vector<std::byte> buffer(4);
+    const auto             partial = session->readMemoryPartial(4, 0x1000, buffer);
+    REQUIRE(partial.has_value());
+    REQUIRE(*partial == 2);
+    REQUIRE(buffer[0] == std::byte {1});
+    REQUIRE(buffer[1] == std::byte {2});
+
+    std::vector<std::byte> exact(2);
+    REQUIRE(session->readMemoryInto(4, 0x1000, exact).has_value());
+    REQUIRE(exact[0] == std::byte {1});
+    REQUIRE(exact[1] == std::byte {2});
+}
+
 TEST_CASE("client session scatters on its bound connection", "[ipc][client][session][scatter]")
 {
     EndToEndFixture                     fixture;

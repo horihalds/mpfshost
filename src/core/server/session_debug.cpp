@@ -582,6 +582,66 @@ namespace mpfshost
         sendPayload(requestId, MessageType::DebugStepResponse, encodeDebugStepResponse(*response));
     }
 
+    void Session::handleDebugSetRegister(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugSetRegisterRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug set-register request");
+            return;
+        }
+        if (request->vcpu >= kMaxDebugVcpuRecords)
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "the vCPU index is out of range");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot write guest registers");
+            return;
+        }
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        bool        unavailable = false;
+        const auto  response =
+            provider->debugSetRegister(_bound->sessionId, *request, invalidState, busy, error, unavailable);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "the register write failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugSetRegisterResponse, encodeDebugSetRegisterResponse(*response));
+    }
+
     void Session::handleDebugAttach(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

@@ -103,6 +103,13 @@ namespace mpfshost::debug
         readAllRegisters(std::vector<std::byte>& registers, std::chrono::milliseconds timeout, std::string& error);
         [[nodiscard]] bool
         readRegister(std::uint32_t number, std::uint64_t& value, std::chrono::milliseconds timeout, std::string& error);
+        // Writes one register with a `P` packet. `bytes` is the register width from the target description and is
+        // limited to eight; QEMU rejects a value wider than the register the stub advertises.
+        [[nodiscard]] bool writeRegister(std::uint32_t             number,
+                                         std::uint64_t             value,
+                                         std::uint32_t             bytes,
+                                         std::chrono::milliseconds timeout,
+                                         std::string&              error);
         // Arms one hardware watchpoint. `unsupported` reports that the stub rejected a read or access watchpoint,
         // which the caller maps to CapabilityUnavailable instead of a generic stub failure.
         [[nodiscard]] bool insertWatchpoint(std::uint64_t             address,

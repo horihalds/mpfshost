@@ -52,6 +52,53 @@ namespace mpfshost
         return true;
     }
 
+    bool readVmmMemoryPartial(VMM_HANDLE              handle,
+                              std::uint32_t           pid,
+                              std::uint64_t           address,
+                              std::uint32_t           size,
+                              std::vector<std::byte>& out,
+                              std::string&            error)
+    {
+        out.clear();
+        if (handle == nullptr || pid == 0)
+        {
+            error = "invalid memory read parameters";
+            return false;
+        }
+        if (size == 0)
+        {
+            return true;
+        }
+
+        out.reserve(size);
+        while (out.size() < size)
+        {
+            if (requestExpired())
+            {
+                error = "request deadline exceeded";
+                return false;
+            }
+
+            const auto wanted = std::min<std::uint32_t>(static_cast<std::uint32_t>(kPageSize), size - out.size());
+            const auto page   = out.size();
+            out.resize(page + wanted);
+            DWORD      bytesRead {};
+            const auto result = VMMDLL_MemReadEx(handle,
+                                                 pid,
+                                                 address + page,
+                                                 reinterpret_cast<PBYTE>(out.data() + page),
+                                                 wanted,
+                                                 &bytesRead,
+                                                 VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOCACHEPUT);
+            if (!result || bytesRead != wanted)
+            {
+                out.resize(page);
+                return true;
+            }
+        }
+        return true;
+    }
+
     bool writeVmmMemory(VMM_HANDLE                 handle,
                         std::uint32_t              pid,
                         std::uint64_t              address,

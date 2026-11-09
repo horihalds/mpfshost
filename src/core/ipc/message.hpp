@@ -51,10 +51,23 @@ namespace mpfshost
 
     struct ProcessDescriptor
     {
+        ProcessDescriptor() = default;
+
+        ProcessDescriptor(std::uint32_t selectedPid,
+                          std::uint32_t selectedParentPid,
+                          std::string   selectedName,
+                          bool          selectedWow64,
+                          std::string   selectedImagePath = {})
+            : pid {selectedPid}, parentPid {selectedParentPid}, name {std::move(selectedName)}, wow64 {selectedWow64},
+              imagePath {std::move(selectedImagePath)}
+        {
+        }
+
         std::uint32_t pid {};
         std::uint32_t parentPid {};
         std::string   name;
         bool          wow64 {};
+        std::string   imagePath; // VMMDLL_PROCESS_INFORMATION_OPT_STRING_PATH_USER_IMAGE; may be empty
     };
 
     struct ProcessFilter
@@ -79,11 +92,16 @@ namespace mpfshost
         std::vector<ProcessSummary> processes;
     };
 
+    // A partial read returns the readable prefix instead of failing the whole range when a later page cannot be
+    // read. `bytesDelivered` then reports the prefix length and `status` stays zero.
+    inline constexpr std::uint8_t kMemoryReadFlagPartial = 0x01;
+
     struct MemoryReadRequest
     {
         std::uint32_t pid {};
         std::uint64_t address {};
         std::uint32_t size {};
+        std::uint8_t  flags {}; // kMemoryReadFlagPartial
     };
 
     struct MemoryReadEnd
@@ -873,6 +891,32 @@ namespace mpfshost
     struct DebugStepResponse
     {
         DebugRegisterRecord record;
+    };
+
+    // Writes one x86-64 register of a stopped thread. The guest must be paused and the requesting session must own
+    // the debug attachment. `threadId` is a GDB thread id; when empty the vCPU index selects the thread.
+    struct DebugSetRegisterRequest
+    {
+        DebugSetRegisterRequest() = default;
+
+        DebugSetRegisterRequest(std::uint32_t selectedVcpu,
+                                std::string   selectedThread,
+                                std::string   selectedName,
+                                std::uint64_t selectedValue)
+            : vcpu {selectedVcpu}, threadId {std::move(selectedThread)}, name {std::move(selectedName)},
+              value {selectedValue}
+        {
+        }
+
+        std::uint32_t vcpu {0};
+        std::string   threadId;
+        std::string   name;
+        std::uint64_t value {};
+    };
+
+    struct DebugSetRegisterResponse
+    {
+        DebugRegisterRecord record; // the selected thread after the write
     };
 
     struct DebugAttachRequest
@@ -2283,6 +2327,13 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugStepRequest>  decodeDebugStepRequest(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>           encodeDebugStepResponse(const DebugStepResponse& message);
     [[nodiscard]] std::optional<DebugStepResponse> decodeDebugStepResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeDebugSetRegisterRequest(const DebugSetRegisterRequest& message);
+    [[nodiscard]] std::optional<DebugSetRegisterRequest>
+                                         decodeDebugSetRegisterRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte> encodeDebugSetRegisterResponse(const DebugSetRegisterResponse& message);
+    [[nodiscard]] std::optional<DebugSetRegisterResponse>
+    decodeDebugSetRegisterResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>             encodeDebugAttachRequest(const DebugAttachRequest& message);
     [[nodiscard]] std::optional<DebugAttachRequest>  decodeDebugAttachRequest(std::span<const std::byte> payload);

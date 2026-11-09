@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <cstring>
@@ -490,11 +491,22 @@ namespace mpfshost::debug
 
     std::optional<RspRegisterInfo> findRspRegister(const RspTargetDescription& description, std::string_view name)
     {
+        const auto matches = [name](std::string_view candidate)
+        {
+            return candidate.size() == name.size()
+                && std::equal(candidate.begin(),
+                              candidate.end(),
+                              name.begin(),
+                              [](unsigned char left, unsigned char right)
+                              {
+                                  return std::tolower(left) == std::tolower(right);
+                              });
+        };
         const auto found = std::find_if(description.registers.begin(),
                                         description.registers.end(),
-                                        [name](const RspRegisterInfo& info)
+                                        [&](const RspRegisterInfo& info)
                                         {
-                                            return info.name == name;
+                                            return matches(info.name);
                                         });
         if (found == description.registers.end())
         {
@@ -784,6 +796,59 @@ namespace mpfshost::debug
             result |= static_cast<std::uint64_t>(std::to_integer<unsigned char>((*decoded)[index])) << (index * 8);
         }
         value = result;
+        return true;
+    }
+
+    bool RspClient::writeRegister(std::uint32_t             number,
+                                  std::uint64_t             value,
+                                  std::uint32_t             bytes,
+                                  std::chrono::milliseconds timeout,
+                                  std::string&              error)
+    {
+        if (bytes == 0 || bytes > sizeof(std::uint64_t))
+        {
+            error = "the register width is not representable";
+            return false;
+        }
+
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string           command {"P"};
+        bool                  started = false;
+        for (int shift = 28; shift >= 0; shift -= 4)
+        {
+            const auto digit = (number >> shift) & 0x0F;
+            if (digit != 0)
+            {
+                started = true;
+            }
+            if (started)
+            {
+                command.push_back(digits[digit]);
+            }
+        }
+        if (!started)
+        {
+            command.push_back('0');
+        }
+        command.push_back('=');
+
+        for (std::uint32_t index = 0; index < bytes; ++index)
+        {
+            const auto byte = static_cast<std::uint8_t>(value >> (index * 8));
+            command.push_back(digits[byte >> 4]);
+            command.push_back(digits[byte & 0x0F]);
+        }
+
+        std::string reply;
+        if (!sendPacket(command, reply, timeout, error))
+        {
+            return false;
+        }
+        if (reply != "OK")
+        {
+            error = "the stub could not write register " + std::to_string(number);
+            return false;
+        }
         return true;
     }
 

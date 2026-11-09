@@ -10,6 +10,7 @@
 #include <thread>
 
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -104,7 +105,8 @@ namespace mpfshost::detail
         return counter.fetch_add(1);
     }
 
-    int connectToServer(const std::filesystem::path& socketPath, std::string& error)
+    int
+    connectToServer(const std::filesystem::path& socketPath, std::string& error, std::chrono::milliseconds ioTimeout)
     {
         t_lastErrorCode = ErrorCode::ConnectionFailed;
         const auto text = socketPath.string();
@@ -128,6 +130,14 @@ namespace mpfshost::detail
             std::memcpy(address.sun_path, text.c_str(), text.size() + 1);
             if (::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0)
             {
+                if (ioTimeout.count() > 0)
+                {
+                    timeval value {};
+                    value.tv_sec  = static_cast<time_t>(ioTimeout.count() / 1000);
+                    value.tv_usec = static_cast<suseconds_t>((ioTimeout.count() % 1000) * 1000);
+                    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value));
+                    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value));
+                }
                 return fd;
             }
 
@@ -306,8 +316,10 @@ namespace mpfshost::detail
         return exchange(fd, type, payload, error);
     }
 
-    std::optional<FileDescriptor>
-    connectAndBind(const std::filesystem::path& socketPath, const std::string& targetName, std::string& error)
+    std::optional<FileDescriptor> connectAndBind(const std::filesystem::path& socketPath,
+                                                 const std::string&           targetName,
+                                                 std::string&                 error,
+                                                 std::chrono::milliseconds    ioTimeout)
     {
         error.clear();
         if (const auto* active = activeConnection(); active != nullptr)
@@ -321,7 +333,7 @@ namespace mpfshost::detail
             return FileDescriptor {active->fd, false};
         }
 
-        const int fd = connectToServer(socketPath, error);
+        const int fd = connectToServer(socketPath, error, ioTimeout);
         if (fd < 0)
         {
             return std::nullopt;

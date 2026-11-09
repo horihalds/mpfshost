@@ -11,6 +11,7 @@ namespace mpfshost
         writer.writeU32(message.pid);
         writer.writeU64(message.address);
         writer.writeU32(message.size);
+        writer.writeU8(message.flags);
         return writer.take();
     }
 
@@ -21,7 +22,8 @@ namespace mpfshost
         message.pid     = reader.readU32();
         message.address = reader.readU64();
         message.size    = reader.readU32();
-        if (!reader.ok() || !reader.atEnd())
+        message.flags   = reader.readU8();
+        if (!reader.ok() || !reader.atEnd() || (message.flags & ~kMemoryReadFlagPartial) != 0)
         {
             return std::nullopt;
         }

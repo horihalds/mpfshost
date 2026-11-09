@@ -2072,6 +2072,24 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-set-register")
+        {
+            const auto response = mpfshost::debugSetRegister(options.socketPath,
+                                                             {options.target,
+                                                              options.vcpuSet ? options.vcpu : 0,
+                                                              options.threadSet ? options.threadId : std::string {},
+                                                              options.registerName,
+                                                              options.value},
+                                                             error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            printDebugRecord(response->record);
+            return 0;
+        }
+
         if (options.command == "debug-arm-break")
         {
             const auto response = mpfshost::debugArmBreakpoint(

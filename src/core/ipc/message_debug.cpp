@@ -774,6 +774,50 @@ namespace mpfshost
         return message;
     }
 
+    std::vector<std::byte> encodeDebugSetRegisterRequest(const DebugSetRegisterRequest& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(message.vcpu);
+        writer.writeString(message.threadId);
+        writer.writeString(message.name);
+        writer.writeU64(message.value);
+        return writer.take();
+    }
+
+    std::optional<DebugSetRegisterRequest> decodeDebugSetRegisterRequest(std::span<const std::byte> payload)
+    {
+        ByteReader              reader {payload};
+        DebugSetRegisterRequest message;
+        message.vcpu     = reader.readU32();
+        message.threadId = reader.readString();
+        message.name     = reader.readString();
+        message.value    = reader.readU64();
+        if (!reader.ok() || !reader.atEnd() || message.name.empty())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugSetRegisterResponse(const DebugSetRegisterResponse& message)
+    {
+        ByteWriter writer;
+        writeDebugRecord(writer, message.record);
+        return writer.take();
+    }
+
+    std::optional<DebugSetRegisterResponse> decodeDebugSetRegisterResponse(std::span<const std::byte> payload)
+    {
+        ByteReader               reader {payload};
+        DebugSetRegisterResponse message;
+        message.record = readDebugRecord(reader);
+        if (!reader.ok() || !reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
     std::vector<std::byte> encodeDebugAttachRequest(const DebugAttachRequest&)
     {
         return {};

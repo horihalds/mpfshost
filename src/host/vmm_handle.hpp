@@ -221,6 +221,11 @@ namespace mpfshost
                                       std::uint32_t           size,
                                       std::vector<std::byte>& out,
                                       std::string&            error) override;
+        [[nodiscard]] bool readMemoryPartial(std::uint32_t           pid,
+                                             std::uint64_t           address,
+                                             std::uint32_t           size,
+                                             std::vector<std::byte>& out,
+                                             std::string&            error) override;
         [[nodiscard]] bool writeMemory(std::uint32_t              pid,
                                        std::uint64_t              address,
                                        std::span<const std::byte> data,
@@ -277,26 +282,32 @@ namespace mpfshost
                                                                                    bool&                        busy,
                                                                                    std::string&                 error,
                                                                                    bool& unavailable) override;
-        [[nodiscard]] std::optional<DebugWatchEnd>           debugWatch(const DebugWatchRequest&       request,
-                                                                        const DebugWatchHitSink&       onHit,
-                                                                        const DebugWatchHeartbeatSink& onHeartbeat,
-                                                                        const DebugWatchAbortCheck&    aborted,
-                                                                        bool&                          busy,
-                                                                        std::string&                   error,
-                                                                        bool&                          unavailable,
-                                                                        bool&                          notFound) override;
-        [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
-                                                                             const DebugWatchAbortCheck&   aborted,
-                                                                             bool&                         invalidState,
-                                                                             bool&                         busy,
-                                                                             std::string&                  error,
-                                                                             bool&                         unavailable,
-                                                                             bool& notFound) override;
-        [[nodiscard]] std::optional<DebugStepResponse>       debugStep(const DebugStepRequest& request,
-                                                                       bool&                   invalidState,
-                                                                       bool&                   busy,
-                                                                       std::string&            error,
-                                                                       bool&                   unavailable) override;
+        [[nodiscard]] std::optional<DebugWatchEnd>            debugWatch(const DebugWatchRequest&       request,
+                                                                         const DebugWatchHitSink&       onHit,
+                                                                         const DebugWatchHeartbeatSink& onHeartbeat,
+                                                                         const DebugWatchAbortCheck&    aborted,
+                                                                         bool&                          busy,
+                                                                         std::string&                   error,
+                                                                         bool&                          unavailable,
+                                                                         bool&                          notFound) override;
+        [[nodiscard]] std::optional<DebugBreakpointResponse>  debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                              const DebugWatchAbortCheck&   aborted,
+                                                                              bool&                         invalidState,
+                                                                              bool&                         busy,
+                                                                              std::string&                  error,
+                                                                              bool&                         unavailable,
+                                                                              bool& notFound) override;
+        [[nodiscard]] std::optional<DebugStepResponse>        debugStep(const DebugStepRequest& request,
+                                                                        bool&                   invalidState,
+                                                                        bool&                   busy,
+                                                                        std::string&            error,
+                                                                        bool&                   unavailable) override;
+        [[nodiscard]] std::optional<DebugSetRegisterResponse> debugSetRegister(std::uint64_t                  sessionId,
+                                                                               const DebugSetRegisterRequest& request,
+                                                                               bool&        invalidState,
+                                                                               bool&        busy,
+                                                                               std::string& error,
+                                                                               bool&        unavailable) override;
 
         [[nodiscard]] std::optional<DebugAttachResponse> debugAttach(
             std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override;

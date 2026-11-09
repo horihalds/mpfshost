@@ -122,12 +122,13 @@ TEST_CASE("malformed process payloads are rejected", "[ipc][message]")
 
 TEST_CASE("memory read request round trips", "[ipc][message]")
 {
-    const mpfshost::MemoryReadRequest request {4321, 0x7FF700000000ull, 0x1234};
+    const mpfshost::MemoryReadRequest request {4321, 0x7FF700000000ull, 0x1234, mpfshost::kMemoryReadFlagPartial};
     const auto decoded = mpfshost::decodeMemoryReadRequest(mpfshost::encodeMemoryReadRequest(request));
     REQUIRE(decoded.has_value());
     REQUIRE(decoded->pid == 4321);
     REQUIRE(decoded->address == 0x7FF700000000ull);
     REQUIRE(decoded->size == 0x1234);
+    REQUIRE(decoded->flags == mpfshost::kMemoryReadFlagPartial);
 }
 
 TEST_CASE("memory read end round trips", "[ipc][message]")
@@ -346,8 +347,16 @@ TEST_CASE("malformed memory and scatter payloads are rejected", "[ipc][message]"
     trailingRead.writeU32(10);
     trailingRead.writeU64(0x2000);
     trailingRead.writeU32(16);
+    trailingRead.writeU8(mpfshost::kMemoryReadFlagPartial);
     trailingRead.writeU8(0);
     REQUIRE_FALSE(mpfshost::decodeMemoryReadRequest(trailingRead.bytes()).has_value());
+
+    mpfshost::ByteWriter unknownReadFlags;
+    unknownReadFlags.writeU32(10);
+    unknownReadFlags.writeU64(0x2000);
+    unknownReadFlags.writeU32(16);
+    unknownReadFlags.writeU8(0x80);
+    REQUIRE_FALSE(mpfshost::decodeMemoryReadRequest(unknownReadFlags.bytes()).has_value());
 
     mpfshost::ByteWriter impossibleEntryCount;
     impossibleEntryCount.writeU32(1);

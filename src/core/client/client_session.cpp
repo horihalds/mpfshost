@@ -24,6 +24,7 @@ namespace mpfshost
         using ::mpfshost::debugRegisters;
         using ::mpfshost::debugRemoveBreakpoint;
         using ::mpfshost::debugRemoveWatch;
+        using ::mpfshost::debugSetRegister;
         using ::mpfshost::debugState;
         using ::mpfshost::debugStep;
         using ::mpfshost::debugThreads;
@@ -68,6 +69,8 @@ namespace mpfshost
         using ::mpfshost::processInfo;
         using ::mpfshost::queryVirtual;
         using ::mpfshost::readMemory;
+        using ::mpfshost::readMemoryInto;
+        using ::mpfshost::readMemoryPartial;
         using ::mpfshost::readPages;
         using ::mpfshost::readPhysicalMemory;
         using ::mpfshost::readVfs;
@@ -180,11 +183,19 @@ namespace mpfshost
         return false;
     }
 
-    Client::Client(std::filesystem::path socketPath) : _socketPath {std::move(socketPath)} {}
+    Client::Client(std::filesystem::path socketPath, std::chrono::milliseconds ioTimeout)
+        : _socketPath {std::move(socketPath)}, _ioTimeout {ioTimeout}
+    {
+    }
 
     const std::filesystem::path& Client::socketPath() const noexcept
     {
         return _socketPath;
+    }
+
+    std::chrono::milliseconds Client::ioTimeout() const noexcept
+    {
+        return _ioTimeout;
     }
 
     Result<Capabilities> Client::capabilities() const
@@ -219,7 +230,7 @@ namespace mpfshost
     {
         detail::resetLastErrorCode();
         std::string error;
-        const int   fd = detail::connectToServer(_socketPath, error);
+        const int   fd = detail::connectToServer(_socketPath, error, _ioTimeout);
         if (fd < 0)
         {
             return std::unexpected(makeError(error));
@@ -920,13 +931,38 @@ namespace mpfshost
         {
             return std::unexpected(invalidArgument("read size must be at least one byte"));
         }
-        const auto data = ClientSession::readMemory(pid, address, static_cast<std::uint32_t>(out.size()));
+        return runBoundVoid(
+            fd(),
+            targetName(),
+            [&](std::string& error)
+            {
+                return legacy::readMemoryInto(
+                    {}, {targetName(), pid, address, static_cast<std::uint32_t>(out.size())}, out, error);
+            });
+    }
+
+    Result<std::size_t>
+    ClientSession::readMemoryPartial(std::uint32_t pid, std::uint64_t address, std::span<std::byte> out)
+    {
+        if (out.empty())
+        {
+            return std::unexpected(invalidArgument("read size must be at least one byte"));
+        }
+        auto data = runBound<std::vector<std::byte>>(
+            fd(),
+            targetName(),
+            [&](std::string& error)
+            {
+                return legacy::readMemoryPartial(
+                    {}, {targetName(), pid, address, static_cast<std::uint32_t>(out.size())}, error);
+            });
         if (!data)
         {
             return std::unexpected(data.error());
         }
-        std::copy(data->begin(), data->end(), out.begin());
-        return {};
+        const auto copied = std::min(out.size(), data->size());
+        std::copy_n(data->begin(), static_cast<std::ptrdiff_t>(copied), out.begin());
+        return copied;
     }
 
     Result<std::uint64_t>
@@ -1225,6 +1261,22 @@ namespace mpfshost
                                            {
                                                return legacy::debugStep({}, {targetName(), vcpu, threadText}, error);
                                            });
+    }
+
+    Result<DebugSetRegisterResponse> ClientSession::debugSetRegister(std::uint32_t    vcpu,
+                                                                     std::string_view threadId,
+                                                                     std::string_view name,
+                                                                     std::uint64_t    value)
+    {
+        const std::string threadText {threadId};
+        const std::string nameText {name};
+        return runBound<DebugSetRegisterResponse>(fd(),
+                                                  targetName(),
+                                                  [&](std::string& error)
+                                                  {
+                                                      return legacy::debugSetRegister(
+                                                          {}, {targetName(), vcpu, threadText, nameText, value}, error);
+                                                  });
     }
 
     Result<DebugAttachResponse>

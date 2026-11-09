@@ -86,6 +86,21 @@ namespace mpfshost
         return _debug.step(request, invalidState, busy, error, unavailable);
     }
 
+    std::optional<DebugSetRegisterResponse> VmmHandle::debugSetRegister(std::uint64_t                  sessionId,
+                                                                        const DebugSetRegisterRequest& request,
+                                                                        bool&                          invalidState,
+                                                                        bool&                          busy,
+                                                                        std::string&                   error,
+                                                                        bool&                          unavailable)
+    {
+        const auto record = _debug.setRegister(sessionId, request, invalidState, busy, error, unavailable);
+        if (!record)
+        {
+            return std::nullopt;
+        }
+        return DebugSetRegisterResponse {*record};
+    }
+
     std::optional<DebugAttachResponse> VmmHandle::debugAttach(
         std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {

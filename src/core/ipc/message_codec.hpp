@@ -34,6 +34,7 @@ namespace mpfshost
             writer.writeU32(process.parentPid);
             writer.writeU8(process.wow64 ? 1 : 0);
             writer.writeString(process.name);
+            writer.writeString(process.imagePath);
         }
 
         inline bool readProcess(ByteReader& reader, ProcessDescriptor& process)
@@ -42,6 +43,7 @@ namespace mpfshost
             process.parentPid = reader.readU32();
             process.wow64     = reader.readU8() != 0;
             process.name      = reader.readString();
+            process.imagePath = reader.readString();
             return reader.ok();
         }
 

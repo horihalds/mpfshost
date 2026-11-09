@@ -488,6 +488,8 @@ namespace mpfshost
             return "DisassembleRequest";
         case MessageType::DebugBacktraceRequest:
             return "DebugBacktraceRequest";
+        case MessageType::DebugSetRegisterRequest:
+            return "DebugSetRegisterRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -664,6 +666,8 @@ namespace mpfshost
             return "DisassembleResponse";
         case MessageType::DebugBacktraceResponse:
             return "DebugBacktraceResponse";
+        case MessageType::DebugSetRegisterResponse:
+            return "DebugSetRegisterResponse";
         case MessageType::DebugWatchHeartbeat:
             return "DebugWatchHeartbeat";
         case MessageType::ProcessInfoResponse:

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -1060,6 +1061,117 @@ namespace mpfshost::debug
             return readRecords(*rsp, request, architecture, error, unavailable, &_attachedDescription);
         }
         return readRecords(*rsp, request, architecture, error, unavailable);
+    }
+
+    std::optional<DebugRegisterRecord> DebugController::setRegister(std::uint64_t                  sessionId,
+                                                                    const DebugSetRegisterRequest& request,
+                                                                    bool&                          invalidState,
+                                                                    bool&                          busy,
+                                                                    std::string&                   error,
+                                                                    bool&                          unavailable)
+    {
+        invalidState = false;
+        busy         = false;
+        unavailable  = false;
+
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        if (!ownsAttachment(sessionId, invalidState, error))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!qmpQueryStatus(current, error, unavailable))
+        {
+            return std::nullopt;
+        }
+        if (_sessionRunning.load() || current.status == "running")
+        {
+            invalidState = true;
+            error        = "the guest must be paused before a register can be written";
+            return std::nullopt;
+        }
+
+        std::vector<std::string> threads;
+        if (!_attachedRsp->queryThreads(threads, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+        if (threads.empty())
+        {
+            invalidState = true;
+            error        = "the GDB stub reported no threads";
+            return std::nullopt;
+        }
+
+        std::uint32_t vcpu = request.vcpu;
+        std::string   thread;
+        if (!request.threadId.empty())
+        {
+            const auto found = std::find(threads.begin(), threads.end(), request.threadId);
+            if (found == threads.end())
+            {
+                invalidState = true;
+                error        = "the selected GDB thread is not present";
+                return std::nullopt;
+            }
+            vcpu   = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
+            thread = request.threadId;
+        }
+        else
+        {
+            if (vcpu >= threads.size())
+            {
+                invalidState = true;
+                error        = "vCPU " + std::to_string(vcpu) + " is not present";
+                return std::nullopt;
+            }
+            thread = threads[vcpu];
+        }
+
+        if (!_attachedRsp->selectThread(thread, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        std::string registerName {request.name};
+        std::ranges::transform(registerName,
+                               registerName.begin(),
+                               [](unsigned char character)
+                               {
+                                   return static_cast<char>(std::tolower(character));
+                               });
+
+        std::optional<RspRegisterInfo> info = findRspRegister(_attachedDescription, registerName);
+        if (!info)
+        {
+            info = fallbackRspRegister(registerName);
+        }
+        if (!info)
+        {
+            invalidState = true;
+            error        = "the GDB stub does not expose " + request.name;
+            return std::nullopt;
+        }
+
+        const std::uint32_t bytes = std::clamp<std::uint32_t>((info->bitsize + 7) / 8, 1, sizeof(std::uint64_t));
+        if (!_attachedRsp->writeRegister(info->number, request.value, bytes, kRspTimeout, error))
+        {
+            return std::nullopt;
+        }
+
+        auto record = readRecord(*_attachedRsp, _attachedDescription, vcpu, thread, error);
+        if (!record)
+        {
+            return std::nullopt;
+        }
+        return record;
     }
 
     std::optional<std::vector<DebugThreadRecord>> DebugController::threads(

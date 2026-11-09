@@ -64,11 +64,11 @@ namespace mpfshost
                 || command == "resolve" || command == "process-for-dtb" || command == "debug-status"
                 || command == "debug-stop" || command == "debug-continue" || command == "debug-registers"
                 || command == "debug-watch" || command == "debug-break" || command == "debug-step"
-                || command == "debug-attach" || command == "debug-detach" || command == "debug-arm-break"
-                || command == "debug-arm-watch" || command == "debug-remove-break" || command == "debug-remove-watch"
-                || command == "debug-breakpoints" || command == "debug-watchpoints" || command == "debug-wait"
-                || command == "debug-resume" || command == "debug-threads" || command == "disassemble"
-                || command == "debug-backtrace";
+                || command == "debug-set-register" || command == "debug-attach" || command == "debug-detach"
+                || command == "debug-arm-break" || command == "debug-arm-watch" || command == "debug-remove-break"
+                || command == "debug-remove-watch" || command == "debug-breakpoints" || command == "debug-watchpoints"
+                || command == "debug-wait" || command == "debug-resume" || command == "debug-threads"
+                || command == "disassemble" || command == "debug-backtrace";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -90,25 +90,34 @@ namespace mpfshost
                 return false;
             }
             if (command != "debug-registers" && command != "debug-step" && command != "debug-backtrace"
-                && options.vcpuSet)
+                && command != "debug-set-register" && options.vcpuSet)
             {
-                error = "--vcpu is only valid for --client debug-registers, debug-step and debug-backtrace";
+                error = "--vcpu is only valid for --client debug-registers, debug-step, debug-backtrace and "
+                        "debug-set-register";
                 return false;
             }
-            if ((command == "debug-registers" || command == "debug-step" || command == "debug-backtrace")
+            if ((command == "debug-registers" || command == "debug-step" || command == "debug-backtrace"
+                 || command == "debug-set-register")
                 && options.vcpuSet && options.vcpu >= kMaxDebugVcpuRecords)
             {
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
                 return false;
             }
-            if (command != "debug-step" && command != "debug-backtrace" && options.threadSet)
+            if (command != "debug-step" && command != "debug-backtrace" && command != "debug-set-register"
+                && options.threadSet)
             {
-                error = "--thread is only valid for --client debug-step and debug-backtrace";
+                error = "--thread is only valid for --client debug-step, debug-backtrace and debug-set-register";
                 return false;
             }
-            if ((command == "debug-step" || command == "debug-backtrace") && options.threadSet && options.vcpuSet)
+            if ((command == "debug-step" || command == "debug-backtrace" || command == "debug-set-register")
+                && options.threadSet && options.vcpuSet)
             {
                 error = "--thread and --vcpu cannot be combined";
+                return false;
+            }
+            if (command != "debug-set-register" && options.registerSet)
+            {
+                error = "--register is only valid for --client debug-set-register";
                 return false;
             }
             if (command != "disassemble" && options.countSet)
@@ -235,6 +244,14 @@ namespace mpfshost
                 if (options.pid == 0)
                 {
                     error = "--client debug-backtrace needs --pid";
+                    return false;
+                }
+            }
+            else if (command == "debug-set-register")
+            {
+                if (!options.registerSet || !options.valueSet)
+                {
+                    error = "--client debug-set-register needs --register and --value";
                     return false;
                 }
             }
@@ -595,6 +612,17 @@ namespace mpfshost
                 }
                 options.threadId  = std::string {args[++index]};
                 options.threadSet = true;
+                continue;
+            }
+            if (argument == "--register")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--register needs a register name";
+                    return std::nullopt;
+                }
+                options.registerName = std::string {args[++index]};
+                options.registerSet  = true;
                 continue;
             }
             if (argument == "--width")

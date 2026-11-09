@@ -75,6 +75,15 @@ namespace mpfshost
                                                                                bool&                         notFound) = 0;
         [[nodiscard]] virtual std::optional<DebugStepResponse> debugStep(
             const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
+        // Writes one register of a stopped thread. `invalidState` covers a running guest, a missing attachment and
+        // an unknown thread or register.
+        [[nodiscard]] virtual std::optional<DebugSetRegisterResponse>
+        debugSetRegister(std::uint64_t                  sessionId,
+                         const DebugSetRegisterRequest& request,
+                         bool&                          invalidState,
+                         bool&                          busy,
+                         std::string&                   error,
+                         bool&                          unavailable) = 0;
         // Starts one persistent stub for `sessionId`. `invalidState` reports a foreign stub, which the session
         // maps to InvalidState together with the debug-detach hint.
         [[nodiscard]] virtual std::optional<DebugAttachResponse>

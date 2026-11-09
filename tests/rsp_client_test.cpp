@@ -334,3 +334,11 @@ TEST_CASE("RSP reads and decodes a register packet", "[core][debug][rsp]")
     REQUIRE(value == 0xffffffffae89ab1bull);
     REQUIRE(packetWrites(*rsp.raw).front() == packet("p1d"));
 }
+
+TEST_CASE("RSP writes a register packet", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("OK")};
+    std::string error;
+    REQUIRE(rsp.client->writeRegister(16, 0x1122334455667788ull, 8, 100ms, error));
+    REQUIRE(packetWrites(*rsp.raw).front() == packet("P10=8877665544332211"));
+}

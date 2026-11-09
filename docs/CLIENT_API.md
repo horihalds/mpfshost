@@ -8,6 +8,7 @@ host's Unix socket and never loads `vmm.so`, `leechcore.so`, MemProcFS headers o
 ```cpp
 mpfshost::Client client;                 // configured with /run/mpfshost.sock
 mpfshost::Client client {"/tmp/custom.sock"};
+mpfshost::Client guarded {"/run/mpfshost.sock", std::chrono::seconds {10}}; // I/O timeout
 
 auto capabilities = client.capabilities();
 auto targets      = client.targets();
@@ -76,6 +77,9 @@ For repeated reads, use the span form so the caller owns the destination buffer:
 ```cpp
 std::vector<std::byte> buffer(0x1000);
 auto filled = session->readMemoryInto(pid, address, std::span<std::byte>(buffer));
+
+// Tolerant form: returns the readable prefix, possibly zero bytes.
+auto bytes = session->readMemoryPartial(pid, address, std::span<std::byte>(buffer));
 
 auto written = session->writeMemory(pid, address, std::span<const std::byte>(buffer));
 ```

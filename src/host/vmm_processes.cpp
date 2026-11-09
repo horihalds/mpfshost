@@ -84,6 +84,8 @@ namespace mpfshost
             descriptor.parentPid = info.dwPPID;
             descriptor.wow64     = info.win.fWow64 != 0;
             descriptor.name      = processName(info);
+            descriptor.imagePath =
+                processOptionString(handle, pid, VMMDLL_PROCESS_INFORMATION_OPT_STRING_PATH_USER_IMAGE);
             processes.push_back(std::move(descriptor));
         }
         return processes;
@@ -176,7 +178,9 @@ namespace mpfshost
             summary.process.parentPid = info.dwPPID;
             summary.process.wow64     = info.win.fWow64 != 0;
             summary.process.name      = processName(info);
-            summary.state             = info.dwState;
+            summary.process.imagePath =
+                processOptionString(handle, info.dwPID, VMMDLL_PROCESS_INFORMATION_OPT_STRING_PATH_USER_IMAGE);
+            summary.state = info.dwState;
             processes.push_back(std::move(summary));
         }
         return processes;

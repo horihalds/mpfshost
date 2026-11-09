@@ -50,6 +50,8 @@ namespace mpfshost
         bool                                vcpuSet {};
         std::string                         threadId;
         bool                                threadSet {};
+        std::string                         registerName;
+        bool                                registerSet {};
         std::uint32_t                       watchWidth {4};
         DebugWatchAccess                    watchAccess {DebugWatchAccess::Write};
         DebugBreakpointKind                 breakpointKind {DebugBreakpointKind::Software};

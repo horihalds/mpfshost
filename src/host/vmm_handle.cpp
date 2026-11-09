@@ -327,6 +327,12 @@ namespace mpfshost
         return readVmmMemory(_handle, pid, address, std::span<std::byte> {out.data(), out.size()}, error);
     }
 
+    bool VmmHandle::readMemoryPartial(
+        std::uint32_t pid, std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string& error)
+    {
+        return readVmmMemoryPartial(_handle, pid, address, size, out, error);
+    }
+
     bool VmmHandle::writeMemory(std::uint32_t              pid,
                                 std::uint64_t              address,
                                 std::span<const std::byte> data,

@@ -669,6 +669,16 @@ TEST_CASE("debug breakpoint and step options are parsed and validated", "[cli-op
     REQUIRE_FALSE(stepRange.options.has_value());
     CHECK(stepRange.error.find("--vcpu") != std::string::npos);
 
+    const auto setRegister =
+        parse({"--client", "debug-set-register", "vm1", "--register", "rip", "--value", "0x7ff700001234"});
+    REQUIRE(setRegister.options.has_value());
+    CHECK(setRegister.options->registerName == "rip");
+    CHECK(setRegister.options->value == 0x7ff700001234ull);
+
+    const auto missingRegister = parse({"--client", "debug-set-register", "vm1", "--value", "1"});
+    REQUIRE_FALSE(missingRegister.options.has_value());
+    CHECK(missingRegister.error.find("--register") != std::string::npos);
+
     const auto stepThread = parse({"--client", "debug-step", "vm1", "--thread", "p01.03"});
     REQUIRE(stepThread.options.has_value());
     CHECK(stepThread.options->threadSet);

@@ -20,6 +20,14 @@ namespace mpfshost
                                      std::uint64_t        address,
                                      std::span<std::byte> destination,
                                      std::string&         error);
+    // Reads pages until the first one fails and returns the readable prefix. A completely unreadable range is a
+    // successful empty result so callers can distinguish "unmapped" from "the request failed".
+    [[nodiscard]] bool readVmmMemoryPartial(VMM_HANDLE              handle,
+                                            std::uint32_t           pid,
+                                            std::uint64_t           address,
+                                            std::uint32_t           size,
+                                            std::vector<std::byte>& out,
+                                            std::string&            error);
     [[nodiscard]] bool writeVmmMemory(VMM_HANDLE                 handle,
                                       std::uint32_t              pid,
                                       std::uint64_t              address,

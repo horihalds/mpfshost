@@ -4,6 +4,7 @@
 
 #include "core/ipc/frame.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -65,7 +66,10 @@ namespace mpfshost::detail
 
     [[nodiscard]] std::uint64_t nextRequestId();
 
-    [[nodiscard]] int connectToServer(const std::filesystem::path& socketPath, std::string& error);
+    // A zero timeout keeps the socket blocking indefinitely.
+    [[nodiscard]] int connectToServer(const std::filesystem::path& socketPath,
+                                      std::string&                 error,
+                                      std::chrono::milliseconds    ioTimeout = {});
 
     struct Response
     {
@@ -93,8 +97,10 @@ namespace mpfshost::detail
                                                   std::span<const std::byte>   payload,
                                                   std::string&                 error);
 
-    [[nodiscard]] std::optional<FileDescriptor>
-    connectAndBind(const std::filesystem::path& socketPath, const std::string& targetName, std::string& error);
+    [[nodiscard]] std::optional<FileDescriptor> connectAndBind(const std::filesystem::path& socketPath,
+                                                               const std::string&           targetName,
+                                                               std::string&                 error,
+                                                               std::chrono::milliseconds    ioTimeout = {});
 } // namespace mpfshost::detail
 
 #endif // MPFSHOST_CORE_CLIENT_CLIENT_TRANSPORT_HPP

@@ -55,9 +55,17 @@ namespace mpfshost::debug
                                                                                 bool&        busy,
                                                                                 std::string& error,
                                                                                 bool&        unavailable);
+        // Writes one register of a stopped thread owned by `sessionId` and returns the thread's record afterwards.
+        // `invalidState` covers a running guest, a missing/foreign attachment and an unknown thread or register.
+        [[nodiscard]] std::optional<DebugRegisterRecord>            setRegister(std::uint64_t                  sessionId,
+                                                                                const DebugSetRegisterRequest& request,
+                                                                                bool&                          invalidState,
+                                                                                bool&                          busy,
+                                                                                std::string&                   error,
+                                                                                bool&                          unavailable);
         // Lists the stub's threads with their current context and, where the CR3 and stack resolve, the guest
         // process and thread. Reuses an attachment; otherwise starts and stops a temporary stub.
-        [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>   threads(
+        [[nodiscard]] std::optional<std::vector<DebugThreadRecord>> threads(
             const DebugThreadsRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
         // Reads one stopped thread and walks its frame-pointer chain. Symbolization failures leave the raw
         // address intact. A corrupt frame pointer ends the walk rather than being followed.

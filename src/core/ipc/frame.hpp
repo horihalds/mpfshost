@@ -148,6 +148,7 @@ namespace mpfshost
         DebugThreadsRequest          = 0x004B,
         DisassembleRequest           = 0x004C,
         DebugBacktraceRequest        = 0x004D,
+        DebugSetRegisterRequest      = 0x004E,
         ListTargetsResponse          = 0x8001,
         BindResponse                 = 0x8002,
         ProcessListResponse          = 0x8003,
@@ -256,6 +257,7 @@ namespace mpfshost
         DisassembleResponse          = 0x8070,
         DebugBacktraceResponse       = 0x8071,
         DebugWatchHeartbeat          = 0x8072,
+        DebugSetRegisterResponse     = 0x8073,
         ErrorResponse                = 0x8FFF,
     };
 

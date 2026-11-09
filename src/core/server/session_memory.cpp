@@ -330,15 +330,19 @@ namespace mpfshost
             return;
         }
 
+        const bool             partial = (request->flags & kMemoryReadFlagPartial) != 0;
         std::vector<std::byte> bytes;
         std::string            error;
-        if (!provider->readMemory(request->pid, request->address, request->size, bytes, error))
+        const auto readOk = partial
+                              ? provider->readMemoryPartial(request->pid, request->address, request->size, bytes, error)
+                              : provider->readMemory(request->pid, request->address, request->size, bytes, error);
+        if (!readOk)
         {
             const MemoryReadEnd end {1, 0, error.empty() ? "memory read failed" : error};
             sendPayload(requestId, MessageType::MemoryReadEnd, encodeMemoryReadEnd(end));
             return;
         }
-        if (bytes.size() != request->size)
+        if (bytes.size() > request->size || (!partial && bytes.size() != request->size))
         {
             const MemoryReadEnd end {1,
                                      0,

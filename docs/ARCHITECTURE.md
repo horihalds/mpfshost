@@ -12,9 +12,9 @@ unprivileged clients over a Unix socket. Clients never load `vmm.so` and never n
 
  Target | Sources | Links | May use |
 --------|---------|-------|---------|
- `mpfshost_ipc` (static) | `src/core/ipc/**` | standard library | wire structs and codecs |
- `mpfshost_util` (static) | `src/core/version.cpp`, `src/core/log/**`, `src/core/util/**` | standard library | helpers used on both sides |
- `mpfshost_client` (static, installed) | `src/core/client/**` | `mpfshost_ipc`, `mpfshost_util`, `Threads::Threads` | never server, host, Zydis or nlohmann/json |
+ `mpfshost_ipc` (static, PIC) | `src/core/ipc/**` | standard library | wire structs and codecs |
+ `mpfshost_util` (static, PIC) | `src/core/version.cpp`, `src/core/log/**`, `src/core/util/**` | standard library | helpers used on both sides |
+ `mpfshost_client` (static, installed, PIC) | `src/core/client/**` | `mpfshost_ipc`, `mpfshost_util`, `Threads::Threads` | never server, host, Zydis or nlohmann/json |
  `mpfshost_server` (static) | `src/core/{debug,disasm,target,server,mcp}/**` | `mpfshost_ipc`, `mpfshost_util`, `mpfshost_client`, `nlohmann_json`, `mpfshost_zydis` | standard library |
  `mpfshost_cli` (static) | `src/cli/**` | `mpfshost_client`, `mpfshost_server` | CLI-only parsing and rendering |
  `mpfshost_host` (static) | `src/host/**` | `vmm.so`, `leechcore.so`, `mpfshost_server` | `vmmdll.h`, root-only paths |

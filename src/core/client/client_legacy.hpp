@@ -5,10 +5,12 @@
 #include "core/ipc/message.hpp"
 #include "mpfshost/client.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -168,6 +170,19 @@ namespace mpfshost
     // Executes one instruction on a paused guest and returns the resulting registers.
     [[nodiscard]] std::optional<DebugStepResponse>
     debugStep(const std::filesystem::path& socketPath, const DebugStepQuery& query, std::string& error);
+
+    struct DebugSetRegisterQuery
+    {
+        std::string   targetName;
+        std::uint32_t vcpu {0};
+        std::string   threadId; // when set, selects this GDB thread instead of the vCPU index
+        std::string   name;
+        std::uint64_t value {};
+    };
+
+    // Writes one register of a stopped thread and returns the thread's record afterwards.
+    [[nodiscard]] std::optional<DebugSetRegisterResponse>
+    debugSetRegister(const std::filesystem::path& socketPath, const DebugSetRegisterQuery& query, std::string& error);
 
     // Starts one persistent GDB stub owned by this connection and pauses the guest if needed. The returned
     // attachment lasts until this function returns (the connection closes) or another client runs debug-detach.
@@ -749,6 +764,14 @@ namespace mpfshost
 
     [[nodiscard]] std::optional<std::vector<std::byte>>
     readMemory(const std::filesystem::path& socketPath, const MemoryQuery& query, std::string& error);
+
+    // Returns the readable prefix, which may be empty when the first page is unreadable.
+    [[nodiscard]] std::optional<std::vector<std::byte>>
+    readMemoryPartial(const std::filesystem::path& socketPath, const MemoryQuery& query, std::string& error);
+    [[nodiscard]] std::optional<std::size_t> readMemoryInto(const std::filesystem::path& socketPath,
+                                                            const MemoryQuery&           query,
+                                                            std::span<std::byte>         out,
+                                                            std::string&                 error);
 
     [[nodiscard]] std::optional<std::uint64_t>
     writeMemory(const std::filesystem::path& socketPath, const MemoryWriteCommand& command, std::string& error);

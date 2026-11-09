@@ -309,6 +309,153 @@ namespace mpfshost
         return result;
     }
 
+    std::optional<std::vector<std::byte>>
+    readMemoryPartial(const std::filesystem::path& socketPath, const MemoryQuery& query, std::string& error)
+    {
+        error.clear();
+        if (query.size == 0)
+        {
+            error = "read size must be at least one byte";
+            return std::nullopt;
+        }
+        if (query.size > std::numeric_limits<std::uint64_t>::max() - query.address)
+        {
+            error = "read range overflows the address space";
+            return std::nullopt;
+        }
+
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::byte> result;
+        result.reserve(query.size);
+        std::uint32_t remaining = query.size;
+        std::uint64_t offset    = 0;
+        while (remaining > 0)
+        {
+            const auto chunk = std::min<std::uint32_t>(remaining, kMaxReadSize);
+            const auto payload =
+                encodeMemoryReadRequest({query.pid, query.address + offset, chunk, kMemoryReadFlagPartial});
+            const auto streamed = exchangeStreamed(
+                connection->fd(), MessageType::MemoryReadRequest, payload, MessageType::MemoryReadEnd, error);
+            if (!streamed)
+            {
+                return std::nullopt;
+            }
+
+            const auto end = decodeMemoryReadEnd(streamed->endPayload);
+            if (!end)
+            {
+                error = "server returned a malformed memory read end";
+                return std::nullopt;
+            }
+            if (end->status != 0)
+            {
+                if (!result.empty())
+                {
+                    return result;
+                }
+                error = end->error.empty() ? "memory read failed" : end->error;
+                return std::nullopt;
+            }
+
+            std::size_t received = 0;
+            for (const auto& frame : streamed->data)
+            {
+                result.insert(result.end(), frame.begin(), frame.end());
+                received += frame.size();
+            }
+            if (received > chunk)
+            {
+                error = "server returned more bytes than requested";
+                return std::nullopt;
+            }
+            if (received < chunk)
+            {
+                return result;
+            }
+
+            offset += chunk;
+            remaining -= chunk;
+        }
+        return result;
+    }
+
+    std::optional<std::size_t> readMemoryInto(const std::filesystem::path& socketPath,
+                                              const MemoryQuery&           query,
+                                              std::span<std::byte>         out,
+                                              std::string&                 error)
+    {
+        error.clear();
+        if (out.empty())
+        {
+            error = "read size must be at least one byte";
+            return std::nullopt;
+        }
+        if (out.size() > std::numeric_limits<std::uint64_t>::max() - query.address)
+        {
+            error = "read range overflows the address space";
+            return std::nullopt;
+        }
+
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        std::size_t   offset    = 0;
+        std::uint64_t remaining = out.size();
+        while (remaining > 0)
+        {
+            const auto chunk = std::min<std::uint64_t>(remaining, kMaxReadSize);
+            const auto payload =
+                encodeMemoryReadRequest({query.pid, query.address + offset, static_cast<std::uint32_t>(chunk), 0});
+            const auto streamed = exchangeStreamed(
+                connection->fd(), MessageType::MemoryReadRequest, payload, MessageType::MemoryReadEnd, error);
+            if (!streamed)
+            {
+                return std::nullopt;
+            }
+
+            const auto end = decodeMemoryReadEnd(streamed->endPayload);
+            if (!end)
+            {
+                error = "server returned a malformed memory read end";
+                return std::nullopt;
+            }
+            if (end->status != 0)
+            {
+                error = end->error.empty() ? "memory read failed" : end->error;
+                return std::nullopt;
+            }
+
+            std::size_t received = 0;
+            for (const auto& frame : streamed->data)
+            {
+                if (received + frame.size() > chunk)
+                {
+                    error = "server returned more bytes than requested";
+                    return std::nullopt;
+                }
+                std::copy(frame.begin(), frame.end(), out.begin() + static_cast<std::ptrdiff_t>(offset + received));
+                received += frame.size();
+            }
+            if (received != chunk)
+            {
+                error = "server returned " + std::to_string(received) + " of " + std::to_string(chunk) + " bytes";
+                return std::nullopt;
+            }
+
+            offset += chunk;
+            remaining -= chunk;
+        }
+        return offset;
+    }
+
     std::optional<std::uint64_t>
     writeMemory(const std::filesystem::path& socketPath, const MemoryWriteCommand& command, std::string& error)
     {

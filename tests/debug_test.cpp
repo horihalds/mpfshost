@@ -488,10 +488,30 @@ TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]
     REQUIRE(decodedStep->record.rip == 0x1234);
     REQUIRE(decodedStep->record.r15 == 0x55);
 
+    const auto setRequest = mpfshost::decodeDebugSetRegisterRequest(
+        mpfshost::encodeDebugSetRegisterRequest({1, "p01.02", "rip", 0x7ff700001234ull}));
+    REQUIRE(setRequest.has_value());
+    REQUIRE(setRequest->vcpu == 1);
+    REQUIRE(setRequest->threadId == "p01.02");
+    REQUIRE(setRequest->name == "rip");
+    REQUIRE(setRequest->value == 0x7ff700001234ull);
+
+    mpfshost::DebugSetRegisterResponse written;
+    written.record.vcpu     = 1;
+    written.record.threadId = "p01.02";
+    written.record.rip      = 0x7ff700001234ull;
+    const auto decodedWritten =
+        mpfshost::decodeDebugSetRegisterResponse(mpfshost::encodeDebugSetRegisterResponse(written));
+    REQUIRE(decodedWritten.has_value());
+    REQUIRE(decodedWritten->record.threadId == "p01.02");
+    REQUIRE(decodedWritten->record.rip == 0x7ff700001234ull);
+
     REQUIRE_FALSE(mpfshost::decodeDebugBreakpointRequest({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugBreakpointResponse({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugStepRequest({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugStepResponse({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugSetRegisterRequest({}).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugSetRegisterResponse({}).has_value());
 }
 
 TEST_CASE("debug requests report the fake status and control action", "[core][debug][session]")

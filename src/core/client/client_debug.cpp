@@ -349,6 +349,40 @@ namespace mpfshost
         return decoded;
     }
 
+    std::optional<DebugSetRegisterResponse>
+    debugSetRegister(const std::filesystem::path& socketPath, const DebugSetRegisterQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(),
+                     MessageType::DebugSetRegisterRequest,
+                     encodeDebugSetRegisterRequest({query.vcpu, query.threadId, query.name, query.value}),
+                     error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugSetRegisterResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugSetRegisterResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug set-register response";
+        }
+        return decoded;
+    }
+
     std::optional<DebugAttachResponse> debugAttach(const std::filesystem::path&                           socketPath,
                                                    const DebugQuery&                                      query,
                                                    const std::function<void(const DebugAttachResponse&)>& whileAttached,

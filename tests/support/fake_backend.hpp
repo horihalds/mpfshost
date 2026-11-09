@@ -176,6 +176,7 @@ namespace mpfshost::testing
         std::string               failure;
         std::string               writeFailure;
         bool                      shortRead {};
+        std::size_t               partialReadBytes {}; // truncates a partial read when nonzero
         std::uint32_t             lastReadPid {};
         std::uint64_t             lastReadAddress {};
         std::uint32_t             lastReadSize {};
@@ -471,6 +472,14 @@ namespace mpfshost::testing
         bool                            stepInvalidState {};
         bool                            stepBusy {};
         std::uint32_t                   stepCalls {};
+
+        std::optional<DebugSetRegisterRequest> lastSetRegisterRequest;
+        DebugSetRegisterResponse               setRegisterResponse;
+        std::string                            setRegisterFailure;
+        bool                                   setRegisterInvalidState {};
+        bool                                   setRegisterBusy {};
+        std::uint32_t                          setRegisterCalls {};
+        std::uint64_t                          lastSetRegisterSession {};
 
         DebugDetachResponse        detachResponse;
         std::string                detachFailure;
@@ -904,6 +913,23 @@ namespace mpfshost::testing
             if (_memoryState->shortRead && !out.empty())
             {
                 out.pop_back();
+            }
+            return true;
+        }
+
+        [[nodiscard]] bool readMemoryPartial(std::uint32_t           pid,
+                                             std::uint64_t           address,
+                                             std::uint32_t           size,
+                                             std::vector<std::byte>& out,
+                                             std::string&            error) override
+        {
+            if (!readMemory(pid, address, size, out, error))
+            {
+                return false;
+            }
+            if (_memoryState->partialReadBytes < out.size())
+            {
+                out.resize(_memoryState->partialReadBytes);
             }
             return true;
         }
@@ -1871,6 +1897,28 @@ namespace mpfshost::testing
             return _debugState->stepResponse;
         }
 
+        [[nodiscard]] std::optional<DebugSetRegisterResponse> debugSetRegister(std::uint64_t                  sessionId,
+                                                                               const DebugSetRegisterRequest& request,
+                                                                               bool&        invalidState,
+                                                                               bool&        busy,
+                                                                               std::string& error,
+                                                                               bool&        unavailable) override
+        {
+            ++_debugState->setRegisterCalls;
+            _debugState->lastSetRegisterRequest = request;
+            _debugState->lastSetRegisterSession = sessionId;
+            if (!_debugState->setRegisterFailure.empty())
+            {
+                invalidState = _debugState->setRegisterInvalidState;
+                busy         = _debugState->setRegisterBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->setRegisterFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->setRegisterResponse;
+        }
+
         [[nodiscard]] std::optional<DebugAttachResponse> debugAttach(
             std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
         {
@@ -2297,6 +2345,11 @@ namespace mpfshost::testing
         void setShortRead(bool shortRead)
         {
             _memoryState->shortRead = shortRead;
+        }
+
+        void setPartialReadBytes(std::size_t bytes)
+        {
+            _memoryState->partialReadBytes = bytes;
         }
 
         [[nodiscard]] std::shared_ptr<FakeMemoryState> memoryState() const

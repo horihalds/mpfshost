@@ -64,6 +64,9 @@ add_library(mpfshost_ipc STATIC
 )
 mpfshost_set_common_flags(mpfshost_ipc)
 mpfshost_set_client_include(mpfshost_ipc)
+# Client-side archives are linked into unprivileged shared objects (for example editor or game-tool plugins), so
+# their objects must be position independent even though the archive itself is static.
+set_target_properties(mpfshost_ipc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Small helpers used on both sides. Kept separate so the installed client archive does not pull in the
 # server, MCP, Zydis or nlohmann/json.
@@ -81,6 +84,7 @@ add_library(mpfshost_util STATIC
 mpfshost_set_common_flags(mpfshost_util)
 target_compile_definitions(mpfshost_util PRIVATE MPFSHOST_VERSION="${PROJECT_VERSION}")
 mpfshost_set_client_include(mpfshost_util)
+set_target_properties(mpfshost_util PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The installed library. It must never link the server, the host, Zydis or nlohmann/json.
 add_library(mpfshost_client STATIC
@@ -98,6 +102,7 @@ add_library(mpfshost_client STATIC
 )
 mpfshost_set_common_flags(mpfshost_client)
 mpfshost_set_client_include(mpfshost_client)
+set_target_properties(mpfshost_client PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(mpfshost_client PUBLIC Threads::Threads mpfshost_ipc mpfshost_util)
 
 add_library(mpfshost_server STATIC

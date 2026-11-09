@@ -4,6 +4,7 @@
 
 #include "core/ipc/message.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -295,6 +296,9 @@ namespace mpfshost
         [[nodiscard]] Result<std::vector<std::byte>>
                                    readMemory(std::uint32_t pid, std::uint64_t address, std::uint32_t size);
         [[nodiscard]] Result<void> readMemoryInto(std::uint32_t pid, std::uint64_t address, std::span<std::byte> out);
+        // Reads the readable prefix and reports how many bytes it filled. An unmapped first page yields zero.
+        [[nodiscard]] Result<std::size_t>
+        readMemoryPartial(std::uint32_t pid, std::uint64_t address, std::span<std::byte> out);
         [[nodiscard]] Result<std::uint64_t>
         writeMemory(std::uint32_t pid, std::uint64_t address, std::span<const std::byte> data);
         [[nodiscard]] Result<std::vector<ScatterReadResult>> scatterRead(std::uint32_t                    pid,
@@ -332,6 +336,8 @@ namespace mpfshost
                    const std::function<void(const DebugWatchHeartbeat&)>& onHeartbeat = {});
         [[nodiscard]] Result<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointOptions& options);
         [[nodiscard]] Result<DebugStepResponse>       debugStep(std::uint32_t vcpu = 0, std::string_view threadId = {});
+        [[nodiscard]] Result<DebugSetRegisterResponse>
+        debugSetRegister(std::uint32_t vcpu, std::string_view threadId, std::string_view name, std::uint64_t value);
         [[nodiscard]] Result<DebugAttachResponse>
         debugAttach(const std::function<void(const DebugAttachResponse&)>& whileAttached = {});
         [[nodiscard]] Result<DebugDetachResponse>         debugDetach();
@@ -360,16 +366,19 @@ namespace mpfshost
     class Client
     {
     public:
-        explicit Client(std::filesystem::path socketPath = std::filesystem::path {kDefaultSocketPath});
+        explicit Client(std::filesystem::path     socketPath = std::filesystem::path {kDefaultSocketPath},
+                        std::chrono::milliseconds ioTimeout  = {});
 
         [[nodiscard]] const std::filesystem::path& socketPath() const noexcept;
+        [[nodiscard]] std::chrono::milliseconds    ioTimeout() const noexcept;
 
         [[nodiscard]] Result<Capabilities>  capabilities() const;
         [[nodiscard]] Result<List<Target>>  targets() const;
         [[nodiscard]] Result<ClientSession> bind(std::string targetName) const;
 
     private:
-        std::filesystem::path _socketPath;
+        std::filesystem::path     _socketPath;
+        std::chrono::milliseconds _ioTimeout;
     };
 } // namespace mpfshost
 

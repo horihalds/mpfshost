@@ -235,6 +235,7 @@ to it automatically.
  `--client debug-watch <vm>` | Watch a process address for write, read or access; `--pid`, `--address`, `--width` (1/2/4/8), `--access write\|read\|access`, `--max-hits` (0 runs until cancelled), `--timeout` (seconds). `--address` accepts hex or `module!symbol[+offset]`, `module+offset`, a bare module name. Prints the resolved target, trapped store and periodic heartbeats. Destructive. |
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). `--address` accepts the same symbolic forms. Reports the resolved address, first hit and symbol, then removes it. Destructive. |
  `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0) or `--thread <id>` from `debug-threads`. Destructive. |
+ `--client debug-set-register <vm>` | Write `--register <name>` to `--value` on a stopped, attached thread selected by `--vcpu <n>` or `--thread <id>`. Destructive. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
  `--client debug-detach <vm>` | End an attachment or stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
