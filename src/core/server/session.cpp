@@ -3,6 +3,7 @@
 #include "core/ipc/message.hpp"
 #include "core/log/log.hpp"
 #include "core/server/backend.hpp"
+#include "core/server/debug_provider.hpp"
 #include "core/version.hpp"
 
 #include <algorithm>
@@ -44,6 +45,13 @@ namespace mpfshost
     Session::~Session()
     {
         log::debug(_category, "session ended");
+        if (_bound.has_value())
+        {
+            if (auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get()))
+            {
+                provider->debugDetachSession(_bound->sessionId);
+            }
+        }
         _scatters.clear();
         if (_fd >= 0)
         {
@@ -241,6 +249,9 @@ namespace mpfshost
         case MessageType::DebugStepRequest:
             handleDebugStep(requestId, payload);
             return;
+        case MessageType::DebugAttachRequest:
+            handleDebugAttach(requestId, payload);
+            return;
         case MessageType::DebugDetachRequest:
             handleDebugDetach(requestId, payload);
             return;
@@ -399,6 +410,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugWatchRequest),
             static_cast<std::uint16_t>(MessageType::DebugBreakpointRequest),
             static_cast<std::uint16_t>(MessageType::DebugStepRequest),
+            static_cast<std::uint16_t>(MessageType::DebugAttachRequest),
             static_cast<std::uint16_t>(MessageType::DebugDetachRequest),
             static_cast<std::uint16_t>(MessageType::VirtualQueryRequest),
             static_cast<std::uint16_t>(MessageType::MemorySearchRequest),

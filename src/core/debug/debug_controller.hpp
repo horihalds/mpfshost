@@ -72,9 +72,19 @@ namespace mpfshost::debug
         [[nodiscard]] std::optional<DebugStepResponse>
         step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
 
-        // Stops an active GDB stub, including one this host did not start, and resumes the guest only when this
-        // host paused it. Used to recover a target left with a stale stub after a host restart.
-        [[nodiscard]] std::optional<DebugDetachResponse> detach(bool& busy, std::string& error, bool& unavailable);
+        // Starts one persistent stub owned by `sessionId` and pauses the guest if it is running. A second
+        // session gets Busy; a foreign stub gets InvalidState and the debug-detach hint.
+        [[nodiscard]] std::optional<DebugAttachResponse>
+        attach(std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
+
+        // Stops the attached stub or a stale foreign one, resumes the guest only when the attachment paused it,
+        // and clears the bookkeeping.
+        [[nodiscard]] std::optional<DebugDetachResponse>
+        detach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable);
+
+        // Best-effort detach when the owning session disappears. Never throws and never touches another
+        // session's attachment.
+        void detachSession(std::uint64_t sessionId) noexcept;
 
         // Best-effort teardown for host shutdown: stops a stub this host owns and resumes a guest this host
         // paused. Never touches a foreign stub, and never throws.
@@ -109,11 +119,13 @@ namespace mpfshost::debug
         [[nodiscard]] bool startUnixStub(RspClient& rsp, RspEndpoint& endpoint, std::string& error, bool& unavailable);
         [[nodiscard]] bool startTcpStub(RspClient& rsp, RspEndpoint& endpoint, std::string& error, bool& unavailable);
         [[nodiscard]] bool connectRsp(RspClient& rsp, const RspEndpoint& endpoint, std::string& error);
-        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> readRecords(RspClient&                   rsp,
-                                                                                  const DebugRegistersRequest& request,
-                                                                                  std::string& architecture,
-                                                                                  std::string& error,
-                                                                                  bool&        unavailable);
+        [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
+                                                         readRecords(RspClient&                   rsp,
+                                                                     const DebugRegistersRequest& request,
+                                                                     std::string&                 architecture,
+                                                                     std::string&                 error,
+                                                                     bool&                        unavailable,
+                                                                     const RspTargetDescription*  ready = nullptr);
         [[nodiscard]] std::optional<DebugRegisterRecord> readRecord(RspClient&                  rsp,
                                                                     const RspTargetDescription& description,
                                                                     std::uint32_t               vcpu,
@@ -132,6 +144,12 @@ namespace mpfshost::debug
         QmpTransportFactory        _qmpFactory;
         RspTransportFactory        _rspFactory;
         DebugInspector*            _inspector {nullptr};
+        std::unique_ptr<RspClient> _attachedRsp;
+        RspEndpoint                _attachedEndpoint;
+        RspTargetDescription       _attachedDescription;
+        std::string                _attachedArchitecture;
+        std::atomic<std::uint64_t> _ownerSession {0};
+        bool                       _attachPaused {false};
         std::atomic<bool>          _stubActive {false};
         std::atomic<bool>          _hostPaused {false};
         std::atomic<bool>          _controlPaused {false};

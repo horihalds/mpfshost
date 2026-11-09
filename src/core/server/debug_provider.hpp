@@ -54,9 +54,16 @@ namespace mpfshost
                                                                                bool&                         unavailable) = 0;
         [[nodiscard]] virtual std::optional<DebugStepResponse> debugStep(
             const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
-        // Stops an active stub, including a foreign one, and resumes the guest only when this host paused it.
+        // Starts one persistent stub for `sessionId`. `invalidState` reports a foreign stub, which the session
+        // maps to InvalidState together with the debug-detach hint.
+        [[nodiscard]] virtual std::optional<DebugAttachResponse>
+        debugAttach(std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) = 0;
+        // Stops the attached or foreign stub, including one this host did not start, and resumes the guest only
+        // when this host paused it for the attachment.
         [[nodiscard]] virtual std::optional<DebugDetachResponse>
-        debugDetach(bool& busy, std::string& error, bool& unavailable) = 0;
+                     debugDetach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable) = 0;
+        // Best-effort teardown of an attachment owned by a closing session. Never throws.
+        virtual void debugDetachSession(std::uint64_t sessionId) noexcept                                    = 0;
     };
 } // namespace mpfshost
 

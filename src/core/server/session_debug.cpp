@@ -245,6 +245,11 @@ namespace mpfshost
         const auto  end         = provider->debugWatch(*request, onHit, abortCheck, busy, error, unavailable);
         if (!end.has_value())
         {
+            if (aborted)
+            {
+                provider->debugDetachSession(_bound->sessionId);
+                return;
+            }
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
@@ -262,6 +267,7 @@ namespace mpfshost
         }
         if (aborted)
         {
+            provider->debugDetachSession(_bound->sessionId);
             return;
         }
         sendPayload(requestId, MessageType::DebugWatchEnd, encodeDebugWatchEnd(*end));
@@ -333,6 +339,11 @@ namespace mpfshost
         const auto  response = provider->debugBreakpoint(*request, abortCheck, invalidState, busy, error, unavailable);
         if (!response.has_value())
         {
+            if (aborted)
+            {
+                provider->debugDetachSession(_bound->sessionId);
+                return;
+            }
             if (busy)
             {
                 sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
@@ -357,6 +368,7 @@ namespace mpfshost
         }
         if (aborted)
         {
+            provider->debugDetachSession(_bound->sessionId);
             return;
         }
         sendPayload(requestId, MessageType::DebugBreakpointResponse, encodeDebugBreakpointResponse(*response));
@@ -421,6 +433,60 @@ namespace mpfshost
         sendPayload(requestId, MessageType::DebugStepResponse, encodeDebugStepResponse(*response));
     }
 
+    void Session::handleDebugAttach(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugAttachRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "debug-attach takes no payload");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot attach the debugger");
+            return;
+        }
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        bool        unavailable = false;
+        const auto  response    = provider->debugAttach(_bound->sessionId, invalidState, busy, error, unavailable);
+        if (!response.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows an attach" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug attach failed" : error);
+            return;
+        }
+        sendPayload(requestId, MessageType::DebugAttachResponse, encodeDebugAttachResponse(*response));
+    }
+
     void Session::handleDebugDetach(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())
@@ -446,7 +512,7 @@ namespace mpfshost
         bool        busy = false;
         std::string error;
         bool        unavailable = false;
-        const auto  response    = provider->debugDetach(busy, error, unavailable);
+        const auto  response    = provider->debugDetach(_bound->sessionId, busy, error, unavailable);
         if (!response.has_value())
         {
             if (busy)

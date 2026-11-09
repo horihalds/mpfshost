@@ -836,6 +836,10 @@ namespace mpfshost::mcp
                 {           "debug_step",
                  "Single-step a vCPU",                                    "Single-step one vCPU of a paused guest and return its registers.",
                  false,                   {target, {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false}}},
+                {         "debug_attach",
+                 "Attach the debugger",                             "Start one persistent GDB stub and report its mode, architecture and guest state. Destructive: pauses "
+                             "a running guest and resumes it if the attach paused it.", false,
+                 {target}                                                                                                    },
                 {         "debug_detach",
                  "Stop the debug stub",              "Stop an active GDB stub, including a stale one left by an earlier host process, and report the "
               "run state. Destructive: resumes the guest only if this host paused it.", false,
@@ -2486,6 +2490,19 @@ namespace mpfshost::mcp
                 return success(debugRecordJson(response->record));
             }
 
+            if (name == "debug_attach")
+            {
+                const auto response = debugAttach(socket, {requireString(args, "target")}, {}, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                Json result            = debugStatusJson(response->status);
+                result["stub_mode"]    = response->stubMode;
+                result["guest_paused"] = response->guestPaused;
+                return success(std::move(result));
+            }
+
             if (name == "debug_detach")
             {
                 const auto response = debugDetach(socket, {requireString(args, "target")}, error);
@@ -2497,6 +2514,7 @@ namespace mpfshost::mcp
                 result["stub_stopped"]  = response->stubStopped;
                 result["foreign_stub"]  = response->foreignStub;
                 result["guest_resumed"] = response->guestResumed;
+                result["detached"]      = response->detached;
                 return success(std::move(result));
             }
 

@@ -141,16 +141,36 @@ On 2026-11-09 against the same `windows` target (12 vCPUs), with the rebuilt hos
 
 ## Stub endpoint and ownership
 
-`debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry.
-It asks HMP for `gdbserver unix:/tmp/mpfshost-gdb-<qemu-pid>.sock,server=on,wait=off`. If QEMU cannot create that
-chardev, the host retries with `gdbserver tcp:127.0.0.1:<ephemeral-port>`. It never uses the default `tcp::<port>`
-form, which listens on every interface.
+`debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry,
+unless an attachment already owns one, in which case the request reuses it. It asks HMP for
+`gdbserver unix:/tmp/mpfshost-gdb-<qemu-pid>.sock,server=on,wait=off`. If QEMU cannot create that chardev, the host
+retries with `gdbserver tcp:127.0.0.1:<ephemeral-port>`. It never uses the default `tcp::<port>` form, which listens on
+every interface.
 
 The host records whether it started the stub. It stops a stub with `gdbserver none` on every exit path (success,
 read error, timeout, cancellation and teardown) and removes the Unix socket file. It never stops a stub it did not
 start; if `info chardev` already shows a `gdb:` device, `debug-registers` answers `InvalidState` instead. After
 teardown it re-checks `query-status` and reapplies `stop` if the guest somehow resumed, so a request that began with
 a paused guest leaves it paused.
+
+## Attach and detach
+
+`debug-attach` starts one persistent GDB stub and makes the requesting connection its owner. If the guest is running,
+the attach pauses it and remembers that it did so. A second attach is refused with `Busy`; a stale stub left by an
+earlier host process is refused with `InvalidState`, and the error names `debug-detach`.
+
+The `debug-attach` CLI command holds the connection open until Enter or Ctrl-C, so other client commands can reuse the
+attached stub. `debug-registers`, `debug-watch`, `debug-break` and `debug-step` reuse it rather than starting their
+own; they remain serialized and clean up any resource they armed. Each MCP tool call is stateless, so `debug_attach`
+reports the attach and then ends it when that call closes its connection.
+
+`debug-detach` stops the stub, clears the attachment and watch bookkeeping, and resumes the guest only when the
+attachment paused it. A guest that was already paused before the attach stays paused. If there was no attachment,
+`debug-detach` keeps its recovery behaviour and resumes a guest this host paused with `debug-stop`.
+
+The host detaches an attachment when its owning session disconnects, when a watch or breakpoint owned by that session
+is cancelled, and on host shutdown. A closing session only detaches its own attachment; another client's attachment
+is left alone. `VmmHandle` destruction runs the shutdown teardown after every session has ended.
 
 ## Host shutdown and stale stubs
 

@@ -52,9 +52,21 @@ namespace mpfshost
         return _debug.step(request, invalidState, busy, error, unavailable);
     }
 
-    std::optional<DebugDetachResponse> VmmHandle::debugDetach(bool& busy, std::string& error, bool& unavailable)
+    std::optional<DebugAttachResponse> VmmHandle::debugAttach(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {
-        return _debug.detach(busy, error, unavailable);
+        return _debug.attach(sessionId, invalidState, busy, error, unavailable);
+    }
+
+    std::optional<DebugDetachResponse>
+    VmmHandle::debugDetach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable)
+    {
+        return _debug.detach(sessionId, busy, error, unavailable);
+    }
+
+    void VmmHandle::debugDetachSession(std::uint64_t sessionId) noexcept
+    {
+        _debug.detachSession(sessionId);
     }
 
     std::optional<debug::DebugProcessDtbs> VmmHandle::processDtbs(std::uint32_t pid, std::string& error)

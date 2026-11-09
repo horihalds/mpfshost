@@ -447,10 +447,20 @@ namespace mpfshost::testing
         bool                            stepBusy {};
         std::uint32_t                   stepCalls {};
 
-        DebugDetachResponse detachResponse;
-        std::string         detachFailure;
-        bool                detachBusy {};
-        std::uint32_t       detachCalls {};
+        DebugDetachResponse        detachResponse;
+        std::string                detachFailure;
+        bool                       detachBusy {};
+        std::uint32_t              detachCalls {};
+        std::uint64_t              lastDetachSession {};
+        std::atomic<std::uint32_t> detachSessionCalls {0};
+        std::atomic<std::uint64_t> lastDetachSessionId {0};
+
+        DebugAttachResponse attachResponse;
+        std::string         attachFailure;
+        bool                attachInvalidState {};
+        bool                attachBusy {};
+        std::uint32_t       attachCalls {};
+        std::uint64_t       lastAttachSession {};
     };
 
     class FakeScatterHandle : public ScatterHandle
@@ -1715,10 +1725,28 @@ namespace mpfshost::testing
             return _debugState->stepResponse;
         }
 
+        [[nodiscard]] std::optional<DebugAttachResponse> debugAttach(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
+        {
+            ++_debugState->attachCalls;
+            _debugState->lastAttachSession = sessionId;
+            if (!_debugState->attachFailure.empty())
+            {
+                invalidState = _debugState->attachInvalidState;
+                busy         = _debugState->attachBusy;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->attachFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->attachResponse;
+        }
+
         [[nodiscard]] std::optional<DebugDetachResponse>
-        debugDetach(bool& busy, std::string& error, bool& unavailable) override
+        debugDetach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable) override
         {
             ++_debugState->detachCalls;
+            _debugState->lastDetachSession = sessionId;
             if (!_debugState->detachFailure.empty())
             {
                 busy        = _debugState->detachBusy;
@@ -1728,6 +1756,12 @@ namespace mpfshost::testing
             }
             busy = false;
             return _debugState->detachResponse;
+        }
+
+        void debugDetachSession(std::uint64_t sessionId) noexcept override
+        {
+            _debugState->lastDetachSessionId = sessionId;
+            _debugState->detachSessionCalls.fetch_add(1);
         }
 
     private:
@@ -2308,6 +2342,18 @@ namespace mpfshost::testing
         {
             _debugState->detachFailure = std::move(message);
             _debugState->detachBusy    = busy;
+        }
+
+        void setDebugAttach(DebugAttachResponse response)
+        {
+            _debugState->attachResponse = std::move(response);
+        }
+
+        void failDebugAttachWith(std::string message, bool invalidState = false, bool busy = false)
+        {
+            _debugState->attachFailure      = std::move(message);
+            _debugState->attachInvalidState = invalidState;
+            _debugState->attachBusy         = busy;
         }
 
         void setHandlesBare(bool bare)

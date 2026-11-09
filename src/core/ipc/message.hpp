@@ -745,6 +745,18 @@ namespace mpfshost
         DebugRegisterRecord record;
     };
 
+    struct DebugAttachRequest
+    {
+        // Empty payload; the target comes from the binding and the owner is the requesting session.
+    };
+
+    struct DebugAttachResponse
+    {
+        DebugStatus status;
+        std::string stubMode;       // `unix` or `tcp`
+        bool        guestPaused {}; // this request paused a running guest
+    };
+
     struct DebugDetachRequest
     {
         // Empty payload; the target comes from the binding.
@@ -756,6 +768,7 @@ namespace mpfshost
         bool        stubStopped {};  // this request stopped an active stub
         bool        foreignStub {};  // the stopped stub was not started by this host
         bool        guestResumed {}; // this request continued the guest
+        bool        detached {};     // this request ended an attachment
     };
 
     struct SymbolLookupRequest
@@ -1997,6 +2010,11 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugStepRequest>  decodeDebugStepRequest(std::span<const std::byte> payload);
     [[nodiscard]] std::vector<std::byte>           encodeDebugStepResponse(const DebugStepResponse& message);
     [[nodiscard]] std::optional<DebugStepResponse> decodeDebugStepResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>             encodeDebugAttachRequest(const DebugAttachRequest& message);
+    [[nodiscard]] std::optional<DebugAttachRequest>  decodeDebugAttachRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDebugAttachResponse(const DebugAttachResponse& message);
+    [[nodiscard]] std::optional<DebugAttachResponse> decodeDebugAttachResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>             encodeDebugDetachRequest(const DebugDetachRequest& message);
     [[nodiscard]] std::optional<DebugDetachRequest>  decodeDebugDetachRequest(std::span<const std::byte> payload);

@@ -251,6 +251,44 @@ namespace mpfshost
         return decoded;
     }
 
+    std::optional<DebugAttachResponse> debugAttach(const std::filesystem::path&                           socketPath,
+                                                   const DebugQuery&                                      query,
+                                                   const std::function<void(const DebugAttachResponse&)>& whileAttached,
+                                                   std::string&                                           error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(), MessageType::DebugAttachRequest, encodeDebugAttachRequest({}), error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugAttachResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugAttachResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug attach response";
+            return std::nullopt;
+        }
+        if (whileAttached)
+        {
+            whileAttached(*decoded);
+        }
+        return decoded;
+    }
+
     std::optional<DebugDetachResponse>
     debugDetach(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error)
     {

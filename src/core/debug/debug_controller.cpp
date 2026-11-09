@@ -663,26 +663,32 @@ namespace mpfshost::debug
                                                                                  const DebugRegistersRequest& request,
                                                                                  std::string& architecture,
                                                                                  std::string& error,
-                                                                                 bool&        unavailable)
+                                                                                 bool&        unavailable,
+                                                                                 const RspTargetDescription* ready)
     {
-        if (!rsp.negotiate(kRspTimeout, error))
+        RspTargetDescription        localDescription;
+        const RspTargetDescription* description = ready;
+        if (description == nullptr)
         {
-            return std::nullopt;
-        }
-
-        RspTargetDescription description;
-        if (!rsp.readTargetDescription(description, kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
-        if (architecture.empty())
-        {
-            architecture = architectureFromTargetDescription(description);
-            if (!isSupportedArchitecture(architecture))
+            if (!rsp.negotiate(kRspTimeout, error))
             {
-                rejectArchitecture(architecture, true, error, unavailable);
                 return std::nullopt;
             }
+
+            if (!rsp.readTargetDescription(localDescription, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            if (architecture.empty())
+            {
+                architecture = architectureFromTargetDescription(localDescription);
+                if (!isSupportedArchitecture(architecture))
+                {
+                    rejectArchitecture(architecture, true, error, unavailable);
+                    return std::nullopt;
+                }
+            }
+            description = &localDescription;
         }
 
         std::vector<std::string> threads;
@@ -731,7 +737,7 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
 
-            auto record = readRecord(rsp, description, static_cast<std::uint32_t>(index), thread, error);
+            auto record = readRecord(rsp, *description, static_cast<std::uint32_t>(index), thread, error);
             if (!record)
             {
                 return std::nullopt;
@@ -823,7 +829,7 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
-        if (_stubActive.load())
+        if (_stubActive.load() && !_attachedRsp)
         {
             std::string ignored;
             bool        ignoredUnavailable = false;
@@ -835,31 +841,50 @@ namespace mpfshost::debug
             }
         }
 
-        bool active = false;
-        if (!hasActiveStub(active, error, unavailable))
+        const bool attached = _attachedRsp != nullptr;
+        if (!attached)
         {
-            return std::nullopt;
-        }
-        if (active)
-        {
-            invalidState = true;
-            error        = "another GDB stub owns the debug channel";
-            return std::nullopt;
+            bool active = false;
+            if (!hasActiveStub(active, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (active)
+            {
+                invalidState = true;
+                error        = "another GDB stub owns the debug channel";
+                return std::nullopt;
+            }
         }
 
-        auto        rsp = makeRsp();
-        RspEndpoint endpoint;
-        if (!startStub(*rsp, endpoint, error, unavailable))
+        std::unique_ptr<RspClient> ownedRsp;
+        RspClient*                 rsp = nullptr;
+        if (attached)
         {
-            return std::nullopt;
+            rsp = _attachedRsp.get();
+        }
+        else
+        {
+            ownedRsp = makeRsp();
+            RspEndpoint endpoint;
+            if (!startStub(*ownedRsp, endpoint, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            rsp = ownedRsp.get();
         }
 
         struct Cleanup
         {
             DebugController& self;
+            bool             attached;
 
             ~Cleanup()
             {
+                if (attached)
+                {
+                    return;
+                }
                 std::string ignored;
                 bool        ignoredUnavailable = false;
                 if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
@@ -879,8 +904,12 @@ namespace mpfshost::debug
                     }
                 }
             }
-        } cleanup {*this};
+        } cleanup {*this, attached};
 
+        if (attached)
+        {
+            return readRecords(*rsp, request, architecture, error, unavailable, &_attachedDescription);
+        }
         return readRecords(*rsp, request, architecture, error, unavailable);
     }
 
@@ -934,7 +963,7 @@ namespace mpfshost::debug
             log::info("host", "paused the guest for a watchpoint");
         }
 
-        if (_stubActive.load())
+        if (_stubActive.load() && !_attachedRsp)
         {
             std::string ignored;
             bool        ignoredUnavailable = false;
@@ -946,22 +975,36 @@ namespace mpfshost::debug
             }
         }
 
-        bool active = false;
-        if (!hasActiveStub(active, error, unavailable))
+        const bool attached = _attachedRsp != nullptr;
+        if (!attached)
         {
-            return std::nullopt;
-        }
-        if (active)
-        {
-            error = "another GDB stub owns the debug channel";
-            return std::nullopt;
+            bool active = false;
+            if (!hasActiveStub(active, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (active)
+            {
+                error = "another GDB stub owns the debug channel";
+                return std::nullopt;
+            }
         }
 
-        auto        rsp = makeRsp();
-        RspEndpoint endpoint;
-        if (!startStub(*rsp, endpoint, error, unavailable))
+        std::unique_ptr<RspClient> ownedRsp;
+        RspClient*                 rsp = nullptr;
+        if (attached)
         {
-            return std::nullopt;
+            rsp = _attachedRsp.get();
+        }
+        else
+        {
+            ownedRsp = makeRsp();
+            RspEndpoint endpoint;
+            if (!startStub(*ownedRsp, endpoint, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            rsp = ownedRsp.get();
         }
 
         // QEMU's gdbstub keeps one global debug-register set: a second Z2 for the same address on another vCPU
@@ -975,6 +1018,7 @@ namespace mpfshost::debug
             std::optional<std::string>& armedThread;
             const DebugWatchRequest&    request;
             bool                        stoppedByUs;
+            bool                        attached;
 
             ~Cleanup()
             {
@@ -1007,16 +1051,19 @@ namespace mpfshost::debug
                 }
                 self._watchCount = 0;
 
-                // Detach the RSP client before stopping the stub; otherwise QEMU can stay in its gdb stop
-                // state and the QMP continue below has no effect.
-                rsp.disconnect();
-
-                if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
+                if (!attached)
                 {
-                    log::warn("host", "could not stop the GDB stub during watchpoint teardown: ", ignored);
+                    // Detach the RSP client before stopping the stub; otherwise QEMU can stay in its gdb stop
+                    // state and the QMP continue below has no effect.
+                    rsp.disconnect();
+
+                    if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
+                    {
+                        log::warn("host", "could not stop the GDB stub during watchpoint teardown: ", ignored);
+                    }
+                    std::error_code removeError;
+                    std::filesystem::remove(self._stubSocket, removeError);
                 }
-                std::error_code removeError;
-                std::filesystem::remove(self._stubSocket, removeError);
 
                 QmpStatusInfo after;
                 if (stoppedByUs)
@@ -1051,24 +1098,31 @@ namespace mpfshost::debug
                     }
                 }
             }
-        } cleanup {*this, *rsp, armedThread, request, stoppedByUs};
+        } cleanup {*this, *rsp, armedThread, request, stoppedByUs, attached};
 
-        if (!rsp->negotiate(kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
         RspTargetDescription description;
-        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        if (attached)
         {
-            return std::nullopt;
+            description = _attachedDescription;
         }
-        if (architecture.empty())
+        else
         {
-            architecture = architectureFromTargetDescription(description);
-            if (!isSupportedArchitecture(architecture))
+            if (!rsp->negotiate(kRspTimeout, error))
             {
-                rejectArchitecture(architecture, true, error, unavailable);
                 return std::nullopt;
+            }
+            if (!rsp->readTargetDescription(description, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            if (architecture.empty())
+            {
+                architecture = architectureFromTargetDescription(description);
+                if (!isSupportedArchitecture(architecture))
+                {
+                    rejectArchitecture(architecture, true, error, unavailable);
+                    return std::nullopt;
+                }
             }
         }
         std::vector<std::string> threads;
@@ -1387,7 +1441,7 @@ namespace mpfshost::debug
             log::info("host", "paused the guest for a breakpoint");
         }
 
-        if (_stubActive.load())
+        if (_stubActive.load() && !_attachedRsp)
         {
             std::string ignored;
             bool        ignoredUnavailable = false;
@@ -1399,23 +1453,37 @@ namespace mpfshost::debug
             }
         }
 
-        bool active = false;
-        if (!hasActiveStub(active, error, unavailable))
+        const bool attached = _attachedRsp != nullptr;
+        if (!attached)
         {
-            return std::nullopt;
-        }
-        if (active)
-        {
-            invalidState = true;
-            error        = "another GDB stub owns the debug channel";
-            return std::nullopt;
+            bool active = false;
+            if (!hasActiveStub(active, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (active)
+            {
+                invalidState = true;
+                error        = "another GDB stub owns the debug channel";
+                return std::nullopt;
+            }
         }
 
-        auto        rsp = makeRsp();
-        RspEndpoint endpoint;
-        if (!startStub(*rsp, endpoint, error, unavailable))
+        std::unique_ptr<RspClient> ownedRsp;
+        RspClient*                 rsp = nullptr;
+        if (attached)
         {
-            return std::nullopt;
+            rsp = _attachedRsp.get();
+        }
+        else
+        {
+            ownedRsp = makeRsp();
+            RspEndpoint endpoint;
+            if (!startStub(*ownedRsp, endpoint, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            rsp = ownedRsp.get();
         }
 
         const bool hardware = request.kind == DebugBreakpointKind::Hardware;
@@ -1428,6 +1496,7 @@ namespace mpfshost::debug
             const DebugBreakpointRequest& request;
             bool                          armed;
             bool                          stoppedByUs;
+            bool                          attached;
 
             ~Cleanup()
             {
@@ -1459,13 +1528,16 @@ namespace mpfshost::debug
                     }
                 }
 
-                rsp.disconnect();
-                if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
+                if (!attached)
                 {
-                    log::warn("host", "could not stop the GDB stub during breakpoint teardown: ", ignored);
+                    rsp.disconnect();
+                    if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
+                    {
+                        log::warn("host", "could not stop the GDB stub during breakpoint teardown: ", ignored);
+                    }
+                    std::error_code removeError;
+                    std::filesystem::remove(self._stubSocket, removeError);
                 }
-                std::error_code removeError;
-                std::filesystem::remove(self._stubSocket, removeError);
 
                 QmpStatusInfo after;
                 if (stoppedByUs)
@@ -1500,24 +1572,31 @@ namespace mpfshost::debug
                     }
                 }
             }
-        } cleanup {*this, *rsp, request, armed, stoppedByUs};
+        } cleanup {*this, *rsp, request, armed, stoppedByUs, attached};
 
-        if (!rsp->negotiate(kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
         RspTargetDescription description;
-        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        if (attached)
         {
-            return std::nullopt;
+            description = _attachedDescription;
         }
-        if (architecture.empty())
+        else
         {
-            architecture = architectureFromTargetDescription(description);
-            if (!isSupportedArchitecture(architecture))
+            if (!rsp->negotiate(kRspTimeout, error))
             {
-                rejectArchitecture(architecture, true, error, unavailable);
                 return std::nullopt;
+            }
+            if (!rsp->readTargetDescription(description, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            if (architecture.empty())
+            {
+                architecture = architectureFromTargetDescription(description);
+                if (!isSupportedArchitecture(architecture))
+                {
+                    rejectArchitecture(architecture, true, error, unavailable);
+                    return std::nullopt;
+                }
             }
         }
         std::vector<std::string> threads;
@@ -1784,7 +1863,7 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
-        if (_stubActive.load())
+        if (_stubActive.load() && !_attachedRsp)
         {
             std::string ignored;
             bool        ignoredUnavailable = false;
@@ -1796,31 +1875,50 @@ namespace mpfshost::debug
             }
         }
 
-        bool active = false;
-        if (!hasActiveStub(active, error, unavailable))
+        const bool attached = _attachedRsp != nullptr;
+        if (!attached)
         {
-            return std::nullopt;
-        }
-        if (active)
-        {
-            invalidState = true;
-            error        = "another GDB stub owns the debug channel";
-            return std::nullopt;
+            bool active = false;
+            if (!hasActiveStub(active, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (active)
+            {
+                invalidState = true;
+                error        = "another GDB stub owns the debug channel";
+                return std::nullopt;
+            }
         }
 
-        auto        rsp = makeRsp();
-        RspEndpoint endpoint;
-        if (!startStub(*rsp, endpoint, error, unavailable))
+        std::unique_ptr<RspClient> ownedRsp;
+        RspClient*                 rsp = nullptr;
+        if (attached)
         {
-            return std::nullopt;
+            rsp = _attachedRsp.get();
+        }
+        else
+        {
+            ownedRsp = makeRsp();
+            RspEndpoint endpoint;
+            if (!startStub(*ownedRsp, endpoint, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            rsp = ownedRsp.get();
         }
 
         struct Cleanup
         {
             DebugController& self;
+            bool             attached;
 
             ~Cleanup()
             {
+                if (attached)
+                {
+                    return;
+                }
                 std::string ignored;
                 bool        ignoredUnavailable = false;
                 if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
@@ -1841,24 +1939,31 @@ namespace mpfshost::debug
                     }
                 }
             }
-        } cleanup {*this};
+        } cleanup {*this, attached};
 
-        if (!rsp->negotiate(kRspTimeout, error))
-        {
-            return std::nullopt;
-        }
         RspTargetDescription description;
-        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        if (attached)
         {
-            return std::nullopt;
+            description = _attachedDescription;
         }
-        if (architecture.empty())
+        else
         {
-            architecture = architectureFromTargetDescription(description);
-            if (!isSupportedArchitecture(architecture))
+            if (!rsp->negotiate(kRspTimeout, error))
             {
-                rejectArchitecture(architecture, true, error, unavailable);
                 return std::nullopt;
+            }
+            if (!rsp->readTargetDescription(description, kRspTimeout, error))
+            {
+                return std::nullopt;
+            }
+            if (architecture.empty())
+            {
+                architecture = architectureFromTargetDescription(description);
+                if (!isSupportedArchitecture(architecture))
+                {
+                    rejectArchitecture(architecture, true, error, unavailable);
+                    return std::nullopt;
+                }
             }
         }
         std::vector<std::string> threads;
@@ -1949,7 +2054,172 @@ namespace mpfshost::debug
         }
     }
 
-    std::optional<DebugDetachResponse> DebugController::detach(bool& busy, std::string& error, bool& unavailable)
+    std::optional<DebugAttachResponse> DebugController::attach(
+        std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+        std::lock_guard stateLock {_stateMutex};
+
+        if (_ownerSession.load() != 0)
+        {
+            busy  = true;
+            error = "another debug session is already attached";
+            return std::nullopt;
+        }
+
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!qmpQueryStatus(current, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        bool pausedByUs = false;
+        if (current.status == "running")
+        {
+            std::string ignored;
+            if (!qmpExecute("stop", ignored, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            _hostPaused = true;
+            pausedByUs  = true;
+            log::info("host", "paused the guest for a debug attach");
+        }
+
+        // A stub left active without an owner is a stale one from this host; stop it before replacing it.
+        if (_stubActive.load())
+        {
+            std::string ignored;
+            bool        ignoredUnavailable = false;
+            if (!stopStub(ignored, ignoredUnavailable))
+            {
+                error       = ignored.empty() ? "the previous GDB stub could not be stopped" : ignored;
+                unavailable = ignoredUnavailable;
+                if (pausedByUs)
+                {
+                    std::string resume;
+                    if (!qmpExecute("cont", resume, ignored, ignoredUnavailable))
+                    {
+                        log::warn("host", "could not restore the running guest after a failed attach: ", ignored);
+                    }
+                    _hostPaused = false;
+                }
+                return std::nullopt;
+            }
+        }
+
+        const auto failAttach = [&](bool startedStub, bool guestPaused, std::string& failure)
+        {
+            std::string ignored;
+            bool        ignoredUnavailable = false;
+            if (startedStub && _stubActive.load() && !stopStub(ignored, ignoredUnavailable))
+            {
+                log::warn("host", "could not stop the GDB stub after a failed attach: ", ignored);
+            }
+            std::error_code removeError;
+            std::filesystem::remove(_stubSocket, removeError);
+            if (guestPaused)
+            {
+                std::string resume;
+                if (!qmpExecute("cont", resume, ignored, ignoredUnavailable))
+                {
+                    log::warn("host", "could not restore the running guest after a failed attach: ", ignored);
+                }
+                _hostPaused = false;
+            }
+            if (failure.empty())
+            {
+                failure = "debug attach failed";
+            }
+        };
+
+        bool active = false;
+        if (!hasActiveStub(active, error, unavailable))
+        {
+            failAttach(false, pausedByUs, error);
+            return std::nullopt;
+        }
+        if (active)
+        {
+            invalidState = true;
+            error        = "another GDB stub owns the debug channel; run debug-detach first";
+            failAttach(false, pausedByUs, error);
+            return std::nullopt;
+        }
+
+        auto        rsp = makeRsp();
+        RspEndpoint endpoint;
+        if (!startStub(*rsp, endpoint, error, unavailable))
+        {
+            failAttach(true, pausedByUs, error);
+            return std::nullopt;
+        }
+
+        if (!rsp->negotiate(kRspTimeout, error))
+        {
+            failAttach(true, pausedByUs, error);
+            return std::nullopt;
+        }
+
+        RspTargetDescription description;
+        if (!rsp->readTargetDescription(description, kRspTimeout, error))
+        {
+            failAttach(true, pausedByUs, error);
+            return std::nullopt;
+        }
+        if (architecture.empty())
+        {
+            architecture = architectureFromTargetDescription(description);
+            if (!isSupportedArchitecture(architecture))
+            {
+                rejectArchitecture(architecture, true, error, unavailable);
+                failAttach(true, pausedByUs, error);
+                return std::nullopt;
+            }
+        }
+
+        _attachedRsp          = std::move(rsp);
+        _attachedEndpoint     = endpoint;
+        _attachedDescription  = std::move(description);
+        _attachedArchitecture = architecture;
+        _attachPaused         = pausedByUs;
+        _ownerSession         = sessionId;
+
+        DebugAttachResponse response;
+        response.guestPaused = pausedByUs;
+        response.stubMode    = endpoint.kind == RspEndpoint::Kind::Unix ? "unix" : "tcp";
+        if (!readStatus(response.status, error, unavailable))
+        {
+            _attachedRsp.reset();
+            _attachedArchitecture.clear();
+            _attachedDescription = {};
+            _ownerSession        = 0;
+            _attachPaused        = false;
+            failAttach(true, pausedByUs, error);
+            return std::nullopt;
+        }
+
+        log::info("host", "attached the debugger for session ", sessionId, " with a ", response.stubMode, " stub");
+        return response;
+    }
+
+    std::optional<DebugDetachResponse>
+    DebugController::detach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable)
     {
         busy        = false;
         unavailable = false;
@@ -1961,6 +2231,9 @@ namespace mpfshost::debug
             return std::nullopt;
         }
         std::lock_guard stateLock {_stateMutex};
+
+        const bool wasAttached  = _ownerSession.load() != 0;
+        const bool attachPaused = _attachPaused;
 
         QmpStatusInfo current;
         if (!qmpQueryStatus(current, error, unavailable))
@@ -1976,7 +2249,15 @@ namespace mpfshost::debug
 
         const bool          stubOwned = _stubActive.load();
         DebugDetachResponse response;
+        response.detached    = wasAttached;
         response.foreignStub = active && !stubOwned;
+
+        if (_attachedRsp)
+        {
+            _attachedRsp->disconnect();
+            _attachedRsp.reset();
+        }
+
         if (active)
         {
             std::string reply;
@@ -1993,8 +2274,15 @@ namespace mpfshost::debug
         std::error_code removeError;
         std::filesystem::remove(_stubSocket, removeError);
 
-        // A foreign stub may have left the guest stopped; only a pause this host made is ours to undo.
-        if (_hostPaused.load() && current.status != "running")
+        _attachedArchitecture.clear();
+        _attachedDescription = {};
+        _ownerSession        = 0;
+        _attachPaused        = false;
+
+        // Resume only a pause this attachment made. A guest that was already paused before the attach stays
+        // paused, and a pause requested by debug-stop is left for the client that asked for it.
+        const bool resume = wasAttached ? attachPaused : _hostPaused.load();
+        if (current.status != "running" && resume)
         {
             std::string ignored;
             if (!qmpExecute("cont", ignored, error, unavailable))
@@ -2002,9 +2290,9 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
             response.guestResumed = true;
+            _hostPaused           = false;
             log::info("host", "resumed the guest after detaching the debug stub");
         }
-        _hostPaused = false;
 
         DebugStatus status;
         if (!readStatus(status, error, unavailable))
@@ -2012,7 +2300,30 @@ namespace mpfshost::debug
             return std::nullopt;
         }
         response.status = status;
+        log::info("host", "detached the debugger for session ", sessionId);
         return response;
+    }
+
+    void DebugController::detachSession(std::uint64_t sessionId) noexcept
+    {
+        try
+        {
+            if (_ownerSession.load() != sessionId)
+            {
+                return;
+            }
+            bool        busy        = false;
+            bool        unavailable = false;
+            std::string error;
+            if (!detach(sessionId, busy, error, unavailable))
+            {
+                log::warn("host", "could not detach the debugger for a closing session: ", error);
+            }
+        }
+        catch (...)
+        {
+            log::warn("host", "debug detach for a closing session failed unexpectedly");
+        }
     }
 
     void DebugController::shutdown() noexcept
@@ -2029,6 +2340,15 @@ namespace mpfshost::debug
             std::string     error;
             bool            unavailable = false;
             std::error_code removeError;
+            if (_attachedRsp)
+            {
+                _attachedRsp->disconnect();
+                _attachedRsp.reset();
+            }
+            _ownerSession = 0;
+            _attachPaused = false;
+            _attachedArchitecture.clear();
+            _attachedDescription = {};
             if (!_stubActive.load() && !_hostPaused.load())
             {
                 std::filesystem::remove(_stubSocket, removeError);

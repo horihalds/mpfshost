@@ -136,6 +136,7 @@ range.
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
+ `DebugAttachRequest` | `0x0042` | `DebugAttachResponse` `0x8066` | single | `debug-attach` |
 
 ## Address lookups
 
@@ -184,15 +185,35 @@ is continued. The host only reports `hostPaused = 1` when its own `debug-stop` p
 implement debug control or QMP could not be reached (a missing socket or a failed connect); `Internal` means a QMP
 command really failed.
 
+## Debug attach
+
+`DebugAttachRequest` has no payload. The requesting connection becomes the owner of one persistent GDB stub. The
+host refuses a second attach with `Busy` while an attachment exists, and refuses a stale stub reported by
+`info chardev` with `InvalidState`; the error names `debug-detach` as the recovery command. A guest that is running
+is paused for the attachment and reported as `guestPaused`.
+
+`DebugAttachResponse` starts with the `DebugStatus` record and appends:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `status` | `DebugStatus` | Run state and bookkeeping after the attach |
+ `stubMode` | string | `unix` or `tcp`, the stub endpoint kind |
+ `guestPaused` | `u8` | `1` when this request paused a running guest |
+
+While attached, `debug-registers`, `debug-watch`, `debug-break` and `debug-step` reuse the attached stub instead of
+starting and stopping their own. They still run one at a time. The attachment ends on `debug-detach`, when the owning
+session disconnects, on cancellation of a watch or breakpoint owned by that session, or on host shutdown.
+
 ## Debug detach
 
 `DebugDetachRequest` has no payload. It is the explicit recovery path for a stub left behind by an earlier host
-process, and it also clears this host's debug bookkeeping. The host asks QEMU for `info chardev`, stops any active
-stub with `gdbserver none` (including a stub it did not start), removes its stub socket file, and continues the guest
-only when this host process performed the pause (`hostPaused`). A guest left stopped by a foreign stub stays stopped
-and is reported as such; `debug-continue` resumes it.
+process, and it also ends an attachment. The host asks QEMU for `info chardev`, stops any active stub with
+`gdbserver none` (including a stub it did not start), removes its stub socket file, and clears the attachment and
+watch bookkeeping. It continues the guest only when the attachment paused it, or, when there was no attachment, when
+this host process performed the pause (`hostPaused`). A guest left stopped by a foreign stub stays stopped and is
+reported as such; `debug-continue` resumes it.
 
-`DebugDetachResponse` starts with the same `DebugStatus` record and appends three `u8` flags:
+`DebugDetachResponse` starts with the same `DebugStatus` record and appends four `u8` flags:
 
  Field | Type | Meaning |
 -------|------|---------|
@@ -200,6 +221,7 @@ and is reported as such; `debug-continue` resumes it.
  `stubStopped` | `u8` | `1` when this request stopped an active stub |
  `foreignStub` | `u8` | `1` when the stopped stub was not started by this host |
  `guestResumed` | `u8` | `1` when this request continued the guest |
+ `detached` | `u8` | `1` when this request ended an attachment |
 
 The host performs the same teardown on a normal shutdown: it stops a stub it owns, removes its socket file, and
 resumes a guest it paused. It never stops a foreign stub during shutdown; use `debug-detach` for that.
@@ -209,8 +231,8 @@ resumes a guest it paused. It never stops a foreign stub during shutdown; use `d
 `DebugRegistersRequest` carries one `u32` vCPU index, or `0xFFFFFFFF` for every vCPU. An index at or above
 `kMaxDebugVcpuRecords` (256) is `MalformedPayload`. The request is only valid while the guest is paused and no other
 stub owns the debug channel; otherwise the host answers `InvalidState` (`20`). The host leaves the run state
-unchanged: it starts a stub on a Unix chardev under `/tmp`, reads the registers, stops the stub, and re-checks that
-the guest is still paused.
+unchanged: it starts a stub on a Unix chardev under `/tmp` (or reuses an attached one), reads the registers, and stops
+its own stub and re-checks that the guest is still paused.
 
 `DebugRegistersResponse` is a `u32` record count followed by fixed x86-64 records:
 

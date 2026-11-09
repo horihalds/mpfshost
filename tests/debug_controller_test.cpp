@@ -715,11 +715,12 @@ TEST_CASE("the debug controller detaches a foreign stub on request", "[core][deb
     bool        busy = false;
     std::string error;
     bool        unavailable = false;
-    const auto  response    = controller.detach(busy, error, unavailable);
+    const auto  response    = controller.detach(1, busy, error, unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->stubStopped);
     REQUIRE(response->foreignStub);
     REQUIRE_FALSE(response->guestResumed);
+    REQUIRE_FALSE(response->detached);
     REQUIRE_FALSE(response->status.stubActive);
     REQUIRE(qmp->count("gdbserver none") == 1);
     REQUIRE_FALSE(qmp->stubActive);
@@ -748,7 +749,7 @@ TEST_CASE("detach resumes a guest the host paused", "[core][debug][controller]")
     REQUIRE(stopped.has_value());
     REQUIRE_FALSE(qmp->running);
 
-    const auto response = controller.detach(busy, error, unavailable);
+    const auto response = controller.detach(1, busy, error, unavailable);
     REQUIRE(response.has_value());
     REQUIRE(response->guestResumed);
     REQUIRE(response->status.runState == mpfshost::DebugRunState::Running);
@@ -2025,4 +2026,195 @@ TEST_CASE("debug status reports the architecture of an unsupported guest", "[cor
     REQUIRE_FALSE(unavailable);
     REQUIRE(status->architecture == "aarch64");
     REQUIRE(status->runState == mpfshost::DebugRunState::Paused);
+}
+
+TEST_CASE("debug attach pauses the guest and detach restores it", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->running               = true;
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  attached    = controller.attach(7, invalidState, busy, error, unavailable);
+    REQUIRE(attached.has_value());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE_FALSE(busy);
+    REQUIRE(attached->guestPaused);
+    REQUIRE(attached->stubMode == "unix");
+    REQUIRE(attached->status.stubOwned);
+    REQUIRE(attached->status.stubActive);
+    REQUIRE_FALSE(attached->status.foreignStub);
+    REQUIRE(attached->status.architecture == "x86_64");
+    REQUIRE_FALSE(qmp->running);
+    REQUIRE(qmp->stubActive);
+
+    const auto second = controller.attach(8, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(second.has_value());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE(busy);
+    REQUIRE(error.find("already attached") != std::string::npos);
+
+    busy                = false;
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->detached);
+    REQUIRE(detached->stubStopped);
+    REQUIRE_FALSE(detached->foreignStub);
+    REQUIRE(detached->guestResumed);
+    REQUIRE_FALSE(detached->status.stubActive);
+    REQUIRE(qmp->running);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("detach leaves a guest that was already paused alone", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->running               = false;
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  attached    = controller.attach(7, invalidState, busy, error, unavailable);
+    REQUIRE(attached.has_value());
+    REQUIRE_FALSE(attached->guestPaused);
+    REQUIRE_FALSE(qmp->running);
+
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE_FALSE(detached->guestResumed);
+    REQUIRE_FALSE(qmp->running);
+}
+
+TEST_CASE("attach refuses a foreign stub and names debug-detach", "[core][debug][controller]")
+{
+    auto qmp        = std::make_shared<FakeQmpState>();
+    qmp->stubActive = true;
+    qmp->running    = false;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [qmp]
+                                {
+                                    return std::make_unique<FakeQmpTransport>(qmp);
+                                },
+                                []
+                                {
+                                    return std::make_unique<FakeRspTransport>();
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  attached    = controller.attach(7, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(attached.has_value());
+    REQUIRE(invalidState);
+    REQUIRE_FALSE(busy);
+    REQUIRE(error.find("debug-detach") != std::string::npos);
+    REQUIRE(qmp->stubActive);
+    REQUIRE(qmp->count("gdbserver unix:") == 0);
+}
+
+TEST_CASE("detachSession only ends the owning session's attachment", "[core][debug][controller]")
+{
+    auto qmp                   = std::make_shared<FakeQmpState>();
+    qmp->running               = true;
+    auto qmpTransport          = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport          = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml = x86RegisterXml();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+
+    controller.detachSession(8);
+    REQUIRE(qmp->stubActive);
+    REQUIRE_FALSE(qmp->running);
+
+    controller.detachSession(7);
+    REQUIRE_FALSE(qmp->stubActive);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("an attached stub is reused by a register read", "[core][debug][controller]")
+{
+    auto qmp                    = std::make_shared<FakeQmpState>();
+    qmp->running                = false;
+    auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport           = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml  = x86RegisterXml();
+    rspTransport->registerBytes = registerBytes();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE(controller.attach(7, invalidState, busy, error, unavailable).has_value());
+
+    const auto records = controller.registers({}, invalidState, busy, error, unavailable);
+    REQUIRE(records.has_value());
+    REQUIRE(records->size() == 1);
+    REQUIRE(records->front().rip == 0xffffffffae89ab1bull);
+    REQUIRE(qmp->stubActive);
+    REQUIRE(qmp->count("gdbserver unix:") == 1);
+
+    const auto detached = controller.detach(7, busy, error, unavailable);
+    REQUIRE(detached.has_value());
+    REQUIRE(detached->detached);
+    REQUIRE_FALSE(qmp->stubActive);
 }

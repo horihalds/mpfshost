@@ -136,6 +136,7 @@ namespace mpfshost
         DebugBreakpointRequest     = 0x003F,
         DebugStepRequest           = 0x0040,
         DebugDetachRequest         = 0x0041,
+        DebugAttachRequest         = 0x0042,
         ListTargetsResponse        = 0x8001,
         BindResponse               = 0x8002,
         ProcessListResponse        = 0x8003,
@@ -231,6 +232,7 @@ namespace mpfshost
         DebugBreakpointResponse    = 0x8063,
         DebugStepResponse          = 0x8064,
         DebugDetachResponse        = 0x8065,
+        DebugAttachResponse        = 0x8066,
         ErrorResponse              = 0x8FFF,
     };
 

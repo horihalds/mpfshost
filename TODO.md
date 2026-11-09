@@ -15,26 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 3. Add an explicit debug attach and detach
-
-Breakpoints, watchpoints and single-step are usable only as isolated one-shot requests. Introduce the ownership
-model before making breakpoints persistent.
-
-- Add `DebugAttachRequest`/`DebugAttachResponse` and `DebugDetachRequest`/`DebugDetachResponse` as new message types.
-  Attach starts the stub (only when the guest is paused or the attach itself pauses it), records the owning session
-  and returns the run state, stub mode and architecture. Detach removes every host-armed breakpoint and watchpoint,
-  stops the stub, resumes the guest only if attach/its operations paused it, and clears the bookkeeping.
-- Serialize attaches: a second attach is `Busy`, and a stale stub reported by `info chardev` is `InvalidState` with
-  the `debug-detach` hint.
-- Detach on peer disconnect, cancellation, host shutdown and `VmmHandle` destruction.
-- Add the client functions, CLI commands and MCP tools; mark attach and detach destructive.
-- Tests: attach/detach lifecycle with fakes, detach on peer death, a second attach returns `Busy`, a foreign stub is
-  refused, and the guest returns to its pre-attach state.
-- Document the session model in `docs/DEBUGGING.md`.
-
-Acceptance: two clients cannot own the debug channel at once, and `debug-detach` always restores the pre-attach run
-state and stub ownership.
-
 ### 4. Make breakpoints and watchpoints persistent for a debug session
 
 Once a session exists, a caller should be able to arm several breakpoints/watchpoints, continue, and receive hits

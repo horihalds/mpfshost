@@ -1649,6 +1649,31 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-attach")
+        {
+            const auto response = mpfshost::debugAttach(
+                options.socketPath,
+                {options.target},
+                [](const mpfshost::DebugAttachResponse& attach)
+                {
+                    std::printf(
+                        "stub-mode=%s  guest-paused=%s\n", attach.stubMode.c_str(), attach.guestPaused ? "yes" : "no");
+                    printDebugStatus(attach.status);
+                    std::printf("attached; press Enter to detach or Ctrl-C to close the connection\n");
+                    int character = 0;
+                    while ((character = std::getchar()) != '\n' && character != EOF)
+                    {
+                    }
+                },
+                error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            return 0;
+        }
+
         if (options.command == "debug-detach")
         {
             const auto response = mpfshost::debugDetach(options.socketPath, {options.target}, error);
@@ -1657,10 +1682,11 @@ namespace mpfshost::cli
                 mpfshost::log::error("client", error);
                 return 1;
             }
-            std::printf("stub-stopped=%s  foreign-stub=%s  guest-resumed=%s\n",
+            std::printf("stub-stopped=%s  foreign-stub=%s  guest-resumed=%s  detached=%s\n",
                         response->stubStopped ? "yes" : "no",
                         response->foreignStub ? "yes" : "no",
-                        response->guestResumed ? "yes" : "no");
+                        response->guestResumed ? "yes" : "no",
+                        response->detached ? "yes" : "no");
             printDebugStatus(response->status);
             return 0;
         }

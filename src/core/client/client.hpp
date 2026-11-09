@@ -116,6 +116,15 @@ namespace mpfshost
     [[nodiscard]] std::optional<DebugStepResponse>
     debugStep(const std::filesystem::path& socketPath, const DebugStepQuery& query, std::string& error);
 
+    // Starts one persistent GDB stub owned by this connection and pauses the guest if needed. The returned
+    // attachment lasts until this function returns (the connection closes) or another client runs debug-detach.
+    // `whileAttached` runs after the attach response and before the connection is closed.
+    [[nodiscard]] std::optional<DebugAttachResponse>
+    debugAttach(const std::filesystem::path&                           socketPath,
+                const DebugQuery&                                      query,
+                const std::function<void(const DebugAttachResponse&)>& whileAttached,
+                std::string&                                           error);
+
     // Stops an active GDB stub, including one this host did not start, and reports the resulting status.
     [[nodiscard]] std::optional<DebugDetachResponse>
     debugDetach(const std::filesystem::path& socketPath, const DebugQuery& query, std::string& error);

@@ -281,8 +281,11 @@ namespace mpfshost
                                                                        std::string&            error,
                                                                        bool&                   unavailable) override;
 
+        [[nodiscard]] std::optional<DebugAttachResponse> debugAttach(
+            std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<DebugDetachResponse>
-        debugDetach(bool& busy, std::string& error, bool& unavailable) override;
+             debugDetach(std::uint64_t sessionId, bool& busy, std::string& error, bool& unavailable) override;
+        void debugDetachSession(std::uint64_t sessionId) noexcept override;
 
         [[nodiscard]] std::optional<debug::DebugProcessDtbs> processDtbs(std::uint32_t pid,
                                                                          std::string&  error) override;
