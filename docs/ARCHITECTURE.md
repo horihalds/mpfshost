@@ -12,10 +12,14 @@ unprivileged clients over a Unix socket. Clients never load `vmm.so` and never n
 
  Target | Sources | Links | May use |
 --------|---------|-------|---------|
- `mpfshost_core` (static) | `src/core/**` | `Threads::Threads`, `nlohmann_json::nlohmann_json` (private) | standard library, `nlohmann/json` in `src/core/mcp/` and `src/core/debug/` only |
- `mpfshost_host` (static) | `src/host/**` | `vmm.so`, `leechcore.so`, `mpfshost_core` | `vmmdll.h`, root-only paths |
- `mpfshost` (exe) | `src/main.cpp`, `src/cli/**` | `mpfshost_host` | both |
- `mpfshost_tests` (exe) | `tests/**` | `mpfshost_core`, `Catch2::Catch2` | never `mpfshost_host` |
+ `mpfshost_ipc` (static) | `src/core/ipc/**` | standard library | wire structs and codecs |
+ `mpfshost_util` (static) | `src/core/version.cpp`, `src/core/log/**`, `src/core/util/**` | standard library | helpers used on both sides |
+ `mpfshost_client` (static, installed) | `src/core/client/**` | `mpfshost_ipc`, `mpfshost_util`, `Threads::Threads` | never server, host, Zydis or nlohmann/json |
+ `mpfshost_server` (static) | `src/core/{debug,disasm,target,server,mcp}/**` | `mpfshost_ipc`, `mpfshost_util`, `mpfshost_client`, `nlohmann_json`, `mpfshost_zydis` | standard library |
+ `mpfshost_cli` (static) | `src/cli/**` | `mpfshost_client`, `mpfshost_server` | CLI-only parsing and rendering |
+ `mpfshost_host` (static) | `src/host/**` | `vmm.so`, `leechcore.so`, `mpfshost_server` | `vmmdll.h`, root-only paths |
+ `mpfshost` (exe) | `src/main.cpp` | `mpfshost_host`, `mpfshost_cli` | both |
+ `mpfshost_tests` (exe) | `tests/**` | `mpfshost_server`, `mpfshost_cli`, `Catch2::Catch2` | never `mpfshost_host` |
 
 Rules:
 
@@ -23,11 +27,15 @@ Rules:
 - Raw MemProcFS numbers (pool type, PFN type, module kind, …) travel on the wire as integers. The CLI
   (`src/cli/render.cpp`) renders their names (`poolTypeName`, `pfnTypeName`, `moduleKindName`, …), so `core` stays
   MemProcFS-free.
-- `src/cli/` is part of the executable only. `mpfshost_core` never sees it, and `src/core/` never includes it.
-- `mpfshost_core` is also the installed client library (`libmpfshost_core.a` plus `client.hpp`, `message.hpp`,
-  `frame.hpp`, `version.hpp`). Treat those four headers as public API.
-- `nlohmann/json` is a private, header-only dependency of `mpfshost_core`, used only by `src/core/mcp/`. It must not
-  appear in an installed public header; the MCP headers expose plain strings and structs.
+- `src/cli/` is part of the executable only. `mpfshost_client` and `mpfshost_server` never see it, and `src/core/`
+  never includes it.
+- `mpfshost_client` is the installed client library (`libmpfshost_client.a`, plus `libmpfshost_ipc.a` and
+  `libmpfshost_util.a` for its static dependencies). Its public header is `client.hpp`; `message.hpp`, `frame.hpp` and
+  `version.hpp` supply the value types.
+- `nlohmann/json` and Zydis are private dependencies of `mpfshost_server`, used by MCP and disassembly. Neither may
+  appear in an installed client header or in the client archive.
+- `mpfshost_cli` is the command-line front end and is never installed as a library. It depends on the client library,
+  not the other way around.
 
 ## Runtime object graph
 
@@ -231,16 +239,21 @@ wins). Tests capture output with `log::setSink()`. Never log guest memory conten
 
 ## Client side
 
-- `src/core/client/client.hpp` plus `client_<area>.cpp`: one free function per capability, each taking
-  `(socketPath, <Area>Query, error)` and returning `std::optional<T>`. The split mirrors the server families:
-  `client_{memory,process,maps,system,kernel,vfs,debug}.cpp`. `client_transport.{hpp,cpp}` (internal, not installed) holds
-  the shared connection helpers. Each call opens its own connection (`connectToServer`), binds if needed
-  (`connectAndBind`), and uses `exchange` or `exchangeStreamed`.
-- `ScatterSession` is an RAII wrapper over one connection plus one scatter id (create → prepare → execute → close).
-- `src/core/client/cli_options.{hpp,cpp}` owns `ClientOptions` and `parseClientOptions`, which turns the
-  `--client` half of a command line into that struct and reports every flag and required-option error. It lives in
-  `core` so `tests/cli_options_test.cpp` can exercise it without linking `src/cli/`.
-- `src/cli/run_client.cpp` `runClient` maps `--client <command>` to these functions and renders output with
+- `src/mpfshost/client.hpp` is the installed API: `Client`, `ClientSession`, `Scatter`, `Error`, `Result<T>` and
+  `List<T>`. `src/core/client/client_session.cpp` implements them. `Client` holds an endpoint; `ClientSession` owns
+  one bound connection and exposes every target-scoped capability without a `targetName` argument.
+- `client_transport.{hpp,cpp}` (internal) owns `FileDescriptor`, `connectToServer`, `connectAndBind`, `exchange`,
+  `exchangeStreamed`, `expectResponse`, `request`, the thread-local active-session scope and the last-error-code slot.
+  `ClientSession` makes its connection current on the calling thread, so the internal bodies in
+  `client_{memory,process,maps,system,kernel,vfs,debug,disasm}.cpp` reuse it instead of opening another connection.
+- `client_legacy.hpp` (internal) declares the free-function bodies `(socketPath, <Area>Query, error) ->
+  std::optional<T>` that the CLI, MCP and tests still call. New client surface goes into `client.hpp` and
+  `client_session.cpp`, not into the legacy header.
+- `Scatter` is an RAII wrapper over a shared connection plus one scatter id (create → prepare → execute → close).
+- `src/cli/client_options.{hpp,cpp}` owns `ClientOptions` and `parseClientOptions`, which turns the `--client` half of
+  a command line into that struct and reports every flag and required-option error. It belongs to `mpfshost_cli`;
+  `tests/cli_options_test.cpp` links that target.
+- `src/cli/run_client.cpp` `runClient` maps `--client <command>` to the client functions and renders output with
   `printf`. `src/cli/options.cpp` parses only the server flags and hands the remaining tokens to
   `parseClientOptions`.
 
@@ -248,7 +261,7 @@ wins). Tests capture output with `log::setSink()`. Never log guest memory conten
 
 `mpfshost --mcp` is a second, unprivileged front end in the same binary. It speaks the Model Context Protocol as
 JSON-RPC 2.0, one object per line, over stdin/stdout. It is a **client of the root host**, not a host: every tool
-call goes through `src/core/client/client.hpp` to the Unix socket, so the host's access policy, request deadlines and
+call goes through `src/core/client/client_legacy.hpp` to the Unix socket, so the host's access policy, request deadlines and
 MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never needs root.
 
 - `src/core/mcp/mcp_server.{hpp,cpp}` owns the stream state machine: JSON parsing, protocol-version negotiation
@@ -256,7 +269,7 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
   JSON-RPC errors and `isError` tool results. It takes `std::istream&` and `std::ostream&` so tests drive it
   in-process. stdout carries only JSON-RPC; logs go through `mpfshost::log` to stderr.
 - `src/core/mcp/mcp_tools.{hpp,cpp}` holds the tool catalogue and the argument/result mapping. One tool exists per
-  read capability in `client.hpp`; the write capabilities (`config_set`, `write_memory`, `write_vfs`,
+  read capability in `client_legacy.hpp`; the write capabilities (`config_set`, `write_memory`, `write_vfs`,
   `write_physical_memory`, `debug_stop`, `debug_continue`) are exposed and annotated destructive. The host's
   `--allow-vfs-write` check is still the final authority for `write_vfs`.
 - Argument names and limits follow the CLI flags and `docs/PROTOCOL.md`. Results convert 64-bit values to hex
@@ -283,14 +296,16 @@ MemProcFS ownership rules still apply. MCP mode never loads `vmm.so` and never n
 - `tests/mcp_protocol_test.cpp` drives `mcp::McpServer` over in-memory streams for version negotiation, ordering,
   JSON-RPC errors, EOF and tool-list gating. `tests/mcp_tools_test.cpp` runs the same server against a real `Server`
   with `FakeBackend` for representative tools, host errors, an unreachable socket, `CapabilityUnavailable` and the
-  write-tool switch. The tool catalogue test asserts that every read capability in `client.hpp` has a tool.
+  write-tool switch. The tool catalogue test asserts that every read capability in `client_legacy.hpp` has a tool.
 - `tests/main.cpp` refuses to run as root.
 - Live behaviour (anything in `src/host/`) is verified only by the user against an installed host.
 
 ## Install layout
 
 `cmake --install` puts `mpfshost`, `info.db`, `MemProcFS/*.so` and empty `Symbols/` and `plugins/` in `bindir`
-(MemProcFS resolves them relative to the executable; the binary has `RUNPATH=$ORIGIN`). It also installs the client
-headers, `libmpfshost_core.a`, `mpfshost.pc`, and `mpfshost.service` under `libdir/systemd/system`. `README.md`, the
-`docs/*.md` files and the client examples (README, `CMakeLists.txt` and sources) go under `docdir`, with the examples
-in `docdir/examples`. The build tree mirrors the runtime part through a post-build step.
+(MemProcFS resolves them relative to the executable; the binary has `RUNPATH=$ORIGIN`). It also installs
+`include/mpfshost/client.hpp` and the `core/` value headers, `libmpfshost_client.a` plus its `ipc` and `util` static
+dependencies, the CMake package files (`find_package(mpfshost CONFIG)`, target `mpfshost::client`), `mpfshost.pc`, and
+`mpfshost.service` under `libdir/systemd/system`. `README.md`, the `docs/*.md` files and the client examples (README,
+`CMakeLists.txt` and sources) go under `docdir`, with the examples in `docdir/examples`. The build tree mirrors the
+runtime part through a post-build step.

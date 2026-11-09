@@ -5,8 +5,45 @@ machines. Reading a guest's memory through its QEMU process requires root, so th
 MemProcFS handles and serves the VM's memory and inspection capabilities to ordinary, non-privileged client programs
 over a Unix domain socket. In short: **one privileged server, many unprivileged clients.**
 
-The same binary contains the host and a command-line client (`--client`). An installed tree also ships a static
-client library for your own programs.
+The client library is the primary interface. The same binary also contains the host and a command-line client
+(`--client`); the CLI and MCP mode are convenience front ends built on the same library.
+
+### Using the client library
+
+```cpp
+#include <mpfshost/client.hpp>
+
+int main()
+{
+    mpfshost::Client client;                       // /run/mpfshost.sock
+    auto             session = client.bind("win11");
+    if (!session)
+    {
+        std::cerr << mpfshost::errorCodeName(session.error().code) << ": " << session.error().message << '\n';
+        return 1;
+    }
+
+    auto processes = session->processes({.nameFilter = "notepad"});
+    if (!processes)
+    {
+        std::cerr << processes.error().message << '\n';
+        return 1;
+    }
+    for (const auto& process : *processes)
+    {
+        std::cout << process.pid << ' ' << process.name << '\n';
+    }
+}
+```
+
+```sh
+c++ -std=c++23 client.cpp $(pkg-config --cflags --libs mpfshost) -o client
+# or with CMake: find_package(mpfshost CONFIG REQUIRED); target_link_libraries(app PRIVATE mpfshost::client)
+```
+
+The library has no stable API or ABI. Build your client with the same C++23 toolchain and standard library as the
+host, and deploy host and client together. See [`docs/CLIENT_API.md`](docs/CLIENT_API.md) for the object model,
+error handling, threading and streaming rules.
 
 - Wire format: [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Internals: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
@@ -60,8 +97,10 @@ sudo cmake --install build
  `<prefix>/bin/mpfshost` | Host and client binary (`RUNPATH=$ORIGIN`). |
  `<prefix>/bin/*.so`, `<prefix>/bin/info.db` | MemProcFS runtime files, next to the executable. |
  `<prefix>/bin/Symbols/`, `<prefix>/bin/plugins/` | Empty directories MemProcFS expects: PDB cache and plugin path. |
- `<prefix>/include/mpfshost/core/...` | Client headers (`client.hpp`, `message.hpp`, `frame.hpp`, `version.hpp`). |
- `<prefix>/lib*/libmpfshost_core.a` | Client static library. |
+ `<prefix>/include/mpfshost/client.hpp` | Public client API. |
+ `<prefix>/include/mpfshost/core/...` | Protocol types (`message.hpp`, `frame.hpp`, `version.hpp`). |
+ `<prefix>/lib*/libmpfshost_client.a` | Client static library (plus `libmpfshost_ipc.a` and `libmpfshost_util.a`). |
+ `<prefix>/lib*/cmake/mpfshost/` | CMake package config; target `mpfshost::client`. |
  `<prefix>/lib*/pkgconfig/mpfshost.pc` | pkg-config file. |
  `<prefix>/lib*/systemd/system/mpfshost.service` | systemd unit. |
  `<prefix>/share/doc/mpfshost/README.md` | This document. |
@@ -387,26 +426,6 @@ Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`,
  `write_memory` | **Write:** write process virtual memory. |
  `write_vfs` | **Write:** write a virtual file (host `--allow-vfs-write` also required). |
  `write_physical_memory` | **Write:** write guest physical memory. |
-
-### Using the client library
-
-```cpp
-#include <core/client/client.hpp>
-
-std::string error;
-const auto targets = mpfshost::listTargets("/run/mpfshost.sock", error);
-```
-
-```sh
-g++ -std=c++23 myclient.cpp $(pkg-config --cflags --libs mpfshost) -o myclient
-# or: -I<prefix>/include/mpfshost -L<prefix>/lib* -lmpfshost_core
-```
-
-The library has no stable ABI. Build your client with the same C++23 toolchain and standard library as the host.
-
-Runnable programs covering target discovery, process listing, virtual memory reads, scatter reads and VFS listing
-live in [`examples/`](examples/README.md). They are built by default (`-DMPFSHOST_BUILD_EXAMPLES=OFF` disables them)
-and land in `build/examples/`.
 
 ### How targets are discovered
 

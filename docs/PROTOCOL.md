@@ -568,6 +568,9 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
  20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest`, `DebugBacktraceRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, a step/backtrace selects an unknown thread, or a software user-mode breakpoint cannot find a vCPU in the target process |
+ 21 | `ConnectionFailed` | client-side only: connect, write or read failed |
+ 22 | `ProtocolError` | client-side only: a malformed or mismatched response |
+ 23 | `InvalidArgument` | client-side only: local argument validation failed |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.
@@ -628,7 +631,7 @@ Do every step; a missed step compiles but fails at runtime.
    For a new descriptor, add `write*`/`read*` helpers in `message_codec.hpp` **and** a matching `*EncodedSize` in
    `src/core/server/map_batching.hpp`. These three must agree field for field.
 4. `src/core/server/<area>_provider.hpp`: add an abstract provider interface (pure filter helpers go in a
-   `<area>_provider.cpp` and into the `mpfshost_core` source list in `CMakeLists.txt`).
+   `<area>_provider.cpp` and into the `mpfshost_server` source list in `CMakeLists.txt`).
 5. `session.hpp` / `session_<area>.cpp`: declare the handler and implement it in the family file matching the
    message family; add the `case` to `Session::dispatch` in `session.cpp`.
    Follow the order bound → decode → validate → `dynamic_cast` provider → call → stream or send.
