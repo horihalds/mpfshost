@@ -823,7 +823,9 @@ namespace mpfshost::debug
 
     bool RspClient::continueExecution(std::chrono::milliseconds timeout, std::string& error)
     {
-        const auto command = _supported.find("vCont;c") != std::string::npos ? "vCont;c" : "c";
+        // QEMU advertises `vContSupported+` rather than listing each vCont action. Plain `c` is not enough for
+        // its all-stop gdbstub to run every vCPU, so prefer vCont whenever the stub mentions it.
+        const auto command = _supported.find("vCont") != std::string::npos ? "vCont;c" : "c";
         return writePacketOnly(command, timeout, error);
     }
 

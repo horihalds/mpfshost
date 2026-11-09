@@ -131,6 +131,28 @@ TEST_CASE("RSP negotiates qSupported and enters no-ack mode when offered", "[cor
     REQUIRE(packets[0] == reference);
 }
 
+TEST_CASE("RSP prefers vCont when the stub advertises it", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("PacketSize=20020;vContSupported+")};
+    std::string error;
+    REQUIRE(rsp.client->negotiate(100ms, error));
+    REQUIRE(rsp.client->continueExecution(100ms, error));
+    const auto packets = packetWrites(*rsp.raw);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(packets[1].find("$vCont;c#") == 0);
+}
+
+TEST_CASE("RSP falls back to c when vCont is not advertised", "[core][debug][rsp]")
+{
+    FakeRsp     rsp {acked("PacketSize=1000;qXfer:features:read+")};
+    std::string error;
+    REQUIRE(rsp.client->negotiate(100ms, error));
+    REQUIRE(rsp.client->continueExecution(100ms, error));
+    const auto packets = packetWrites(*rsp.raw);
+    REQUIRE(packets.size() == 2);
+    REQUIRE(packets[1].find("$c#") == 0);
+}
+
 TEST_CASE("RSP stays in ack mode when no-ack is not advertised", "[core][debug][rsp]")
 {
     FakeRsp     rsp {acked("PacketSize=1000;qXfer:features:read+")};
