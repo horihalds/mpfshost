@@ -151,6 +151,21 @@ A killed host or a crash cannot run that teardown. The guest may stay paused, an
 this host process was the one that paused it, which is never true after a restart; run `debug-continue` when the
 status still reports a stopped guest.
 
+### Shutdown and detach validation record
+
+Run on 2026-11-09 against the `windows` target (12 vCPUs) with `guest-probe.exe` pid 2780:
+
+- `debug-stop` left the guest `paused` with `host-paused=yes`. `systemctl restart mpfshost` (SIGTERM) left it
+  `running` with `stub-active=no`, `host-paused=no`, so the shutdown teardown resumed the pause this host made.
+- A 300-second `debug-watch` on `GuestProbeMarker` (`0x7ff7850e1480`, width 1) armed and waited. A second client's
+  `debug-status` returned `Busy`, confirming the watch held the controller.
+- `systemctl kill --signal=SIGKILL mpfshost` during the watch made the watch client end with
+  `server closed the connection`. After the automatic restart, `debug-status` reported `stub-active=yes`,
+  `stub-owned=no`, `foreign-stub=yes`, while the guest was still `running`.
+- `debug-detach` reported `stub-stopped=yes`, `foreign-stub=yes`, `guest-resumed=no`; the next status reported
+  `stub-active=no`. `debug-continue` was a no-op because the guest was already running.
+- `debug-detach` with no stub reported `stub-stopped=no` and changed nothing.
+
 ## Stub probe record
 
 Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs):
