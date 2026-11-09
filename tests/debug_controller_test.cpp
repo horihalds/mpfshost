@@ -4,6 +4,7 @@
 #include "core/debug/debug_inspector.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -167,11 +169,35 @@ namespace
     public:
         struct StopReply
         {
-            std::string   thread;
-            std::uint64_t rip {};
-            std::uint64_t rsp {};
-            std::uint64_t cr3 {};
+            StopReply(std::string                  stopThread,
+                      std::uint64_t                stopRip,
+                      std::uint64_t                stopRsp,
+                      std::uint64_t                stopCr3,
+                      std::optional<std::uint64_t> stopWatch = std::nullopt)
+                : thread {std::move(stopThread)}, rip {stopRip}, rsp {stopRsp}, cr3 {stopCr3}, watch {stopWatch}
+            {
+            }
+
+            std::string                  thread;
+            std::uint64_t                rip {};
+            std::uint64_t                rsp {};
+            std::uint64_t                cr3 {};
+            std::optional<std::uint64_t> watch;
         };
+
+        static std::string stopPacket(const StopReply& stop)
+        {
+            std::string packet = "T05thread:" + stop.thread + ";";
+            if (stop.watch.has_value())
+            {
+                std::array<char, 20> buffer {};
+                const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), *stop.watch, 16);
+                packet += "watch:";
+                packet.append(buffer.data(), result.ptr);
+                packet.push_back(';');
+            }
+            return packet;
+        }
 
         std::string              pending;
         std::string              registersXml;
@@ -318,7 +344,7 @@ namespace
                     currentRip = stop.rip;
                     currentRsp = stop.rsp;
                     currentCr3 = stop.cr3;
-                    quoteAck("T05thread:" + stop.thread + ";");
+                    quoteAck(stopPacket(stop));
                 }
             }
             else if (body.starts_with("vCont;s") || body == "s")
@@ -331,7 +357,7 @@ namespace
                     currentRip = stop.rip;
                     currentRsp = stop.rsp;
                     currentCr3 = stop.cr3;
-                    quoteAck("T05thread:" + stop.thread + ";");
+                    quoteAck(stopPacket(stop));
                 }
             }
             else if (body.starts_with("p"))
@@ -771,6 +797,102 @@ TEST_CASE("a watchpoint accepts a CR3 mismatch when the target memory changed", 
     REQUIRE(hits[0].oldValue == 0xAA);
     REQUIRE(hits[0].newValue == 0xBB);
     REQUIRE(rsp->continues == 1);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a watchpoint accepts its quoted stop address without a CR3 match", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0xfffff800aa6ac7cfull, 0x1234, 0x999123, 0x5000});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 5000},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Completed);
+    REQUIRE(end->hitCount == 1);
+    REQUIRE(end->skippedCount == 0);
+    REQUIRE(hits.size() == 1);
+    REQUIRE(hits[0].oldValue == 0xAA);
+    REQUIRE(hits[0].newValue == 0xBB);
+    REQUIRE(rsp->continues == 1);
+    REQUIRE(qmp->running);
+}
+
+TEST_CASE("a watchpoint skips a stop for another address", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123, 0x6000});
+
+    FakeInspector inspector;
+    inspector.values = {0xAA, 0xBB};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    std::vector<mpfshost::DebugWatchData> hits;
+    bool                                  busy = false;
+    std::string                           error;
+    const auto                            end = controller.watch(
+        {42, 0x5000, 2, mpfshost::DebugWatchAccess::Write, 1, 100},
+        [&hits](const mpfshost::DebugWatchData& hit)
+        {
+            hits.push_back(hit);
+            return true;
+        },
+        {},
+        busy,
+        error);
+    REQUIRE(end.has_value());
+    REQUIRE(end->status == mpfshost::DebugWatchStatus::Timeout);
+    REQUIRE(end->hitCount == 0);
+    REQUIRE(end->skippedCount == 1);
+    REQUIRE(hits.empty());
+    REQUIRE(rsp->continues == 2);
     REQUIRE(qmp->running);
 }
 

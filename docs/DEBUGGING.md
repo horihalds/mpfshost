@@ -144,6 +144,13 @@ Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs)
 - The `g` packet is 608 bytes of hex. The relevant offsets are `rip` 128, `cr0` 188, `cr3` 204, `cr4` 212 and
   `cr8` 220. The 8 vCPUs appeared as threads `p01.01` to `p01.08`.
 
+## Watch stop attribution
+
+QEMU names the watched address in a write-watchpoint stop, for example
+`T05thread:p01.01;watch:1d51bce0000;`. The host accepts a hit when that address equals the requested address and
+the watched value changed. It falls back to the older CR3-or-module rule only when the stub omits the field. The
+field is stronger evidence than the process DTB, which can be a shadow page table that MemProcFS does not report.
+
 ## Manual check: write watchpoint
 
 This procedure needs a live Windows guest and root. It was run against `windows` on 2026-11-09; the result is in
@@ -311,19 +318,23 @@ build:
 - `debug-status`, `debug-stop`, `debug-registers`, `debug-step` and `debug-continue` behaved normally.
 - `debug-watch` on the trigger byte (width 1, 10 s) and on `GuestProbeCounter` (width 8, 15 s) armed and trapped at
   the 500 ms heartbeat rate, but every stop was rejected: `hits=0 skipped=20` and `hits=0 skipped=29`.
-- `debug-break --kind hardware` on `GuestProbeMarker` timed out with `skipped=4705`, and the heartbeat counter barely
-  advanced during the run.
-- A second run used the updated fixture (pid 248) with the heartbeat pinned to vCPU 0. A `PROBE-BREAKPOINT` stub in
-  the probe's RX page timed out with `skipped=3295`; a hardware breakpoint on `ntdll!RtlEnterCriticalSection` timed
-  out with `skipped=1612`; and `debug-watch` on the trigger still reported `hits=0 skipped=20`.
+- `debug-break --kind hardware` on `GuestProbeMarker` timed out with `skipped=4705` in the first run, and the
+  heartbeat counter barely advanced during the run.
+- A second run used the updated fixture (pid 248) with the heartbeat pinned to vCPU 0. The RX-page
+  `PROBE-BREAKPOINT` stub timed out with `skipped=3295`, and a hardware breakpoint on
+  `ntdll!RtlEnterCriticalSection` timed out with `skipped=1612`.
 - `module-at` rejects the RX stub because it is not in a loaded module, so the breakpoint matcher cannot accept it
-  even though the stop PC matches. The module marker and the ntdll user address are also rejected, so the repeated
-  stops are a host-side user-mode breakpoint problem, not a probe problem. The guest is effectively starved while
-  the host rejects each stop.
+  even though the stop PC matches. A later run on the module marker itself, with a fresh module base, hit
+  immediately on vCPU 0 with `skipped=0` and resolved `GuestProbeMarker+0x0`. The first marker timeout was therefore
+  a shared-address stop storm, not a failure of the module breakpoint path.
 - `debug-break --kind software` on `GuestProbeMarker` was rejected with `E22`, as the `Z0` address-space limitation
   predicts.
 - A control hardware breakpoint on `ntoskrnl.exe!HalProcessorIdle+0xf` hit immediately with `skipped=0`, so the
   breakpoint path itself works for a kernel address that matches the process DTB.
+- A raw RSP capture of the rejected watchpoint stop showed
+  `T05thread:p01.01;watch:1d51bce0000;`, `rip` inside `GuestProbeHeartbeat`, `cr3=0x207588000` equal to the process
+  DTB, and the new trigger value readable through MemProcFS. The host now accepts on that watch address instead of
+  relying on the CR3/module guess.
 
 ## Checks still owed to a live guest
 
@@ -332,13 +343,12 @@ build:
   QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
-- Diagnose the user-mode hardware breakpoint path. A user address produces a stream of rejected stops that starves
-  the guest, while a kernel address hits immediately. The rejected stops match the requested PC, so the CR3/module
-  acceptance check or the stop context is the remaining suspect.
-- Diagnose `debug-watch` rejecting every probe heartbeat stop (`skipped` equal to the trap count). The trigger value
-  visibly changes between reads and the store is inside `guest-probe.exe`, so the same CR3/module or value-read
-  logic is the likely cause.
-- Re-run the probe watch and breakpoint recipes after those host fixes.
+- Re-run the watchpoint recipe against a host built with the `watch:` stop-address fix. The raw capture proved the
+  stop is valid; the live accept path has not been exercised with the new binary yet.
+- Re-run the hardware breakpoint recipe on the module marker after a fresh probe start. The marker works when its
+  module base is unique; a shared base still produces a stop storm, so restart the probe if that happens.
+- Characterize whether a hardware breakpoint on a hot shared user address (such as `ntdll!RtlEnterCriticalSection`)
+  can ever be attributed to the target process. It traps in every process that maps the address.
 
 Record the remaining answers here after the next live run.
 

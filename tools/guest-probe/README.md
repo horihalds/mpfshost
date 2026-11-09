@@ -152,10 +152,11 @@ breakpoint target:
     --kind hardware --timeout 30
 ```
 
-The guest must be running before the breakpoint is armed. On the current live host, user-mode hardware breakpoints
-are still an open host issue: the stub reports repeated stops that the controller rejects. See the validation
-record in [`docs/DEBUGGING.md`](../../docs/DEBUGGING.md) before relying on this recipe. For single-step checks, use
-the same paused-guest sequence
+The guest must be running before the breakpoint is armed. The marker address is inside the probe module; if the
+module base collides with a hot address in another process, the hardware breakpoint can report a storm of stops.
+Restart the probe to get a new ASLR base and try again. The RX region is intentionally not a breakpoint target
+because the host requires a breakpoint address that belongs to a loaded module. For single-step checks, use the
+same paused-guest sequence
 as any other process:
 
 ```sh

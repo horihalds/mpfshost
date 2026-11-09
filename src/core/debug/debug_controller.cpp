@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -106,6 +108,36 @@ namespace mpfshost::debug
             const auto end   = packet.find(';', start);
             return std::string {
                 packet.substr(start, end == std::string_view::npos ? packet.size() - start : end - start)};
+        }
+
+        // QEMU names the watched linear address in a write-watchpoint stop. It is the only positive evidence
+        // that the stop belongs to the armed watchpoint, independent of the process DTB and module maps.
+        std::optional<std::uint64_t> stopWatchAddress(std::string_view packet)
+        {
+            if (packet.empty() || packet.front() != 'T')
+            {
+                return std::nullopt;
+            }
+            const auto field = packet.find("watch:");
+            if (field == std::string_view::npos)
+            {
+                return std::nullopt;
+            }
+            const auto start = field + 6;
+            const auto end   = packet.find(';', start);
+            const auto text = packet.substr(start, end == std::string_view::npos ? packet.size() - start : end - start);
+            if (text.empty())
+            {
+                return std::nullopt;
+            }
+
+            std::uint64_t address = 0;
+            const auto    result  = std::from_chars(text.data(), text.data() + text.size(), address, 16);
+            if (result.ec != std::errc {} || result.ptr != text.data() + text.size())
+            {
+                return std::nullopt;
+            }
+            return address;
         }
 
         bool readNamedRegister(RspClient&                  rsp,
@@ -987,25 +1019,40 @@ namespace mpfshost::debug
                 break;
             }
 
-            // A user-mode CR3 may be a shadow page table that MemProcFS cannot report for the process,
-            // so a CR3 mismatch alone is not proof that the hit belongs to someone else. Require both a
-            // value change and a RIP inside one of the target's modules; that rejects stale or
-            // unrelated stops whose registers only show a kernel idle loop.
-            const auto hitDtb = canonicalDtb(cr3);
-            if (hitDtb != canonicalDtb(dtbs->dtb) && hitDtb != canonicalDtb(dtbs->dtbUser))
+            // A QEMU stop for a write watchpoint names the watched linear address. Accept it when that
+            // address and the value both confirm the hit; the process DTB and module maps are not reliable
+            // while a user-mode stop is in flight. Older or different stubs may omit the field, so keep the
+            // CR3/module fallback for them. A user-mode CR3 may be a shadow page table that MemProcFS cannot
+            // report for the process, so a CR3 mismatch alone is not proof that the hit belongs to someone
+            // else.
+            const auto stopAddress = stopWatchAddress(stopPacket);
+            bool       accept      = false;
+            if (stopAddress.has_value())
             {
-                std::string moduleError;
-                if (newValue == lastValue || !_inspector->moduleForAddress(request.pid, rip, moduleError))
+                accept = *stopAddress == request.address && newValue != lastValue;
+            }
+            else
+            {
+                const auto hitDtb = canonicalDtb(cr3);
+                accept            = hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser);
+                if (!accept)
                 {
-                    ++end.skippedCount;
-                    if (!rsp->continueExecution(kRspTimeout, error))
-                    {
-                        end.status = DebugWatchStatus::Error;
-                        end.error  = error;
-                        break;
-                    }
-                    continue;
+                    std::string moduleError;
+                    accept = newValue != lastValue
+                          && _inspector->moduleForAddress(request.pid, rip, moduleError).has_value();
                 }
+            }
+
+            if (!accept)
+            {
+                ++end.skippedCount;
+                if (!rsp->continueExecution(kRspTimeout, error))
+                {
+                    end.status = DebugWatchStatus::Error;
+                    end.error  = error;
+                    break;
+                }
+                continue;
             }
 
             DebugWatchData hit;
