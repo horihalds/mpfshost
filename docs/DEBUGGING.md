@@ -335,6 +335,13 @@ build:
   `T05thread:p01.01;watch:1d51bce0000;`, `rip` inside `GuestProbeHeartbeat`, `cr3=0x207588000` equal to the process
   DTB, and the new trigger value readable through MemProcFS. The host now accepts on that watch address instead of
   relying on the CR3/module guess.
+- After installing the rebuilt host, `debug-watch` on the current probe (pid 2780, trigger `0x2635ae10000`, width 1,
+  `--max-hits 2`) completed with two hits and `skipped=0`. Each hit reported `rip=0x7ff7850e14a5`,
+  `cr3=0x366454000`, `module=guest-probe.exe+0x14a5`, `export=GuestProbeHeartbeat+0x1d`, and the decoded store
+  `mov byte [rdx], al`; old/new toggled `0x5a`/`0xa5`.
+- `debug-break --kind hardware` on `GuestProbeMarker` (`0x7ff7850e1480`) hit on vCPU 0/thread `p01.01` with
+  `rip` equal to the requested address, `cr3=0x366454000`, `module=guest-probe.exe+0x1480`,
+  `export=GuestProbeMarker+0x0`, and `skipped=0`.
 
 ## Checks still owed to a live guest
 
@@ -343,12 +350,9 @@ build:
   QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
-- Re-run the watchpoint recipe against a host built with the `watch:` stop-address fix. The raw capture proved the
-  stop is valid; the live accept path has not been exercised with the new binary yet.
-- Re-run the hardware breakpoint recipe on the module marker after a fresh probe start. The marker works when its
-  module base is unique; a shared base still produces a stop storm, so restart the probe if that happens.
 - Characterize whether a hardware breakpoint on a hot shared user address (such as `ntdll!RtlEnterCriticalSection`)
-  can ever be attributed to the target process. It traps in every process that maps the address.
+  can ever be attributed to the target process. It traps in every process that maps the address; a fresh probe
+  restart gives the module marker a new ASLR base if a shared base causes a stop storm.
 
 Record the remaining answers here after the next live run.
 
