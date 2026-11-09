@@ -520,6 +520,11 @@ Run on 2026-11-09 against the `windows` target (12 vCPUs, QEMU 10.2.2), with `gu
   with the guest stopped. Teardown now falls back to the bounded five-second QMP timeout when the request budget is
   already exhausted; `an expired request budget still tears down a timed-out breakpoint` covers it. `debug-detach`
   followed by `debug-continue` recovered the guest after the original failure.
+- After the deadline fix was installed, the same 30 s hardware run returned at the 30 s mark with
+  `timeout skipped=10406`; the next `debug-status` reported `running`, `stub-active=no`, `stub-owned=no`.
+- A software breakpoint on the same user-mode address answered
+  `no vCPU is executing in the target process; a software breakpoint on a user-mode address cannot be armed from
+  another address space (use a hardware breakpoint instead)`, and the guest stayed `running` with no stub.
 - The run did not observe the shadow-CR3/module `unverified` path live; it is covered by
   `a shadow-CR3 hardware hit in a target module is accepted and flagged` and the wait equivalent.
 
