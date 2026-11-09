@@ -5,6 +5,7 @@
 #include "core/server/backend.hpp"
 #include "core/server/config_provider.hpp"
 #include "core/server/debug_provider.hpp"
+#include "core/server/disasm_provider.hpp"
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
@@ -410,6 +411,14 @@ namespace mpfshost::testing
         std::optional<VfsWriteRequest>                          lastWriteRequest;
     };
 
+    struct FakeDisasmState
+    {
+        std::optional<DisassembleRequest> lastRequest;
+        DisassembleResponse               response;
+        std::string                       failure;
+        std::uint32_t                     calls {};
+    };
+
     struct FakeDebugState
     {
         DebugStatus                       status;
@@ -430,11 +439,6 @@ namespace mpfshost::testing
         std::string                    threadsFailure;
         bool                           threadsInvalidState {};
         std::uint32_t                  threadsCalls {};
-
-        std::optional<DebugDisassembleRequest> lastDisassembleRequest;
-        DebugDisassembleResponse               disassembleResponse;
-        std::string                            disassembleFailure;
-        std::uint32_t                          disassembleCalls {};
 
         std::optional<DebugBacktraceRequest> lastBacktraceRequest;
         DebugBacktraceResponse               backtraceResponse;
@@ -668,7 +672,8 @@ namespace mpfshost::testing
                        public PoolProvider,
                        public PfnProvider,
                        public ConfigProvider,
-                       public DebugProvider
+                       public DebugProvider,
+                       public DisasmProvider
     {
     public:
         FakeHandle(std::string                              name,
@@ -703,7 +708,8 @@ namespace mpfshost::testing
                    std::shared_ptr<FakePoolState>           poolState,
                    std::shared_ptr<FakePfnState>            pfnState,
                    std::shared_ptr<FakeConfigState>         configState,
-                   std::shared_ptr<FakeDebugState>          debugState)
+                   std::shared_ptr<FakeDebugState>          debugState,
+                   std::shared_ptr<FakeDisasmState>         disasmState)
             : _name {std::move(name)}, _processState {std::move(processState)},
               _processInfoState {std::move(processInfoState)}, _moduleLookupState {std::move(moduleLookupState)},
               _pdbState {std::move(pdbState)}, _memoryState {std::move(memoryState)},
@@ -719,7 +725,8 @@ namespace mpfshost::testing
               _heapAllocState {std::move(heapAllocState)}, _kernelDriverState {std::move(kernelDriverState)},
               _kernelDeviceState {std::move(kernelDeviceState)}, _kernelObjectState {std::move(kernelObjectState)},
               _pteState {std::move(pteState)}, _poolState {std::move(poolState)}, _pfnState {std::move(pfnState)},
-              _configState {std::move(configState)}, _debugState {std::move(debugState)}
+              _configState {std::move(configState)}, _debugState {std::move(debugState)},
+              _disasmState {std::move(disasmState)}
         {
         }
 
@@ -1741,17 +1748,17 @@ namespace mpfshost::testing
             return _debugState->threads;
         }
 
-        [[nodiscard]] std::optional<DebugDisassembleResponse> debugDisassemble(const DebugDisassembleRequest& request,
-                                                                               std::string& error) override
+        [[nodiscard]] std::optional<DisassembleResponse> disassemble(const DisassembleRequest& request,
+                                                                     std::string&              error) override
         {
-            ++_debugState->disassembleCalls;
-            _debugState->lastDisassembleRequest = request;
-            if (!_debugState->disassembleFailure.empty())
+            ++_disasmState->calls;
+            _disasmState->lastRequest = request;
+            if (!_disasmState->failure.empty())
             {
-                error = _debugState->disassembleFailure;
+                error = _disasmState->failure;
                 return std::nullopt;
             }
-            return _debugState->disassembleResponse;
+            return _disasmState->response;
         }
 
         [[nodiscard]] std::optional<DebugBacktraceResponse> debugBacktrace(const DebugBacktraceRequest& request,
@@ -2096,6 +2103,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePfnState>            _pfnState;
         std::shared_ptr<FakeConfigState>         _configState;
         std::shared_ptr<FakeDebugState>          _debugState;
+        std::shared_ptr<FakeDisasmState>         _disasmState;
     };
 
     class BareHandle : public VmHandle
@@ -2606,14 +2614,19 @@ namespace mpfshost::testing
             _debugState->threadsInvalidState = invalidState;
         }
 
-        void setDebugDisassemble(DebugDisassembleResponse response)
+        [[nodiscard]] std::shared_ptr<FakeDisasmState> disasmState() const
         {
-            _debugState->disassembleResponse = std::move(response);
+            return _disasmState;
         }
 
-        void failDebugDisassembleWith(std::string message)
+        void setDisassemble(DisassembleResponse response)
         {
-            _debugState->disassembleFailure = std::move(message);
+            _disasmState->response = std::move(response);
+        }
+
+        void failDisassembleWith(std::string message)
+        {
+            _disasmState->failure = std::move(message);
         }
 
         void setDebugBacktrace(DebugBacktraceResponse response)
@@ -2797,7 +2810,8 @@ namespace mpfshost::testing
                                                       _poolState,
                                                       _pfnState,
                                                       _configState,
-                                                      _debugState);
+                                                      _debugState,
+                                                      _disasmState);
             }
             _handles.push_back(handle);
             return handle;
@@ -2861,6 +2875,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePfnState>            _pfnState {std::make_shared<FakePfnState>()};
         std::shared_ptr<FakeConfigState>         _configState {std::make_shared<FakeConfigState>()};
         std::shared_ptr<FakeDebugState>          _debugState {std::make_shared<FakeDebugState>()};
+        std::shared_ptr<FakeDisasmState>         _disasmState {std::make_shared<FakeDisasmState>()};
     };
 
     // Minimal inner backend for the handle cache: counts acquisitions, can hold them inside acquire() and can be

@@ -243,8 +243,8 @@ namespace mpfshost
         case MessageType::DebugThreadsRequest:
             handleDebugThreads(requestId, payload);
             return;
-        case MessageType::DebugDisassembleRequest:
-            handleDebugDisassemble(requestId, payload);
+        case MessageType::DisassembleRequest:
+            handleDisassemble(requestId, payload);
             return;
         case MessageType::DebugBacktraceRequest:
             handleDebugBacktrace(requestId, payload);
@@ -441,7 +441,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugControlRequest),
             static_cast<std::uint16_t>(MessageType::DebugRegistersRequest),
             static_cast<std::uint16_t>(MessageType::DebugThreadsRequest),
-            static_cast<std::uint16_t>(MessageType::DebugDisassembleRequest),
+            static_cast<std::uint16_t>(MessageType::DisassembleRequest),
             static_cast<std::uint16_t>(MessageType::DebugBacktraceRequest),
             static_cast<std::uint16_t>(MessageType::DebugWatchRequest),
             static_cast<std::uint16_t>(MessageType::DebugBreakpointRequest),

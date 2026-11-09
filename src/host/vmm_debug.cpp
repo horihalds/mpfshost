@@ -51,12 +51,6 @@ namespace mpfshost
         return _debug.threads(request, invalidState, busy, error, unavailable);
     }
 
-    std::optional<DebugDisassembleResponse> VmmHandle::debugDisassemble(const DebugDisassembleRequest& request,
-                                                                        std::string&                   error)
-    {
-        return _debug.disassemble(request, error);
-    }
-
     std::optional<DebugBacktraceResponse> VmmHandle::debugBacktrace(
         const DebugBacktraceRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
     {

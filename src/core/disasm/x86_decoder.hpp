@@ -1,5 +1,5 @@
-#ifndef MPFSHOST_CORE_DEBUG_X86_DECODER_HPP
-#define MPFSHOST_CORE_DEBUG_X86_DECODER_HPP
+#ifndef MPFSHOST_CORE_DISASM_X86_DECODER_HPP
+#define MPFSHOST_CORE_DISASM_X86_DECODER_HPP
 
 #pragma once
 
@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace mpfshost::debug
+namespace mpfshost::disasm
 {
     inline constexpr std::size_t kMaxDisassemblyInstructions = 128;
     inline constexpr std::size_t kMaxDisassemblyBytes        = kMaxDisassemblyInstructions * 15;
@@ -41,6 +41,6 @@ namespace mpfshost::debug
     // instruction in `bytesBefore` and returns it only when that instruction is a plain memory write. The
     // decoder is intentionally small; nullopt means "do not guess", not "there was no write".
     [[nodiscard]] std::optional<StoreInstruction> decodeStoreBefore(std::span<const std::byte> bytesBefore);
-} // namespace mpfshost::debug
+} // namespace mpfshost::disasm
 
-#endif // MPFSHOST_CORE_DEBUG_X86_DECODER_HPP
+#endif // MPFSHOST_CORE_DISASM_X86_DECODER_HPP

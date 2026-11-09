@@ -67,7 +67,7 @@ namespace mpfshost
                 || command == "debug-attach" || command == "debug-detach" || command == "debug-arm-break"
                 || command == "debug-arm-watch" || command == "debug-remove-break" || command == "debug-remove-watch"
                 || command == "debug-breakpoints" || command == "debug-watchpoints" || command == "debug-wait"
-                || command == "debug-resume" || command == "debug-threads" || command == "debug-disassemble"
+                || command == "debug-resume" || command == "debug-threads" || command == "disassemble"
                 || command == "debug-backtrace";
         }
 
@@ -111,15 +111,14 @@ namespace mpfshost
                 error = "--thread and --vcpu cannot be combined";
                 return false;
             }
-            if (command != "debug-disassemble" && options.countSet)
+            if (command != "disassemble" && options.countSet)
             {
-                error = "--count is only valid for --client debug-disassemble";
+                error = "--count is only valid for --client disassemble";
                 return false;
             }
-            if (command == "debug-disassemble"
-                && (options.count == 0 || options.count > kMaxDebugDisassembleInstructions))
+            if (command == "disassemble" && (options.count == 0 || options.count > kMaxDisassembleInstructions))
             {
-                error = "--count must be between 1 and " + std::to_string(kMaxDebugDisassembleInstructions);
+                error = "--count must be between 1 and " + std::to_string(kMaxDisassembleInstructions);
                 return false;
             }
             if (command != "debug-backtrace" && options.maxFramesSet)
@@ -223,11 +222,11 @@ namespace mpfshost
                     return false;
                 }
             }
-            else if (command == "debug-disassemble")
+            else if (command == "disassemble")
             {
                 if (options.pid == 0 || !options.addressSet)
                 {
-                    error = "--client debug-disassemble needs --pid and --address";
+                    error = "--client disassemble needs --pid and --address";
                     return false;
                 }
             }

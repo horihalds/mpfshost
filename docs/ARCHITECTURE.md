@@ -110,6 +110,20 @@ workers and drains the queue.
 time. `VmmHandle` has no mutex and relies on MemProcFS being thread-safe per handle. Do not add per-session mutable
 state to `VmmHandle`; keep per-request state on the stack or in `Session`.
 
+## Disassembly
+
+`src/core/disasm/` is its own capability, independent of the debugger. `x86_decoder.{hpp,cpp}` wraps Zydis for
+x86-64 decoding and also holds the small hand-written store decoder the watchpoint path uses;
+`disassembler.{hpp,cpp}` is the bounded-window service that validates the instruction count, caps the read at
+`count * 15` bytes (`kMaxDisassembleBytes`), and maps the decoder's records to `DisassembleResponse`. It reads
+through an injected `ReadMemory`, so it touches no QMP socket, no GDB stub and no guest run state; a test runs it
+against an in-memory buffer.
+
+The server exposes it through `DisasmProvider` (`src/core/server/disasm_provider.hpp`), the handler in
+`session_disasm.cpp`, and the `src/host/vmm_disasm.cpp` implementation, which injects `VmmHandle::readMemory`. A
+handle without the provider answers `CapabilityUnavailable`. `src/core/debug/debug_controller.cpp` no longer decodes
+instructions; it keeps only the stub-dependent operations such as the stack backtrace.
+
 ## Debug control
 
 `src/core/debug/qmp_client.{hpp,cpp}` speaks QEMU's QMP control channel over the target's Unix socket. It owns the

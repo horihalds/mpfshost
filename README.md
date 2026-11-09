@@ -20,7 +20,7 @@ client library for your own programs.
 - Root **only** for the host process. Clients never need root.
 - A C++23 compiler, CMake ≥ 3.25 and Ninja.
 - `catch2-devel` (Catch2 2.13.x) for the test suite.
-- `zydis-devel` 5.x for x86-64 disassembly in the debugger.
+- `zydis-devel` 5.x for the standalone x86-64 disassembler.
 - Optional: `x86_64-w64-mingw32-g++` to cross-compile the Windows guest probe.
 
 The MemProcFS libraries, headers and `info.db` are vendored in `MemProcFS/`.
@@ -191,7 +191,7 @@ to it automatically.
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
  `--client debug-threads <vm>` | List each stub thread with its vCPU index, GDB thread id, `rip`, `rsp`, `cr3` and, when resolvable, the guest pid and tid. Requires a paused guest. |
- `--client debug-disassemble <vm>` | Decode instructions at a process address; `--pid`, `--address` (hex), `--count` (1–128, default 16). Undecodable bytes print as `.byte` lines. |
+ `--client disassemble <vm>` | Decode instructions at a process address; `--pid`, `--address` (hex), `--count` (1–128, default 16). Undecodable bytes print as `.byte` lines. Needs no debugger attachment, so it works while the guest runs. |
  `--client debug-backtrace <vm>` | Walk the selected stopped thread's frame-pointer chain; `--pid`, `--vcpu <n>` or `--thread <id>`, `--max-frames` (1–128, default 32). Prints each address with its module/export/PDB symbol when it resolves. Requires a paused guest. |
  `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). `--address` accepts hex or `module!symbol[+offset]`, `module+offset`, a bare module name. Prints the resolved target and trapped store. Destructive. |
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). `--address` accepts the same symbolic forms. Reports the resolved address, first hit and symbol, then removes it. Destructive. |
@@ -266,16 +266,18 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
-- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers`, `debug-threads`, `debug-disassemble`,
+- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers`, `debug-threads`,
   `debug-backtrace`, `debug-watch`, `debug-break` and `debug-step` use the QMP socket that the target scan already
-  pairs with each QEMU process. `debug-disassemble` only reads process memory, so it works while the guest is
-  running; `debug-backtrace` needs a paused guest and reuses or starts a stub like `debug-registers`. `debug-stop` pauses the guest and
+  pairs with each QEMU process. `debug-backtrace` needs a paused guest and reuses or starts a stub like
+  `debug-registers`. `debug-stop` pauses the guest and
   `debug-continue` resumes it; the host remembers whether **it** paused the VM. `debug-registers`, `debug-threads`
   and `debug-step` only work on a paused guest and leave it paused. They start a temporary GDB stub on a Unix socket under `/tmp`, as
   do `debug-watch` and `debug-break`; a watch reports each write hit and a breakpoint reports its first hit, both with
   the trap PC and nearest symbol, and always remove the trap and stop the stub afterwards. A breakpoint is one-shot:
   repeat the command to stop again. These commands are destructive: a paused guest stops executing until it is
-  resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md). Only x86-64 guests can be debugged. The register,
+  resumed. See [`docs/DEBUGGING.md`](docs/DEBUGGING.md). `disassemble` is not a debug command: it only reads
+  process memory through the ordinary path, works while the guest runs and needs no attachment. Only x86-64 guests
+  can be debugged. The register,
   backtrace, watch, breakpoint and step commands reject another architecture with `CapabilityUnavailable` before
   starting a stub;
   `debug-status` still works and reports the architecture it detected.
@@ -375,7 +377,7 @@ Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`,
  `debug_status` | QEMU run state, vCPU count and host debug bookkeeping. |
  `debug_registers` | Read the x86-64 registers of a paused guest; optional `vcpu`. |
  `debug_threads` | List each stub thread with its GDB id, `rip`, `rsp`, `cr3` and guest pid/tid when resolvable. |
- `debug_disassemble` | Decode instructions at a process address; `count` limits the output. |
+ `disassemble` | Decode instructions at a process address; `count` limits the output. Needs no debugger attachment. |
  `debug_backtrace` | Walk a stopped thread's frame-pointer chain and symbolize each frame. |
  `debug_stop` | **Write:** pause the guest. |
  `debug_continue` | **Write:** resume a paused guest. |

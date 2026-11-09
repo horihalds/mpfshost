@@ -1,4 +1,4 @@
-#include "core/debug/x86_decoder.hpp"
+#include "core/disasm/x86_decoder.hpp"
 
 #include <Zydis/Decoder.h>
 #include <Zydis/Formatter.h>
@@ -6,7 +6,7 @@
 #include <array>
 #include <cstdio>
 
-namespace mpfshost::debug
+namespace mpfshost::disasm
 {
     namespace
     {
@@ -716,4 +716,4 @@ namespace mpfshost::debug
         }
         return best;
     }
-} // namespace mpfshost::debug
+} // namespace mpfshost::disasm

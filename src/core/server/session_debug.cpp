@@ -211,43 +211,6 @@ namespace mpfshost
         sendPayload(requestId, MessageType::DebugThreadsResponse, encodeDebugThreadsResponse({*threads}));
     }
 
-    void Session::handleDebugDisassemble(std::uint64_t requestId, std::span<const std::byte> payload)
-    {
-        if (!_bound.has_value())
-        {
-            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
-            return;
-        }
-
-        const auto request = decodeDebugDisassembleRequest(payload);
-        if (!request.has_value())
-        {
-            sendError(requestId, ErrorCode::MalformedPayload, "malformed debug disassemble request");
-            return;
-        }
-        if (request->pid == 0)
-        {
-            sendError(requestId, ErrorCode::MalformedPayload, "a debug disassemble request needs a process id");
-            return;
-        }
-
-        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
-        if (provider == nullptr)
-        {
-            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot disassemble memory");
-            return;
-        }
-
-        std::string error;
-        const auto  response = provider->debugDisassemble(*request, error);
-        if (!response.has_value())
-        {
-            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug disassembly failed" : error);
-            return;
-        }
-        sendPayload(requestId, MessageType::DebugDisassembleResponse, encodeDebugDisassembleResponse(*response));
-    }
-
     void Session::handleDebugBacktrace(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

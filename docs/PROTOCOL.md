@@ -133,7 +133,7 @@ range.
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
  `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
  `DebugThreadsRequest` | `0x004B` | `DebugThreadsResponse` `0x806F` | single | `debug-threads` |
- `DebugDisassembleRequest` | `0x004C` | `DebugDisassembleResponse` `0x8070` | single | `debug-disassemble` |
+ `DisassembleRequest` | `0x004C` | `DisassembleResponse` `0x8070` | single | `disassemble` |
  `DebugBacktraceRequest` | `0x004D` | `DebugBacktraceResponse` `0x8071` | single | `debug-backtrace` |
  `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
@@ -159,6 +159,29 @@ convenience call; they use no additional message types.
 comparison, and both `paDTB` and `paDTB_UserOpt` are candidates, so a KPTI user DTB resolves to the same process;
 `matchedUser` says which one matched. The host caches module lists per pid and one process/DTB snapshot for one second;
 a miss from a snapshot older than 250 ms is retried once before it is reported as `NotFound`.
+
+## Disassembly
+
+`DisassembleRequest` asks the host to read process memory at `address` and decode instructions. It does not
+touch the GDB stub or the guest's run state, so it works while the guest is running.
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `pid` | `u32` | Process whose address space is read; zero is `MalformedPayload` |
+ `address` | `u64` | Virtual address of the first instruction |
+ `count` | `u32` | Instructions to decode, 1–`kMaxDisassembleInstructions` (128); zero is `MalformedPayload` |
+
+The host reads at most `count * 15` bytes, capped at `kMaxDisassembleBytes` (1920), through its ordinary process
+memory path, so a request never causes an unbounded read. The decoder is x86-64 only. An encoding it cannot decode is
+reported as one `.byte 0xNN` record and consumes exactly one byte rather than guessing a length.
+
+`DisassembleResponse` is a `u32` count followed by records:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `address` | `u64` | Address of this instruction |
+ `bytes` | bytes | Up to 15 instruction bytes |
+ `text` | string | Intel-syntax text, or `.byte 0xNN` for an unknown encoding |
 
 ## Debug control
 
@@ -324,29 +347,6 @@ The vCPU index is a position in the stub's thread list and is what `--vcpu` sele
 stable name QEMU prints (for example `p01.03`) and is what `DebugStepRequest.threadId` selects. The guest pid/tid are
 resolved through the CR3 and the process thread stack ranges; they are informational and do not change which thread
 a request operates on.
-
-## Debug disassembly
-
-`DebugDisassembleRequest` asks the host to read process memory at `address` and decode instructions. It does not
-touch the GDB stub or the guest's run state, so it works while the guest is running.
-
- Field | Type | Meaning |
--------|------|---------|
- `pid` | `u32` | Process whose address space is read; zero is `MalformedPayload` |
- `address` | `u64` | Virtual address of the first instruction |
- `count` | `u32` | Instructions to decode, 1–`kMaxDebugDisassembleInstructions` (128); zero is `MalformedPayload` |
-
-The host reads at most `count * 15` bytes, capped at `kMaxDebugDisassembleBytes` (1920), through the debug
-inspector, so a request never causes an unbounded read. The decoder is x86-64 only. An encoding it cannot decode is
-reported as one `.byte 0xNN` record and consumes exactly one byte rather than guessing a length.
-
-`DebugDisassembleResponse` is a `u32` count followed by records:
-
- Field | Type | Meaning |
--------|------|---------|
- `address` | `u64` | Address of this instruction |
- `bytes` | bytes | Up to 15 instruction bytes |
- `text` | string | Intel-syntax text, or `.byte 0xNN` for an unknown encoding |
 
 ## Debug backtrace
 
@@ -564,8 +564,8 @@ All in `src/core/ipc/frame.hpp` unless noted. Validate against them in the sessi
   PFN `0x8000`.
 - Pages: `kMaxPageCount` 4096, `kMaxPrefetchPages` `0x10000`. Search: pattern ≤ 32 bytes, hits ≤ `0x10000`,
   alignment a power of two ≤ 4096. Vad-ex: `pageCount` 1–`kMaxPageCount`. Debug registers: at most
-  `kMaxDebugVcpuRecords` 256 records. Disassembly: at most `kMaxDebugDisassembleInstructions` 128 instructions and
-  `kMaxDebugDisassembleBytes` 1920 read bytes. Backtrace: at most `kMaxDebugBacktraceFrames` 128 frames and
+  `kMaxDebugVcpuRecords` 256 records. Disassembly: at most `kMaxDisassembleInstructions` 128 instructions and
+  `kMaxDisassembleBytes` 1920 read bytes. Backtrace: at most `kMaxDebugBacktraceFrames` 128 frames and
   `kMaxDebugBacktraceDepthBytes` 1 MiB above the starting `rsp`.
 - In `message.hpp`: `kMaxModuleSections` 96, `kMaxCallstackFrames` 64, `kModuleDataDirectoryCount` 16.
 

@@ -110,6 +110,7 @@ Do all of these before you finish, in order:
  `src/core/client/` | `client.*` one function per capability, `cli_options.*` (`ClientOptions`, `parseClientOptions`), `connect_diagnostics.*`. |
  `src/core/mcp/` | MCP stdio front end: `mcp_server.*` (JSON-RPC state machine) and `mcp_tools.*` (tool catalogue and mapping over `client.hpp`). |
  `src/core/debug/` | QMP client, GDB remote-protocol client and the per-VM debug controller (`qmp_client.*`, `rsp_client.*`, `debug_controller.*`), all with injectable transports. |
+ `src/core/disasm/` | Standalone x86-64 disassembly: the Zydis decoder (`x86_decoder.*`, which also holds the watchpoint store decoder) and the bounded-window service (`disassembler.*`). Needs no debugger stub. |
  `src/core/target/` | QEMU target discovery logic (`<vm>.pid` + `<vm>.sock` pairing). |
  `src/core/log/` | Levelled thread-safe logger, `mpfshost::log`. |
  `src/core/util/` | Hex parsing/dumps, decimal/range-size parsing (`number.*`), page-range expansion, substring matcher, identity lookups. |

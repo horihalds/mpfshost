@@ -1,6 +1,5 @@
 #include "core/debug/debug_controller.hpp"
 
-#include "core/debug/x86_decoder.hpp"
 #include "core/log/log.hpp"
 #include "core/server/process_info_provider.hpp"
 #include "core/server/request_deadline.hpp"
@@ -1144,43 +1143,6 @@ namespace mpfshost::debug
             threads.push_back(std::move(thread));
         }
         return threads;
-    }
-
-    std::optional<DebugDisassembleResponse> DebugController::disassemble(const DebugDisassembleRequest& request,
-                                                                         std::string&                   error)
-    {
-        if (_inspector == nullptr)
-        {
-            error = "the disassembly service is unavailable";
-            return std::nullopt;
-        }
-        if (request.count == 0 || request.count > kMaxDebugDisassembleInstructions)
-        {
-            error = "the disassembly instruction count is out of range";
-            return std::nullopt;
-        }
-
-        const auto             wanted = request.count * 15u;
-        const auto             size   = wanted < kMaxDebugDisassembleBytes ? wanted : kMaxDebugDisassembleBytes;
-        std::vector<std::byte> bytes;
-        if (!_inspector->readMemory(request.pid, request.address, size, bytes, error))
-        {
-            return std::nullopt;
-        }
-        if (bytes.empty())
-        {
-            error = "the requested memory is empty";
-            return std::nullopt;
-        }
-
-        const auto               decoded = mpfshost::debug::disassemble(bytes, request.address, request.count);
-        DebugDisassembleResponse response;
-        response.instructions.reserve(decoded.size());
-        for (const auto& instruction : decoded)
-        {
-            response.instructions.push_back({instruction.address, instruction.bytes, instruction.text});
-        }
-        return response;
     }
 
     std::optional<DebugBacktraceResponse> DebugController::backtrace(

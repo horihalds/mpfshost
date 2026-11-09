@@ -2955,39 +2955,6 @@ namespace
     }
 } // namespace
 
-TEST_CASE("the debug controller disassembles a bounded memory window", "[core][debug][controller]")
-{
-    FakeInspector inspector;
-    std::uint64_t readAddress = 0;
-    std::uint32_t readSize    = 0;
-    inspector.memoryHandler = [&](std::uint64_t address, std::uint32_t size, std::vector<std::byte>& out, std::string&)
-    {
-        readAddress = address;
-        readSize    = size;
-        out         = {std::byte {0x48}, std::byte {0x89}, std::byte {0xD8}};
-        return true;
-    };
-
-    DebugController controller {"/tmp/qmp.sock", "/tmp/stub.sock", {}, {}, &inspector};
-    std::string     error;
-    const auto      response = controller.disassemble({42, 0x401000, 3}, error);
-    REQUIRE(response.has_value());
-    REQUIRE(error.empty());
-    REQUIRE(readAddress == 0x401000);
-    REQUIRE(readSize == 45);
-    REQUIRE(response->instructions.size() == 1);
-    REQUIRE(response->instructions[0].address == 0x401000);
-    REQUIRE(response->instructions[0].text.find("mov") != std::string::npos);
-
-    inspector.memoryHandler = [](std::uint64_t, std::uint32_t, std::vector<std::byte>&, std::string& errorText)
-    {
-        errorText = "unmapped";
-        return false;
-    };
-    REQUIRE_FALSE(controller.disassemble({42, 0x401000, 3}, error).has_value());
-    REQUIRE(error == "unmapped");
-}
-
 TEST_CASE("the backtrace walks a valid frame chain and stops at a null pointer", "[core][debug][controller]")
 {
     FakeInspector inspector;

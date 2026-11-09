@@ -4,7 +4,7 @@
 #include "cli/render.hpp"
 #include "cli/run_client.hpp"
 #include "core/client/client.hpp"
-#include "core/debug/x86_decoder.hpp"
+#include "core/disasm/x86_decoder.hpp"
 #include "core/log/log.hpp"
 #include "core/util/display.hpp"
 #include "core/util/hex.hpp"
@@ -1801,9 +1801,9 @@ namespace mpfshost::cli
             return 0;
         }
 
-        if (options.command == "debug-disassemble")
+        if (options.command == "disassemble")
         {
-            const auto response = mpfshost::debugDisassemble(
+            const auto response = mpfshost::disassemble(
                 options.socketPath, {options.target, options.pid, options.address, options.count}, error);
             if (!response)
             {
@@ -1944,7 +1944,7 @@ namespace mpfshost::cli
                             std::printf("%02x", std::to_integer<unsigned>(value));
                         }
                         std::printf("\n");
-                        if (const auto store = mpfshost::debug::decodeStoreBefore(hit.bytesBefore))
+                        if (const auto store = mpfshost::disasm::decodeStoreBefore(hit.bytesBefore))
                         {
                             std::printf("  store=%s\n", store->text.c_str());
                         }

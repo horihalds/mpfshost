@@ -84,7 +84,7 @@ namespace mpfshost
     [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>
     debugThreads(const std::filesystem::path& socketPath, const DebugThreadsQuery& query, std::string& error);
 
-    struct DebugDisassembleQuery
+    struct DisassembleQuery
     {
         std::string   targetName;
         std::uint32_t pid {};
@@ -92,8 +92,9 @@ namespace mpfshost
         std::uint32_t count {16};
     };
 
-    [[nodiscard]] std::optional<DebugDisassembleResponse>
-    debugDisassemble(const std::filesystem::path& socketPath, const DebugDisassembleQuery& query, std::string& error);
+    // Reads a bounded window of process memory and decodes it. Needs no debugger attachment.
+    [[nodiscard]] std::optional<DisassembleResponse>
+    disassemble(const std::filesystem::path& socketPath, const DisassembleQuery& query, std::string& error);
 
     struct DebugBacktraceQuery
     {

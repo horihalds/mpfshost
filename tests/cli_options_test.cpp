@@ -672,13 +672,13 @@ TEST_CASE("debug breakpoint and step options are parsed and validated", "[cli-op
     CHECK(threads.options->command == "debug-threads");
 
     const auto disassemble =
-        parse({"--client", "debug-disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "8"});
+        parse({"--client", "disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "8"});
     REQUIRE(disassemble.options.has_value());
-    CHECK(disassemble.options->command == "debug-disassemble");
+    CHECK(disassemble.options->command == "disassemble");
     CHECK(disassemble.options->count == 8);
 
     const auto badCount =
-        parse({"--client", "debug-disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "0"});
+        parse({"--client", "disassemble", "vm1", "--pid", "42", "--address", "0x401000", "--count", "0"});
     REQUIRE_FALSE(badCount.options.has_value());
     CHECK(badCount.error.find("--count") != std::string::npos);
 

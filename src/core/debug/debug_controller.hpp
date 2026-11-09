@@ -58,27 +58,23 @@ namespace mpfshost::debug
         // process and thread. Reuses an attachment; otherwise starts and stops a temporary stub.
         [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>   threads(
             const DebugThreadsRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
-        // Reads a bounded window of process memory and decodes it. This does not touch the stub or require a
-        // paused guest; a failed read is reported through `error`.
-        [[nodiscard]] std::optional<DebugDisassembleResponse> disassemble(const DebugDisassembleRequest& request,
-                                                                          std::string&                   error);
         // Reads one stopped thread and walks its frame-pointer chain. Symbolization failures leave the raw
         // address intact. A corrupt frame pointer ends the walk rather than being followed.
-        [[nodiscard]] std::optional<DebugBacktraceResponse>   backtrace(const DebugBacktraceRequest& request,
-                                                                        bool&                        invalidState,
-                                                                        bool&                        busy,
-                                                                        std::string&                 error,
-                                                                        bool&                        unavailable);
+        [[nodiscard]] std::optional<DebugBacktraceResponse> backtrace(const DebugBacktraceRequest& request,
+                                                                      bool&                        invalidState,
+                                                                      bool&                        busy,
+                                                                      std::string&                 error,
+                                                                      bool&                        unavailable);
         // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
         // returns nullopt; once the watch is armed, an error is reported through the end record instead.
         // `notFound` reports a module or symbol that could not be resolved, which the caller maps to NotFound.
-        [[nodiscard]] std::optional<DebugWatchEnd>            watch(DebugWatchRequest           request,
-                                                                    const DebugWatchHitSink&    onHit,
-                                                                    const DebugWatchAbortCheck& aborted,
-                                                                    bool&                       busy,
-                                                                    std::string&                error,
-                                                                    bool&                       unavailable,
-                                                                    bool&                       notFound);
+        [[nodiscard]] std::optional<DebugWatchEnd>          watch(DebugWatchRequest           request,
+                                                                  const DebugWatchHitSink&    onHit,
+                                                                  const DebugWatchAbortCheck& aborted,
+                                                                  bool&                       busy,
+                                                                  std::string&                error,
+                                                                  bool&                       unavailable,
+                                                                  bool&                       notFound);
 
         [[nodiscard]] std::optional<DebugWatchEnd> watch(DebugWatchRequest           request,
                                                          const DebugWatchHitSink&    onHit,

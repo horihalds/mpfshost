@@ -484,8 +484,8 @@ namespace mpfshost
             return "DebugWaitRequest";
         case MessageType::DebugThreadsRequest:
             return "DebugThreadsRequest";
-        case MessageType::DebugDisassembleRequest:
-            return "DebugDisassembleRequest";
+        case MessageType::DisassembleRequest:
+            return "DisassembleRequest";
         case MessageType::DebugBacktraceRequest:
             return "DebugBacktraceRequest";
         case MessageType::DebugWatchData:
@@ -660,8 +660,8 @@ namespace mpfshost
             return "DebugWaitEnd";
         case MessageType::DebugThreadsResponse:
             return "DebugThreadsResponse";
-        case MessageType::DebugDisassembleResponse:
-            return "DebugDisassembleResponse";
+        case MessageType::DisassembleResponse:
+            return "DisassembleResponse";
         case MessageType::DebugBacktraceResponse:
             return "DebugBacktraceResponse";
         case MessageType::ProcessInfoResponse:

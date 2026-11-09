@@ -1,7 +1,7 @@
 #include "core/mcp/mcp_tools.hpp"
 
 #include "core/client/client.hpp"
-#include "core/debug/x86_decoder.hpp"
+#include "core/disasm/x86_decoder.hpp"
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"
 #include "core/util/number.hpp"
@@ -536,7 +536,7 @@ namespace mpfshost::mcp
             return result;
         }
 
-        Json debugInstructionJson(const DebugInstructionRecord& instruction)
+        Json instructionJson(const InstructionRecord& instruction)
         {
             return Json {
                 {"address", hexString(instruction.address)},
@@ -566,7 +566,7 @@ namespace mpfshost::mcp
 
         Json debugWatchJson(const DebugWatchData& hit)
         {
-            const auto store = debug::decodeStoreBefore(hit.bytesBefore);
+            const auto store = disasm::decodeStoreBefore(hit.bytesBefore);
             return Json {
                 {       "hit_index",                         hit.hitIndex},
                 {            "vcpu",                             hit.vcpu},
@@ -950,9 +950,9 @@ namespace mpfshost::mcp
                  "List vCPU threads",                                             "List each GDB stub thread with its vCPU index, thread id, rip, rsp, CR3 and, "
                                              "when resolvable, the guest pid and tid.",  true,
                  {target}                                                                                                    },
-                {    "debug_disassemble",
-                 "Disassemble memory",                                      "Read a bounded window of process memory and return Intel-syntax instructions. "
-                                      "Undecodable bytes are returned as .byte lines.",  true,
+                {          "disassemble",
+                 "Disassemble memory",        "Read a bounded window of process memory and return Intel-syntax instructions. "
+        "Undecodable bytes are returned as .byte lines. Needs no debugger attachment.",  true,
                  {target,
                  pid,
                  {"address", "string", "Virtual address to start at (hex)", true},
@@ -2590,20 +2590,20 @@ namespace mpfshost::mcp
                 });
             }
 
-            if (name == "debug_disassemble")
+            if (name == "disassemble")
             {
                 const auto count = hasArg(args, "count") ? static_cast<std::uint32_t>(numberValue(args, "count", true))
                                                          : std::uint32_t {16};
-                if (count == 0 || count > kMaxDebugDisassembleInstructions)
+                if (count == 0 || count > kMaxDisassembleInstructions)
                 {
-                    return failure("count must be between 1 and " + std::to_string(kMaxDebugDisassembleInstructions));
+                    return failure("count must be between 1 and " + std::to_string(kMaxDisassembleInstructions));
                 }
                 const auto targetAddress = parseDebugAddress(requireString(args, "address"));
                 if (!targetAddress.module.empty())
                 {
                     return failure("address must be a hex value");
                 }
-                const auto response = debugDisassemble(
+                const auto response = disassemble(
                     socket,
                     {requireString(args, "target"), u32Value(args, "pid", true), targetAddress.address, count},
                     error);
@@ -2614,7 +2614,7 @@ namespace mpfshost::mcp
                 Json instructions = Json::array();
                 for (const auto& instruction : response->instructions)
                 {
-                    instructions.push_back(debugInstructionJson(instruction));
+                    instructions.push_back(instructionJson(instruction));
                 }
                 return success(Json {
                     {     "address", hexString(targetAddress.address)},

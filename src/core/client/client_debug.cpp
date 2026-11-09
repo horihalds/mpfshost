@@ -135,39 +135,6 @@ namespace mpfshost
         return decoded->threads;
     }
 
-    std::optional<DebugDisassembleResponse>
-    debugDisassemble(const std::filesystem::path& socketPath, const DebugDisassembleQuery& query, std::string& error)
-    {
-        error.clear();
-        const auto connection = connectAndBind(socketPath, query.targetName, error);
-        if (!connection)
-        {
-            return std::nullopt;
-        }
-
-        const auto response = exchange(connection->fd(),
-                                       MessageType::DebugDisassembleRequest,
-                                       encodeDebugDisassembleRequest({query.pid, query.address, query.count}),
-                                       error);
-        if (!response)
-        {
-            return std::nullopt;
-        }
-
-        const auto payload = expectResponse(*response, MessageType::DebugDisassembleResponse, error);
-        if (!payload)
-        {
-            return std::nullopt;
-        }
-
-        const auto decoded = decodeDebugDisassembleResponse(*payload);
-        if (!decoded)
-        {
-            error = "server returned a malformed debug disassemble response";
-        }
-        return decoded;
-    }
-
     std::optional<DebugBacktraceResponse>
     debugBacktrace(const std::filesystem::path& socketPath, const DebugBacktraceQuery& query, std::string& error)
     {

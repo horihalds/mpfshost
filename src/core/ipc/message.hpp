@@ -655,29 +655,30 @@ namespace mpfshost
         std::vector<DebugThreadRecord> threads;
     };
 
-    inline constexpr std::uint32_t kMaxDebugDisassembleInstructions = 128;
-    inline constexpr std::uint32_t kMaxDebugDisassembleBytes        = kMaxDebugDisassembleInstructions * 15;
-    inline constexpr std::uint32_t kMaxDebugBacktraceFrames         = 128;
-    inline constexpr std::uint64_t kMaxDebugBacktraceDepthBytes     = 1024 * 1024;
-
-    struct DebugDisassembleRequest
+    struct DisassembleRequest
     {
         std::uint32_t pid {};
         std::uint64_t address {};
-        std::uint32_t count {16}; // number of instructions, 1-kMaxDebugDisassembleInstructions
+        std::uint32_t count {16}; // number of instructions, 1-kMaxDisassembleInstructions
     };
 
-    struct DebugInstructionRecord
+    struct InstructionRecord
     {
         std::uint64_t          address {};
         std::vector<std::byte> bytes;
         std::string            text; // Intel syntax, or ".byte 0xNN" for an unknown encoding
     };
 
-    struct DebugDisassembleResponse
+    struct DisassembleResponse
     {
-        std::vector<DebugInstructionRecord> instructions;
+        std::vector<InstructionRecord> instructions;
     };
+
+    inline constexpr std::uint32_t kMaxDisassembleInstructions = 128;
+    inline constexpr std::uint32_t kMaxDisassembleBytes        = kMaxDisassembleInstructions * 15;
+
+    inline constexpr std::uint32_t kMaxDebugBacktraceFrames     = 128;
+    inline constexpr std::uint64_t kMaxDebugBacktraceDepthBytes = 1024 * 1024;
 
     struct DebugBacktraceRequest
     {
@@ -2227,12 +2228,10 @@ namespace mpfshost
     [[nodiscard]] std::vector<std::byte>              encodeDebugThreadsResponse(const DebugThreadsResponse& message);
     [[nodiscard]] std::optional<DebugThreadsResponse> decodeDebugThreadsResponse(std::span<const std::byte> payload);
 
-    [[nodiscard]] std::vector<std::byte> encodeDebugDisassembleRequest(const DebugDisassembleRequest& message);
-    [[nodiscard]] std::optional<DebugDisassembleRequest>
-                                         decodeDebugDisassembleRequest(std::span<const std::byte> payload);
-    [[nodiscard]] std::vector<std::byte> encodeDebugDisassembleResponse(const DebugDisassembleResponse& message);
-    [[nodiscard]] std::optional<DebugDisassembleResponse>
-    decodeDebugDisassembleResponse(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDisassembleRequest(const DisassembleRequest& message);
+    [[nodiscard]] std::optional<DisassembleRequest>  decodeDisassembleRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>             encodeDisassembleResponse(const DisassembleResponse& message);
+    [[nodiscard]] std::optional<DisassembleResponse> decodeDisassembleResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte> encodeDebugBacktraceRequest(const DebugBacktraceRequest& message);
     [[nodiscard]] std::optional<DebugBacktraceRequest> decodeDebugBacktraceRequest(std::span<const std::byte> payload);

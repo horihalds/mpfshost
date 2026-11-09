@@ -146,7 +146,7 @@ namespace mpfshost
         DebugContinueRequest         = 0x0049,
         DebugWaitRequest             = 0x004A, // streamed: DebugWaitHit* then DebugWaitEnd
         DebugThreadsRequest          = 0x004B,
-        DebugDisassembleRequest      = 0x004C,
+        DisassembleRequest           = 0x004C,
         DebugBacktraceRequest        = 0x004D,
         ListTargetsResponse          = 0x8001,
         BindResponse                 = 0x8002,
@@ -253,7 +253,7 @@ namespace mpfshost
         DebugWaitHit                 = 0x806D,
         DebugWaitEnd                 = 0x806E,
         DebugThreadsResponse         = 0x806F,
-        DebugDisassembleResponse     = 0x8070,
+        DisassembleResponse          = 0x8070,
         DebugBacktraceResponse       = 0x8071,
         ErrorResponse                = 0x8FFF,
     };

@@ -6,6 +6,7 @@
 #include "core/server/backend.hpp"
 #include "core/server/config_provider.hpp"
 #include "core/server/debug_provider.hpp"
+#include "core/server/disasm_provider.hpp"
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
@@ -85,6 +86,7 @@ namespace mpfshost
                       public MemorySearchProvider,
                       public ConfigProvider,
                       public DebugProvider,
+                      public DisasmProvider,
                       public debug::DebugInspector
     {
     public:
@@ -268,32 +270,32 @@ namespace mpfshost
                                                                                  bool&        busy,
                                                                                  std::string& error,
                                                                                  bool&        unavailable) override;
-        [[nodiscard]] std::optional<DebugDisassembleResponse> debugDisassemble(const DebugDisassembleRequest& request,
-                                                                               std::string& error) override;
-        [[nodiscard]] std::optional<DebugBacktraceResponse>   debugBacktrace(const DebugBacktraceRequest& request,
-                                                                             bool&                        invalidState,
-                                                                             bool&                        busy,
-                                                                             std::string&                 error,
-                                                                             bool& unavailable) override;
-        [[nodiscard]] std::optional<DebugWatchEnd>            debugWatch(const DebugWatchRequest&    request,
-                                                                         const DebugWatchHitSink&    onHit,
-                                                                         const DebugWatchAbortCheck& aborted,
-                                                                         bool&                       busy,
-                                                                         std::string&                error,
-                                                                         bool&                       unavailable,
-                                                                         bool&                       notFound) override;
-        [[nodiscard]] std::optional<DebugBreakpointResponse>  debugBreakpoint(const DebugBreakpointRequest& request,
-                                                                              const DebugWatchAbortCheck&   aborted,
-                                                                              bool&                         invalidState,
-                                                                              bool&                         busy,
-                                                                              std::string&                  error,
-                                                                              bool&                         unavailable,
-                                                                              bool& notFound) override;
-        [[nodiscard]] std::optional<DebugStepResponse>        debugStep(const DebugStepRequest& request,
-                                                                        bool&                   invalidState,
-                                                                        bool&                   busy,
-                                                                        std::string&            error,
-                                                                        bool&                   unavailable) override;
+        [[nodiscard]] std::optional<DisassembleResponse>            disassemble(const DisassembleRequest& request,
+                                                                                std::string&              error) override;
+        [[nodiscard]] std::optional<DebugBacktraceResponse>         debugBacktrace(const DebugBacktraceRequest& request,
+                                                                                   bool&                        invalidState,
+                                                                                   bool&                        busy,
+                                                                                   std::string&                 error,
+                                                                                   bool& unavailable) override;
+        [[nodiscard]] std::optional<DebugWatchEnd>                  debugWatch(const DebugWatchRequest&    request,
+                                                                               const DebugWatchHitSink&    onHit,
+                                                                               const DebugWatchAbortCheck& aborted,
+                                                                               bool&                       busy,
+                                                                               std::string&                error,
+                                                                               bool&                       unavailable,
+                                                                               bool&                       notFound) override;
+        [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
+                                                                             const DebugWatchAbortCheck&   aborted,
+                                                                             bool&                         invalidState,
+                                                                             bool&                         busy,
+                                                                             std::string&                  error,
+                                                                             bool&                         unavailable,
+                                                                             bool& notFound) override;
+        [[nodiscard]] std::optional<DebugStepResponse>       debugStep(const DebugStepRequest& request,
+                                                                       bool&                   invalidState,
+                                                                       bool&                   busy,
+                                                                       std::string&            error,
+                                                                       bool&                   unavailable) override;
 
         [[nodiscard]] std::optional<DebugAttachResponse> debugAttach(
             std::uint64_t sessionId, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override;
