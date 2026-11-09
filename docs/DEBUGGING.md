@@ -147,19 +147,22 @@ Checked on 2026-11-09 against a non-critical `mint` guest (QEMU 10.2.2, 8 vCPUs)
 ## Manual check: write watchpoint
 
 This procedure needs a live Windows guest and root. It was run against `windows` on 2026-11-09; the result is in
-the validation record below.
+the validation record below. The guest probe now makes the trigger deterministic, so a live re-run no longer needs
+Notepad or injected keystrokes.
 
-1. Pick a process and a writable buffer, and confirm the address with `read_memory`. A UTF-16 text buffer with spare
-   capacity is easier than one that is about to be reallocated.
-2. Start the watch with a dedicated connection:
+1. Start the guest probe (all features are on by default; see `tools/guest-probe/README.md`). It prints
+   `PROBE pid=<pid> address=0x<buffer>` and `PROBE-TRIGGER address=0x<trigger>`. Its heartbeat toggles the trigger
+   byte between `0x5a` and `0xa5` every 500 ms.
+2. Start the watch on the trigger address with a dedicated connection:
 
    ```sh
-   ./build/mpfshost --client debug-watch <vm> --pid <pid> --address <hex> --width 2 --max-hits 1 --timeout 30
+   ./build/mpfshost --client debug-watch <vm> --pid <pid> --address <PROBE-TRIGGER address> --width 1 --max-hits 1 --timeout 30
    ```
 
-3. Trigger the write from another shell or from the guest desktop (a keystroke works for an edit control). Expect one
-   `DebugWatchData` frame with `rip`, `rsp`, `cr3`, old/new values, module and nearest export, followed by
-   `completed  hits=1  skipped=0`.
+3. Wait for the next heartbeat. Expect one `DebugWatchData` frame with `rip`, `rsp`, `cr3`, old/new values, module
+   and nearest export, followed by `completed  hits=1  skipped=0`. The trap should resolve inside `guest-probe.exe`
+   near `GuestProbeHeartbeat`; the heartbeat uses a dedicated page, so the probe's own `CHANGE` watch does not fire
+   for it.
 4. Confirm the trap PC is the instruction after the store and that `before` holds the preceding bytes.
 5. Afterwards check that the VM is running again, the stub is gone and the watch count is zero:
 
@@ -220,17 +223,19 @@ re-run successfully after this record was written.
 This procedure needs a live Windows guest and root. Breakpoints are one-shot: each request arms one, reports the
 first hit, and removes it again.
 
-1. Pick a frequently executed address in a process, such as an export confirmed with `resolve`. Note the pid and the
-   address.
+1. Start the guest probe and use its `PROBE pid=<pid>` and `PROBE-EXPORT name=GuestProbeMarker address=<hex>`.
+   The heartbeat calls the exported marker once per interval, so it is a reliable breakpoint target without picking
+   an address in another process.
 2. Run the breakpoint with a dedicated connection:
 
    ```sh
-   ./build/mpfshost --client debug-break <vm> --pid <pid> --address <hex> --kind hardware --timeout 30
+   ./build/mpfshost --client debug-break <vm> --pid <pid> --address <GuestProbeMarker address> --kind hardware --timeout 30
    ```
 
    Expect one hit with `rip` equal to the address, the per-vCPU registers, `module`/`export`/`symbol` when they
-   resolve, and `skipped=0`. Repeat with `--kind software`; a read-only page may reject the software form. Confirm
-   the guest is running again and the stub is gone:
+   resolve, and `skipped=0`. Repeat with `--kind software`; the marker runs in the target process, so the software
+   form should be reachable, but the `Z0` address-space limitation below still applies. Confirm the guest is running
+   again and the stub is gone:
 
    ```sh
    ./build/mpfshost --client debug-status <vm>
@@ -296,6 +301,8 @@ Run on 2026-11-09 against the `windows` target (12 vCPU, QEMU 10.2.2):
   QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
+- Re-run the watchpoint and breakpoint procedures against `guest-probe` so the heartbeat trigger is validated on a
+  live guest. The records above were produced before the probe had a heartbeat.
 
 Record the remaining answers here after the next live run.
 
