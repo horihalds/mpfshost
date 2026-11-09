@@ -1147,6 +1147,43 @@ TEST_CASE("a breakpoint skips a stop that belongs to another process", "[core][d
     REQUIRE(qmp->running);
 }
 
+TEST_CASE("a breakpoint skips a matching CR3 stop away from the breakpoint address", "[core][debug][controller]")
+{
+    auto qmp           = std::make_shared<FakeQmpState>();
+    qmp->running       = true;
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->stops.push_back({"1.1", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+    rsp->stops.push_back({"1.1", 0x7ff8451b1234ull, 0x1234, 0x200123});
+
+    FakeInspector inspector;
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    const auto  response = controller.breakpoint(
+        {42, 0x7ff8451b1234ull, mpfshost::DebugBreakpointKind::Hardware, 5000}, {}, invalidState, busy, error);
+    REQUIRE(response.has_value());
+    REQUIRE(response->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(response->skippedCount == 1);
+    REQUIRE(response->rip == 0x7ff8451b1234ull);
+    REQUIRE(rsp->continues == 2);
+}
+
 TEST_CASE("a breakpoint times out and still restores the guest", "[core][debug][controller]")
 {
     auto qmp           = std::make_shared<FakeQmpState>();

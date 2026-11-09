@@ -262,8 +262,10 @@ host started, then resumes a guest it paused or re-pauses an already-paused one.
 
 A hardware breakpoint uses one of the four debug-register slots, so it competes with an active watchpoint; the host
 already refuses concurrent debug operations with `Busy`, which keeps the slot budget simple. A software breakpoint
-patches guest memory instead and can fail on a read-only page. Snapshots, `system_reset` and migration drop both the
-breakpoint and the stub; a request must not span one of those operations.
+patches guest memory through the selected vCPU's address space, so a user-mode address can be rejected with QEMU's
+`E22` when that vCPU is not in the target process; kernel addresses are always mapped. The host requires the stop PC
+to equal the requested address, so an unrelated stop is skipped rather than reported as a hit. Snapshots,
+`system_reset` and migration drop both the breakpoint and the stub; a request must not span one of those operations.
 
 ## Debug single step
 

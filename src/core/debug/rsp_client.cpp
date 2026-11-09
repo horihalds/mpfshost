@@ -999,6 +999,10 @@ namespace mpfshost::debug
         if (reply != "OK")
         {
             error = "the stub rejected " + std::string {command};
+            if (!reply.empty())
+            {
+                error += " (" + reply + ")";
+            }
             return false;
         }
         return true;

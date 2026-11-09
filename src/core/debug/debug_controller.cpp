@@ -1339,11 +1339,13 @@ namespace mpfshost::debug
                 break;
             }
 
-            // The stub's breakpoint is global to the VM. A CR3 mismatch normally means another process maps
-            // the same linear address; accept it only when control stopped at the requested address inside one
-            // of the target's modules, which covers a user CR3 that MemProcFS does not report as the process DTB.
-            const auto hitDtb  = canonicalDtb(cr3);
-            bool       matches = hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser);
+            // The stub's breakpoint is global to the VM, and vCont can also deliver an unrelated stop that is not
+            // caused by the breakpoint. Require the PC to be at the requested address, then accept either a CR3
+            // match or a hit inside one of the target's modules, which covers a user CR3 that MemProcFS does not
+            // report as the process DTB.
+            const auto hitDtb = canonicalDtb(cr3);
+            bool       matches =
+                rip == request.address && (hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser));
             if (!matches && rip == request.address)
             {
                 std::string moduleError;

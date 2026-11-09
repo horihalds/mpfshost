@@ -43,6 +43,10 @@ the host socket.
 on an already-paused guest is a no-op; `debug-continue` resends `cont` whenever the guest is not running, even if
 another client paused it.
 
+A guest stopped by an attached GDB stub reports QMP `debug` while no request is running, which maps to `other` rather
+than `paused`. It is still stopped and `debug-continue` resumes it normally. A QMP `stop` does not turn `debug` back
+into `paused`; QEMU leaves that state on `cont`.
+
 ## Manual check: state, stop and continue
 
 1. Start the host (root) and confirm the target is visible:
@@ -252,21 +256,38 @@ first hit, and removes it again.
   operations with `Busy`, so a watchpoint and a breakpoint cannot compete for a slot in the same request, but a
   guest kernel debugger or a guest driver can still own the register the host tries to use; arming then fails
   instead of silently missing the breakpoint.
-- A software breakpoint (`Z0`) patches the instruction byte. It needs a writable page and is removed on every exit
-  path; a page that rejects the patch makes the request fail.
-- A breakpoint is scoped by CR3 after the hit. A hit in another process that maps the same address is skipped, unless
-  the hit is at the requested address inside one of the target's modules, which covers a shadow user CR3. The same
-  caveat as a watchpoint applies: reallocation or relocation of executable memory invalidates the address.
+- A software breakpoint (`Z0`) patches the instruction byte. QEMU applies the patch through the address space of the
+  vCPU the stub currently has selected, so a user-mode address can be rejected with `E22` when that vCPU is not in the
+  target process. Kernel addresses work because the kernel CR3 maps them, and the host logs the stub reply. Use the
+  hardware form for user-mode addresses.
+- A hardware breakpoint is armed once and fires globally, like a watchpoint. The host requires the stop PC to equal
+  the requested address, so an unrelated vCPU stop is not reported as a hit. It then accepts a hit when CR3 matches the
+  process or when the address is inside one of the target's modules, which covers a shadow user CR3. The same
+  reallocation/relocation caveat as a watchpoint applies.
 - Snapshots, `system_reset` and migration drop debug registers and the stub. Treat every breakpoint, watchpoint and
   step as ephemeral and tear it down before one of those operations.
 - Single-step requires a paused guest. It selects one thread, executes one instruction, captures registers and leaves
-  the guest paused. Other vCPUs are not stepped.
+  the guest stopped. Other vCPUs are not stepped.
 
 ### Breakpoint and step validation record
 
-Record the live results here after the next run: the vCPU and thread of the hit, whether `rip` matched the requested
-address for both kinds, whether a software breakpoint survived the target page's permissions, and whether the guest
-was running and the stub gone afterwards.
+Run on 2026-11-09 against the `windows` target (12 vCPU, QEMU 10.2.2):
+
+- Hardware `debug-break` on `ntoskrnl.exe!HalProcessorIdle+0xf` (`0xfffff800aa6ac7cf`, pid 4) hit on vCPU 1/thread
+  `p01.02` with `rip` equal to the requested address, `cr3=0x1ae000`, `skipped=0`, and `bytes=c3cccccccccccc...`.
+  The guest was running afterwards, the stub was gone, and a second run while the guest was paused left it stopped.
+- Software `debug-break` on the same kernel address hit on vCPU 3/thread `p01.04`, and the first byte was restored to
+  `c3` after teardown. A software breakpoint on a user address in `ntdll.dll` failed with `E22` because the selected
+  vCPU was not in that process, which confirms the Z0 address-space limitation above.
+- The first live run exposed a false positive: a stop with the target CR3 but a different PC was reported as a hit.
+  The host now requires the stop PC to equal the breakpoint address; a regression test covers it. After that change,
+  repeated hardware runs reported only the requested address.
+- `debug-step --vcpu 0` and `--vcpu 10` each advanced `rip` from the idle loop (`0xfffff800aa6ac7cf`) to
+  `0xfffff800aa4af69b`, returned the full register record, left the guest stopped, and `debug-continue` resumed it.
+- A hardware breakpoint on a cold kernel address timed out with `skipped=0` and left the guest running. Killing the
+  client during a pending breakpoint (`timeout 2 ...`) also left the guest running with `stub-active=no`.
+- MCP `debug_break` returned the same hit structure as the CLI. MCP `debug_step` returned the same register record as
+  `debug-registers` for the stepped vCPU.
 
 ## Checks still owed to a live guest
 
