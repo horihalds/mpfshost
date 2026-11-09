@@ -66,7 +66,7 @@ namespace mpfshost
                 || command == "debug-attach" || command == "debug-detach" || command == "debug-arm-break"
                 || command == "debug-arm-watch" || command == "debug-remove-break" || command == "debug-remove-watch"
                 || command == "debug-breakpoints" || command == "debug-watchpoints" || command == "debug-wait"
-                || command == "debug-resume";
+                || command == "debug-resume" || command == "debug-threads";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -96,6 +96,16 @@ namespace mpfshost
                 && options.vcpu >= kMaxDebugVcpuRecords)
             {
                 error = "--vcpu must be below " + std::to_string(kMaxDebugVcpuRecords);
+                return false;
+            }
+            if (command != "debug-step" && options.threadSet)
+            {
+                error = "--thread is only valid for --client debug-step";
+                return false;
+            }
+            if (command == "debug-step" && options.threadSet && options.vcpuSet)
+            {
+                error = "--thread and --vcpu cannot be combined";
                 return false;
             }
             if (command != "debug-watch" && command != "debug-arm-watch"
@@ -534,6 +544,17 @@ namespace mpfshost
                 }
                 options.vcpu    = *parsed;
                 options.vcpuSet = true;
+                continue;
+            }
+            if (argument == "--thread")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--thread needs a GDB thread id";
+                    return std::nullopt;
+                }
+                options.threadId  = std::string {args[++index]};
+                options.threadSet = true;
                 continue;
             }
             if (argument == "--width")

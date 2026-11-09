@@ -811,7 +811,43 @@ namespace mpfshost::debug
         {
             return std::nullopt;
         }
+        resolveGuestContext(record.cr3,
+                            record.rip,
+                            record.rsp,
+                            record.guestPid,
+                            record.guestTid,
+                            record.processFound,
+                            record.threadFound);
         return record;
+    }
+
+    void DebugController::resolveGuestContext(std::uint64_t  cr3,
+                                              std::uint64_t  rip,
+                                              std::uint64_t  rsp,
+                                              std::uint32_t& pid,
+                                              std::uint32_t& tid,
+                                              bool&          processFound,
+                                              bool&          threadFound) noexcept
+    {
+        pid          = 0;
+        tid          = 0;
+        processFound = false;
+        threadFound  = false;
+        if (_inspector == nullptr)
+        {
+            return;
+        }
+
+        std::string ignored;
+        const auto  guest = _inspector->guestThread(cr3, rip, rsp, ignored);
+        if (!guest)
+        {
+            return;
+        }
+        pid          = guest->pid;
+        tid          = guest->tid;
+        processFound = true;
+        threadFound  = guest->threadFound;
     }
 
     std::optional<std::vector<DebugRegisterRecord>> DebugController::registers(
@@ -928,6 +964,142 @@ namespace mpfshost::debug
             return readRecords(*rsp, request, architecture, error, unavailable, &_attachedDescription);
         }
         return readRecords(*rsp, request, architecture, error, unavailable);
+    }
+
+    std::optional<std::vector<DebugThreadRecord>> DebugController::threads(
+        const DebugThreadsRequest&, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        busy         = false;
+        invalidState = false;
+        unavailable  = false;
+        std::unique_lock lock {_operationMutex, std::try_to_lock};
+        if (!lock.owns_lock())
+        {
+            busy  = true;
+            error = "another debug operation is in progress";
+            return std::nullopt;
+        }
+
+        std::string architecture;
+        if (!checkQmpArchitecture(architecture, error, unavailable))
+        {
+            return std::nullopt;
+        }
+
+        QmpStatusInfo current;
+        if (!qmpQueryStatus(current, error, unavailable))
+        {
+            return std::nullopt;
+        }
+        if (current.status == "running")
+        {
+            invalidState = true;
+            error        = "the guest must be paused before its threads can be read";
+            return std::nullopt;
+        }
+
+        if (_stubActive.load() && !_attachedRsp)
+        {
+            std::string ignored;
+            bool        ignoredUnavailable = false;
+            if (!stopStub(ignored, ignoredUnavailable))
+            {
+                error       = ignored.empty() ? "the previous GDB stub could not be stopped" : ignored;
+                unavailable = ignoredUnavailable;
+                return std::nullopt;
+            }
+        }
+
+        const bool attached = _attachedRsp != nullptr;
+        if (!attached)
+        {
+            bool active = false;
+            if (!hasActiveStub(active, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (active)
+            {
+                invalidState = true;
+                error        = "another GDB stub owns the debug channel";
+                return std::nullopt;
+            }
+        }
+
+        std::unique_ptr<RspClient> ownedRsp;
+        RspClient*                 rsp = nullptr;
+        if (attached)
+        {
+            rsp = _attachedRsp.get();
+        }
+        else
+        {
+            ownedRsp = makeRsp();
+            RspEndpoint endpoint;
+            if (!startStub(*ownedRsp, endpoint, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            rsp = ownedRsp.get();
+        }
+
+        struct Cleanup
+        {
+            DebugController& self;
+            bool             attached;
+
+            ~Cleanup()
+            {
+                if (attached)
+                {
+                    return;
+                }
+                std::string ignored;
+                bool        ignoredUnavailable = false;
+                if (self._stubActive.load() && !self.stopStub(ignored, ignoredUnavailable))
+                {
+                    log::warn("host", "could not stop the GDB stub during thread discovery teardown: ", ignored);
+                }
+                std::error_code removeError;
+                std::filesystem::remove(self._stubSocket, removeError);
+
+                QmpStatusInfo after;
+                if (self.qmpQueryStatus(after, ignored, ignoredUnavailable) && after.status == "running")
+                {
+                    std::string restore;
+                    if (!self.qmpExecute("stop", restore, ignored, ignoredUnavailable))
+                    {
+                        log::warn("host", "could not restore the paused guest after thread discovery: ", ignored);
+                    }
+                }
+            }
+        } cleanup {*this, attached};
+
+        DebugRegistersRequest all;
+        const auto            records =
+            readRecords(*rsp, all, architecture, error, unavailable, attached ? &_attachedDescription : nullptr);
+        if (!records)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<DebugThreadRecord> threads;
+        threads.reserve(records->size());
+        for (const auto& record : *records)
+        {
+            DebugThreadRecord thread;
+            thread.vcpu         = record.vcpu;
+            thread.threadId     = record.threadId;
+            thread.rip          = record.rip;
+            thread.rsp          = record.rsp;
+            thread.cr3          = record.cr3;
+            thread.processFound = record.processFound;
+            thread.pid          = record.guestPid;
+            thread.threadFound  = record.threadFound;
+            thread.tid          = record.guestTid;
+            threads.push_back(std::move(thread));
+        }
+        return threads;
     }
 
     std::optional<DebugWatchEnd> DebugController::watch(const DebugWatchRequest&    request,
@@ -1370,6 +1542,7 @@ namespace mpfshost::debug
             hit.oldValue = lastValue;
             hit.newValue = newValue;
             lastValue    = newValue;
+            resolveGuestContext(cr3, rip, rspValue, hit.guestPid, hit.guestTid, hit.processFound, hit.threadFound);
 
             const auto beforeStart = rip > kDebugWatchBytesBefore ? rip - kDebugWatchBytesBefore : 0;
             const auto beforeSize  = static_cast<std::uint32_t>(rip - beforeStart);
@@ -1824,6 +1997,8 @@ namespace mpfshost::debug
                     response.vcpu = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
                 }
             }
+            resolveGuestContext(
+                cr3, rip, rspValue, response.guestPid, response.guestTid, response.processFound, response.threadFound);
 
             std::string readError;
             if (!_inspector->readMemory(request.pid, rip, kDebugBreakpointBytes, response.bytesAtRip, readError))
@@ -1993,13 +2168,25 @@ namespace mpfshost::debug
             error = "the GDB stub reported no threads";
             return std::nullopt;
         }
-        if (request.vcpu >= threads.size())
+        std::uint32_t selectedIndex = request.vcpu;
+        if (!request.threadId.empty())
+        {
+            const auto found = std::find(threads.begin(), threads.end(), request.threadId);
+            if (found == threads.end())
+            {
+                invalidState = true;
+                error        = "thread '" + request.threadId + "' is not present";
+                return std::nullopt;
+            }
+            selectedIndex = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
+        }
+        else if (request.vcpu >= threads.size())
         {
             error = "vCPU " + std::to_string(request.vcpu) + " is not present";
             return std::nullopt;
         }
 
-        const auto& thread = threads[request.vcpu];
+        const auto& thread = threads[selectedIndex];
         if (!rsp->selectThread(thread, kRspTimeout, error))
         {
             return std::nullopt;
@@ -2052,7 +2239,7 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
 
-            auto index = request.vcpu;
+            auto index = selectedIndex;
             if (stopThread && !stopThread->empty())
             {
                 const auto found = std::find(threads.begin(), threads.end(), *stopThread);

@@ -240,6 +240,9 @@ namespace mpfshost
         case MessageType::DebugRegistersRequest:
             handleDebugRegisters(requestId, payload);
             return;
+        case MessageType::DebugThreadsRequest:
+            handleDebugThreads(requestId, payload);
+            return;
         case MessageType::DebugWatchRequest:
             handleDebugWatch(requestId, payload);
             return;
@@ -431,6 +434,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugStateRequest),
             static_cast<std::uint16_t>(MessageType::DebugControlRequest),
             static_cast<std::uint16_t>(MessageType::DebugRegistersRequest),
+            static_cast<std::uint16_t>(MessageType::DebugThreadsRequest),
             static_cast<std::uint16_t>(MessageType::DebugWatchRequest),
             static_cast<std::uint16_t>(MessageType::DebugBreakpointRequest),
             static_cast<std::uint16_t>(MessageType::DebugStepRequest),

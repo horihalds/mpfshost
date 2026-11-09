@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace mpfshost
@@ -613,6 +614,10 @@ namespace mpfshost
         std::uint64_t r13 {};
         std::uint64_t r14 {};
         std::uint64_t r15 {};
+        std::uint32_t guestPid {};     // process owning cr3, zero when no process matches
+        std::uint32_t guestTid {};     // guest thread whose saved rip/rsp match, zero when unknown
+        bool          processFound {}; // the cr3 matched a known process
+        bool          threadFound {};  // guestTid is valid
     };
 
     struct DebugRegistersRequest
@@ -623,6 +628,31 @@ namespace mpfshost
     struct DebugRegistersResponse
     {
         std::vector<DebugRegisterRecord> records;
+    };
+
+    // One stub thread with just the context needed to pick a vCPU, plus the guest process/thread it belongs to
+    // when the CR3 matches a known process and the stack pointer matches one of its threads.
+    struct DebugThreadRecord
+    {
+        std::uint32_t vcpu {};
+        std::string   threadId; // GDB remote-protocol thread id
+        std::uint64_t rip {};
+        std::uint64_t rsp {};
+        std::uint64_t cr3 {};
+        bool          processFound {};
+        std::uint32_t pid {};
+        bool          threadFound {};
+        std::uint32_t tid {};
+    };
+
+    struct DebugThreadsRequest
+    {
+        // Empty payload; the target comes from the binding.
+    };
+
+    struct DebugThreadsResponse
+    {
+        std::vector<DebugThreadRecord> threads;
     };
 
     enum class DebugWatchAccess : std::uint8_t
@@ -676,6 +706,10 @@ namespace mpfshost
         bool                   pdbFound {};
         std::string            pdbSymbol;
         std::uint32_t          pdbDisplacement {};
+        std::uint32_t          guestPid {}; // process owning cr3, zero when no process matches
+        std::uint32_t          guestTid {}; // guest thread whose saved rip/rsp match, zero when unknown
+        bool                   processFound {};
+        bool                   threadFound {};
     };
 
     struct DebugWatchEnd
@@ -733,11 +767,23 @@ namespace mpfshost
         bool                   pdbFound {};
         std::string            pdbSymbol;
         std::uint32_t          pdbDisplacement {};
+        std::uint32_t          guestPid {}; // process owning cr3, zero when no process matches
+        std::uint32_t          guestTid {}; // guest thread whose saved rip/rsp match, zero when unknown
+        bool                   processFound {};
+        bool                   threadFound {};
     };
 
     struct DebugStepRequest
     {
+        DebugStepRequest() = default;
+
+        DebugStepRequest(std::uint32_t selectedVcpu, std::string selectedThread = {})
+            : vcpu {selectedVcpu}, threadId {std::move(selectedThread)}
+        {
+        }
+
         std::uint32_t vcpu {0};
+        std::string   threadId; // when set, selects this GDB thread instead of the vCPU index
     };
 
     struct DebugStepResponse
@@ -2113,6 +2159,11 @@ namespace mpfshost
     [[nodiscard]] std::vector<std::byte> encodeDebugRegistersResponse(const DebugRegistersResponse& message);
     [[nodiscard]] std::optional<DebugRegistersResponse>
     decodeDebugRegistersResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeDebugThreadsRequest(const DebugThreadsRequest& message);
+    [[nodiscard]] std::optional<DebugThreadsRequest>  decodeDebugThreadsRequest(std::span<const std::byte> payload);
+    [[nodiscard]] std::vector<std::byte>              encodeDebugThreadsResponse(const DebugThreadsResponse& message);
+    [[nodiscard]] std::optional<DebugThreadsResponse> decodeDebugThreadsResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>           encodeDebugWatchRequest(const DebugWatchRequest& message);
     [[nodiscard]] std::optional<DebugWatchRequest> decodeDebugWatchRequest(std::span<const std::byte> payload);

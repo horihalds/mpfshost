@@ -258,17 +258,22 @@ namespace mpfshost
         [[nodiscard]] std::optional<DebugStatus>
         debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
-                                                             debugRegisters(const DebugRegistersRequest& request,
-                                                                            bool&                        invalidState,
-                                                                            bool&                        busy,
-                                                                            std::string&                 error,
-                                                                            bool&                        unavailable) override;
-        [[nodiscard]] std::optional<DebugWatchEnd>           debugWatch(const DebugWatchRequest&    request,
-                                                                        const DebugWatchHitSink&    onHit,
-                                                                        const DebugWatchAbortCheck& aborted,
-                                                                        bool&                       busy,
-                                                                        std::string&                error,
-                                                                        bool&                       unavailable) override;
+                                                                    debugRegisters(const DebugRegistersRequest& request,
+                                                                                   bool&                        invalidState,
+                                                                                   bool&                        busy,
+                                                                                   std::string&                 error,
+                                                                                   bool&                        unavailable) override;
+        [[nodiscard]] std::optional<std::vector<DebugThreadRecord>> debugThreads(const DebugThreadsRequest& request,
+                                                                                 bool&        invalidState,
+                                                                                 bool&        busy,
+                                                                                 std::string& error,
+                                                                                 bool&        unavailable) override;
+        [[nodiscard]] std::optional<DebugWatchEnd>                  debugWatch(const DebugWatchRequest&    request,
+                                                                               const DebugWatchHitSink&    onHit,
+                                                                               const DebugWatchAbortCheck& aborted,
+                                                                               bool&                       busy,
+                                                                               std::string&                error,
+                                                                               bool&                       unavailable) override;
         [[nodiscard]] std::optional<DebugBreakpointResponse> debugBreakpoint(const DebugBreakpointRequest& request,
                                                                              const DebugWatchAbortCheck&   aborted,
                                                                              bool&                         invalidState,
@@ -337,6 +342,8 @@ namespace mpfshost
         nearestExport(std::uint32_t pid, const std::string& module, std::uint64_t address, std::string& error) override;
         [[nodiscard]] std::optional<debug::DebugPdbHit>
         pdbSymbol(std::uint32_t pid, const std::string& module, std::uint64_t offset, std::string& error) override;
+        [[nodiscard]] std::optional<debug::DebugGuestThread>
+        guestThread(std::uint64_t cr3, std::uint64_t rip, std::uint64_t rsp, std::string& error) override;
 
     private:
         VMM_HANDLE             _handle;

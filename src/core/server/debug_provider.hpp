@@ -32,11 +32,18 @@ namespace mpfshost
         // `invalidState` reports a running guest or another owner's stub, which the session maps to
         // ErrorCode::InvalidState instead of Internal.
         [[nodiscard]] virtual std::optional<std::vector<DebugRegisterRecord>>
-                                                           debugRegisters(const DebugRegistersRequest& request,
-                                                                          bool&                        invalidState,
-                                                                          bool&                        busy,
-                                                                          std::string&                 error,
-                                                                          bool&                        unavailable) = 0;
+        debugRegisters(const DebugRegistersRequest& request,
+                       bool&                        invalidState,
+                       bool&                        busy,
+                       std::string&                 error,
+                       bool&                        unavailable) = 0;
+        // Lists the stub's threads with their current context and, where possible, the guest pid and tid.
+        [[nodiscard]] virtual std::optional<std::vector<DebugThreadRecord>>
+                                                           debugThreads(const DebugThreadsRequest& request,
+                                                                        bool&                      invalidState,
+                                                                        bool&                      busy,
+                                                                        std::string&               error,
+                                                                        bool&                      unavailable) = 0;
         // `onHit` sends one data frame and returns false when it could not be written; `aborted` is polled
         // between short stops so cancellation, the request deadline and peer loss all end the watch quickly.
         [[nodiscard]] virtual std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
@@ -44,7 +51,7 @@ namespace mpfshost
                                                                       const DebugWatchAbortCheck& aborted,
                                                                       bool&                       busy,
                                                                       std::string&                error,
-                                                                      bool&                       unavailable)      = 0;
+                                                                      bool&                       unavailable)  = 0;
         // `invalidState` reports a running guest or another owner's stub when a request needs a paused guest.
         [[nodiscard]] virtual std::optional<DebugBreakpointResponse>
                                                                debugBreakpoint(const DebugBreakpointRequest& request,

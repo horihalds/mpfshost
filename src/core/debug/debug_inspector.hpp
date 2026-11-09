@@ -38,6 +38,16 @@ namespace mpfshost::debug
         std::uint32_t displacement {};
     };
 
+    // The guest process and thread behind a stub thread's context. An empty optional means the CR3 does not
+    // match a known process; `threadFound` is false when the process is known but its stack does not match one
+    // of its threads.
+    struct DebugGuestThread
+    {
+        std::uint32_t pid {};
+        std::uint32_t tid {};
+        bool          threadFound {};
+    };
+
     // Process context and symbolization behind a watchpoint. Implemented by the privileged host handle so the
     // controller stays independent of MemProcFS. A failed lookup is reported by an empty optional, not an error;
     // only an unusable handle or a transport failure sets `error`.
@@ -53,11 +63,13 @@ namespace mpfshost::debug
         nearestExport(std::uint32_t pid, const std::string& module, std::uint64_t address, std::string& error) = 0;
         [[nodiscard]] virtual std::optional<DebugPdbHit>
         pdbSymbol(std::uint32_t pid, const std::string& module, std::uint64_t offset, std::string& error) = 0;
+        [[nodiscard]] virtual std::optional<DebugGuestThread>
+        guestThread(std::uint64_t cr3, std::uint64_t rip, std::uint64_t rsp, std::string& error) = 0;
         [[nodiscard]] virtual bool readMemory(std::uint32_t           pid,
                                               std::uint64_t           address,
                                               std::uint32_t           size,
                                               std::vector<std::byte>& out,
-                                              std::string&            error)                              = 0;
+                                              std::string&            error)                     = 0;
     };
 } // namespace mpfshost::debug
 

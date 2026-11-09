@@ -35,9 +35,23 @@ namespace mpfshost::cli
             }
         }
 
+        void printGuestContext(std::uint32_t pid, std::uint32_t tid, bool processFound, bool threadFound)
+        {
+            if (processFound)
+            {
+                std::printf("  pid=%u", static_cast<unsigned>(pid));
+            }
+            if (threadFound)
+            {
+                std::printf("  tid=%u", static_cast<unsigned>(tid));
+            }
+        }
+
         void printDebugRecord(const mpfshost::DebugRegisterRecord& record)
         {
-            std::printf("vcpu %u  thread %s\n", static_cast<unsigned>(record.vcpu), record.threadId.c_str());
+            std::printf("vcpu %u  thread %s", static_cast<unsigned>(record.vcpu), record.threadId.c_str());
+            printGuestContext(record.guestPid, record.guestTid, record.processFound, record.threadFound);
+            std::printf("\n");
             std::printf("  rip=0x%016llx  rsp=0x%016llx  rbp=0x%016llx  eflags=0x%08llx\n",
                         static_cast<unsigned long long>(record.rip),
                         static_cast<unsigned long long>(record.rsp),
@@ -66,6 +80,32 @@ namespace mpfshost::cli
             std::printf("  r14=0x%016llx  r15=0x%016llx\n",
                         static_cast<unsigned long long>(record.r14),
                         static_cast<unsigned long long>(record.r15));
+        }
+
+        void printDebugThread(const mpfshost::DebugThreadRecord& thread)
+        {
+            std::printf("vcpu %u  thread %s  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx",
+                        static_cast<unsigned>(thread.vcpu),
+                        thread.threadId.c_str(),
+                        static_cast<unsigned long long>(thread.rip),
+                        static_cast<unsigned long long>(thread.rsp),
+                        static_cast<unsigned long long>(thread.cr3));
+            if (thread.processFound)
+            {
+                std::printf("  pid=%u", static_cast<unsigned>(thread.pid));
+            }
+            else
+            {
+                std::printf("  pid=?");
+            }
+            if (thread.threadFound)
+            {
+                std::printf("  tid=%u\n", static_cast<unsigned>(thread.tid));
+            }
+            else
+            {
+                std::printf("  tid=?\n");
+            }
         }
 
         void printDebugArmBreakpoint(const mpfshost::DebugBreakpointArmResponse& breakpoint)
@@ -1740,6 +1780,26 @@ namespace mpfshost::cli
             return 0;
         }
 
+        if (options.command == "debug-threads")
+        {
+            const auto threads = mpfshost::debugThreads(options.socketPath, {options.target}, error);
+            if (!threads)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            if (threads->empty())
+            {
+                std::printf("no debug threads were returned\n");
+                return 0;
+            }
+            for (const auto& thread : *threads)
+            {
+                printDebugThread(thread);
+            }
+            return 0;
+        }
+
         if (options.command == "debug-watch")
         {
             const auto end = mpfshost::debugWatch(
@@ -1753,10 +1813,12 @@ namespace mpfshost::cli
                  options.watchTimeoutSeconds * 1000},
                 [](const mpfshost::DebugWatchData& hit)
                 {
-                    std::printf("hit %u  vcpu %u  thread %s\n",
+                    std::printf("hit %u  vcpu %u  thread %s",
                                 static_cast<unsigned>(hit.hitIndex),
                                 static_cast<unsigned>(hit.vcpu),
                                 hit.threadId.c_str());
+                    printGuestContext(hit.guestPid, hit.guestTid, hit.processFound, hit.threadFound);
+                    std::printf("\n");
                     std::printf("  address=0x%016llx  old=0x%016llx  new=0x%016llx\n",
                                 static_cast<unsigned long long>(hit.address),
                                 static_cast<unsigned long long>(hit.oldValue),
@@ -1829,7 +1891,10 @@ namespace mpfshost::cli
             if (response->status == mpfshost::DebugBreakpointStatus::Hit)
             {
                 std::printf(
-                    "hit  vcpu %u  thread %s\n", static_cast<unsigned>(response->vcpu), response->threadId.c_str());
+                    "hit  vcpu %u  thread %s", static_cast<unsigned>(response->vcpu), response->threadId.c_str());
+                printGuestContext(
+                    response->guestPid, response->guestTid, response->processFound, response->threadFound);
+                std::printf("\n");
                 std::printf("  address=0x%016llx  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
                             static_cast<unsigned long long>(response->address),
                             static_cast<unsigned long long>(response->rip),
@@ -1873,8 +1938,11 @@ namespace mpfshost::cli
 
         if (options.command == "debug-step")
         {
-            const auto response =
-                mpfshost::debugStep(options.socketPath, {options.target, options.vcpuSet ? options.vcpu : 0}, error);
+            const auto response = mpfshost::debugStep(options.socketPath,
+                                                      {options.target,
+                                                       options.vcpuSet ? options.vcpu : 0,
+                                                       options.threadSet ? options.threadId : std::string {}},
+                                                      error);
             if (!response)
             {
                 mpfshost::log::error("client", error);
@@ -1991,9 +2059,11 @@ namespace mpfshost::cli
                                 static_cast<unsigned>(hit.id),
                                 hit.kind == mpfshost::DebugResourceKind::Watchpoint ? "watchpoint" : "breakpoint",
                                 static_cast<unsigned long long>(hit.address));
-                    std::printf("  vcpu %u  thread %s  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
-                                static_cast<unsigned>(hit.record.vcpu),
-                                hit.record.threadId.c_str(),
+                    std::printf(
+                        "  vcpu %u  thread %s", static_cast<unsigned>(hit.record.vcpu), hit.record.threadId.c_str());
+                    printGuestContext(
+                        hit.record.guestPid, hit.record.guestTid, hit.record.processFound, hit.record.threadFound);
+                    std::printf("  rip=0x%016llx  rsp=0x%016llx  cr3=0x%016llx\n",
                                 static_cast<unsigned long long>(hit.record.rip),
                                 static_cast<unsigned long long>(hit.record.rsp),
                                 static_cast<unsigned long long>(hit.record.cr3));

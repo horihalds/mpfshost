@@ -144,35 +144,43 @@ namespace mpfshost
             writer.writeU64(record.r13);
             writer.writeU64(record.r14);
             writer.writeU64(record.r15);
+            writer.writeU32(record.guestPid);
+            writer.writeU32(record.guestTid);
+            writer.writeU8(record.processFound ? 1 : 0);
+            writer.writeU8(record.threadFound ? 1 : 0);
         }
 
         DebugRegisterRecord readDebugRecord(ByteReader& reader)
         {
             DebugRegisterRecord record;
-            record.vcpu     = reader.readU32();
-            record.threadId = reader.readString();
-            record.rip      = reader.readU64();
-            record.rsp      = reader.readU64();
-            record.rbp      = reader.readU64();
-            record.eflags   = reader.readU64();
-            record.cr0      = reader.readU64();
-            record.cr3      = reader.readU64();
-            record.cr4      = reader.readU64();
-            record.cr8      = reader.readU64();
-            record.rax      = reader.readU64();
-            record.rbx      = reader.readU64();
-            record.rcx      = reader.readU64();
-            record.rdx      = reader.readU64();
-            record.rsi      = reader.readU64();
-            record.rdi      = reader.readU64();
-            record.r8       = reader.readU64();
-            record.r9       = reader.readU64();
-            record.r10      = reader.readU64();
-            record.r11      = reader.readU64();
-            record.r12      = reader.readU64();
-            record.r13      = reader.readU64();
-            record.r14      = reader.readU64();
-            record.r15      = reader.readU64();
+            record.vcpu         = reader.readU32();
+            record.threadId     = reader.readString();
+            record.rip          = reader.readU64();
+            record.rsp          = reader.readU64();
+            record.rbp          = reader.readU64();
+            record.eflags       = reader.readU64();
+            record.cr0          = reader.readU64();
+            record.cr3          = reader.readU64();
+            record.cr4          = reader.readU64();
+            record.cr8          = reader.readU64();
+            record.rax          = reader.readU64();
+            record.rbx          = reader.readU64();
+            record.rcx          = reader.readU64();
+            record.rdx          = reader.readU64();
+            record.rsi          = reader.readU64();
+            record.rdi          = reader.readU64();
+            record.r8           = reader.readU64();
+            record.r9           = reader.readU64();
+            record.r10          = reader.readU64();
+            record.r11          = reader.readU64();
+            record.r12          = reader.readU64();
+            record.r13          = reader.readU64();
+            record.r14          = reader.readU64();
+            record.r15          = reader.readU64();
+            record.guestPid     = reader.readU32();
+            record.guestTid     = reader.readU32();
+            record.processFound = reader.readU8() != 0;
+            record.threadFound  = reader.readU8() != 0;
             return record;
         }
     } // namespace
@@ -225,6 +233,75 @@ namespace mpfshost
             {
                 return std::nullopt;
             }
+        }
+        if (!reader.atEnd())
+        {
+            return std::nullopt;
+        }
+        return message;
+    }
+
+    std::vector<std::byte> encodeDebugThreadsRequest(const DebugThreadsRequest&)
+    {
+        return {};
+    }
+
+    std::optional<DebugThreadsRequest> decodeDebugThreadsRequest(std::span<const std::byte> payload)
+    {
+        if (!payload.empty())
+        {
+            return std::nullopt;
+        }
+        return DebugThreadsRequest {};
+    }
+
+    std::vector<std::byte> encodeDebugThreadsResponse(const DebugThreadsResponse& message)
+    {
+        ByteWriter writer;
+        writer.writeU32(static_cast<std::uint32_t>(message.threads.size()));
+        for (const auto& thread : message.threads)
+        {
+            writer.writeU32(thread.vcpu);
+            writer.writeString(thread.threadId);
+            writer.writeU64(thread.rip);
+            writer.writeU64(thread.rsp);
+            writer.writeU64(thread.cr3);
+            writer.writeU8(thread.processFound ? 1 : 0);
+            writer.writeU32(thread.pid);
+            writer.writeU8(thread.threadFound ? 1 : 0);
+            writer.writeU32(thread.tid);
+        }
+        return writer.take();
+    }
+
+    std::optional<DebugThreadsResponse> decodeDebugThreadsResponse(std::span<const std::byte> payload)
+    {
+        ByteReader reader {payload};
+        const auto count = reader.readU32();
+        if (!reader.ok() || count > payload.size() || count > kMaxDebugVcpuRecords)
+        {
+            return std::nullopt;
+        }
+
+        DebugThreadsResponse message;
+        message.threads.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            DebugThreadRecord thread;
+            thread.vcpu         = reader.readU32();
+            thread.threadId     = reader.readString();
+            thread.rip          = reader.readU64();
+            thread.rsp          = reader.readU64();
+            thread.cr3          = reader.readU64();
+            thread.processFound = reader.readU8() != 0;
+            thread.pid          = reader.readU32();
+            thread.threadFound  = reader.readU8() != 0;
+            thread.tid          = reader.readU32();
+            if (!reader.ok())
+            {
+                return std::nullopt;
+            }
+            message.threads.push_back(std::move(thread));
         }
         if (!reader.atEnd())
         {
@@ -304,6 +381,10 @@ namespace mpfshost
         writer.writeU8(message.pdbFound ? 1 : 0);
         writer.writeString(message.pdbSymbol);
         writer.writeU32(message.pdbDisplacement);
+        writer.writeU32(message.guestPid);
+        writer.writeU32(message.guestTid);
+        writer.writeU8(message.processFound ? 1 : 0);
+        writer.writeU8(message.threadFound ? 1 : 0);
         return writer.take();
     }
 
@@ -330,6 +411,10 @@ namespace mpfshost
         message.pdbFound        = reader.readU8() != 0;
         message.pdbSymbol       = reader.readString();
         message.pdbDisplacement = reader.readU32();
+        message.guestPid        = reader.readU32();
+        message.guestTid        = reader.readU32();
+        message.processFound    = reader.readU8() != 0;
+        message.threadFound     = reader.readU8() != 0;
         if (!reader.ok() || !reader.atEnd() || message.bytesBefore.size() > kDebugWatchBytesBefore)
         {
             return std::nullopt;
@@ -434,6 +519,10 @@ namespace mpfshost
         writer.writeU8(message.pdbFound ? 1 : 0);
         writer.writeString(message.pdbSymbol);
         writer.writeU32(message.pdbDisplacement);
+        writer.writeU32(message.guestPid);
+        writer.writeU32(message.guestTid);
+        writer.writeU8(message.processFound ? 1 : 0);
+        writer.writeU8(message.threadFound ? 1 : 0);
         return writer.take();
     }
 
@@ -460,6 +549,10 @@ namespace mpfshost
         message.pdbFound        = reader.readU8() != 0;
         message.pdbSymbol       = reader.readString();
         message.pdbDisplacement = reader.readU32();
+        message.guestPid        = reader.readU32();
+        message.guestTid        = reader.readU32();
+        message.processFound    = reader.readU8() != 0;
+        message.threadFound     = reader.readU8() != 0;
         if (!reader.ok() || !reader.atEnd() || message.bytesAtRip.size() > kDebugBreakpointBytes)
         {
             return std::nullopt;
@@ -476,6 +569,7 @@ namespace mpfshost
     {
         ByteWriter writer;
         writer.writeU32(message.vcpu);
+        writer.writeString(message.threadId);
         return writer.take();
     }
 
@@ -483,7 +577,8 @@ namespace mpfshost
     {
         ByteReader       reader {payload};
         DebugStepRequest message;
-        message.vcpu = reader.readU32();
+        message.vcpu     = reader.readU32();
+        message.threadId = reader.readString();
         if (!reader.ok() || !reader.atEnd())
         {
             return std::nullopt;

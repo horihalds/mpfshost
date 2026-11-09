@@ -26,6 +26,12 @@ namespace mpfshost
         return _debug.registers(request, invalidState, busy, error, unavailable);
     }
 
+    std::optional<std::vector<DebugThreadRecord>> VmmHandle::debugThreads(
+        const DebugThreadsRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable)
+    {
+        return _debug.threads(request, invalidState, busy, error, unavailable);
+    }
+
     std::optional<DebugWatchEnd> VmmHandle::debugWatch(const DebugWatchRequest&    request,
                                                        const DebugWatchHitSink&    onHit,
                                                        const DebugWatchAbortCheck& aborted,
@@ -208,5 +214,59 @@ namespace mpfshost
             return std::nullopt;
         }
         return debug::DebugPdbHit {symbol->symbol, symbol->displacement};
+    }
+
+    std::optional<debug::DebugGuestThread>
+    VmmHandle::guestThread(std::uint64_t cr3, std::uint64_t rip, std::uint64_t rsp, std::string& error)
+    {
+        LookupStatus status  = LookupStatus::Failed;
+        const auto   process = processByDtb(ProcessByDtbRequest {cr3}, status, error);
+        if (!process)
+        {
+            error.clear();
+            return std::nullopt;
+        }
+
+        debug::DebugGuestThread guest;
+        guest.pid = process->process.pid;
+
+        const auto threads = listThreads(ThreadListRequest {guest.pid, 0, 0}, error);
+        if (!threads)
+        {
+            error.clear();
+            return guest;
+        }
+
+        // A running and a paused vCPU both leave RSP inside their thread's stack. Prefer a thread whose trap
+        // frame or user instruction pointer also matches RIP so a shared stack range cannot pick the wrong one.
+        const ThreadDescriptor* best        = nullptr;
+        bool                    bestIpMatch = false;
+        for (const auto& thread : *threads)
+        {
+            const bool userStack   = thread.stackBaseUser != 0 && thread.stackLimitUser != 0
+                                  && rsp >= thread.stackLimitUser && rsp < thread.stackBaseUser;
+            const bool kernelStack = thread.stackBaseKernel != 0 && thread.stackLimitKernel != 0
+                                  && rsp >= thread.stackLimitKernel && rsp < thread.stackBaseKernel;
+            if (!userStack && !kernelStack)
+            {
+                continue;
+            }
+            const bool ipMatch = thread.instructionPointer == rip;
+            if (best == nullptr || (ipMatch && !bestIpMatch))
+            {
+                best        = &thread;
+                bestIpMatch = ipMatch;
+                if (ipMatch)
+                {
+                    break;
+                }
+            }
+        }
+        if (best != nullptr)
+        {
+            guest.tid         = best->tid;
+            guest.threadFound = true;
+        }
+        return guest;
     }
 } // namespace mpfshost

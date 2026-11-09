@@ -132,6 +132,7 @@ range.
  `DebugStateRequest` | `0x003B` | `DebugStateResponse` `0x805E` | single | `debug-status` |
  `DebugControlRequest` | `0x003C` | `DebugControlResponse` `0x805F` | single | `debug-stop` / `debug-continue` |
  `DebugRegistersRequest` | `0x003D` | `DebugRegistersResponse` `0x8060` | single | `debug-registers` |
+ `DebugThreadsRequest` | `0x004B` | `DebugThreadsResponse` `0x806F` | single | `debug-threads` |
  `DebugWatchRequest` | `0x003E` | `DebugWatchData` `0x8061` / `DebugWatchEnd` `0x8062` | stream | `debug-watch` |
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
@@ -284,12 +285,43 @@ its own stub and re-checks that the guest is still paused.
  `rip`, `rsp`, `rbp`, `eflags` | `u64` | Instruction and stack pointers and flags |
  `cr0`, `cr3`, `cr4`, `cr8` | `u64` | Control registers |
  `rax` … `r15`, except `rsp`/`rbp` | `u64` | General registers (`rax`, `rbx`, `rcx`, `rdx`, `rsi`, `rdi`, `r8`–`r15`) |
+ `guestPid` | `u32` | Guest process that owns `cr3`, zero when no process matches |
+ `guestTid` | `u32` | Guest thread whose stack contains `rsp`, zero when unknown |
+ `processFound`, `threadFound` | `u8` | Whether `guestPid` and `guestTid` are valid |
+
+The guest context fields are derived the same way as in `DebugThreadsResponse`: the CR3 selects a process, then the
+stack pointer selects one of its threads. They are informational and are reported on every register record, watch
+hit, breakpoint hit and wait hit.
 
 The host reads QEMU's `target.xml` (following `xi:include`), uses its register numbering and byte layout for the
 `g` packet, and falls back to a fixed x86-64 layout only for a register that the XML omits. If the stub cannot be
 started it tries loopback TCP before failing; it never uses the all-interfaces default and never stops a stub it did
 not start. The record layout above and the register names in every request are x86-64; an unsupported architecture is
 rejected as described under "Debug control".
+
+## Debug threads
+
+`DebugThreadsRequest` has no payload. It lists the same stub threads `DebugRegistersRequest` would return, but with
+only the context needed to choose one: the vCPU index, GDB thread id, `rip`, `rsp` and `cr3`. It has the same paused,
+architecture and stub-ownership rules as `debug-registers`, starts a temporary stub when no attachment exists, and
+stops that stub before answering. An attached stub is reused and left in place.
+
+`DebugThreadsResponse` is a `u32` count followed by records:
+
+ Field | Type | Meaning |
+-------|------|---------|
+ `vcpu` | `u32` | 0-based position in the stub's thread list |
+ `threadId` | string | GDB remote-protocol thread id |
+ `rip`, `rsp`, `cr3` | `u64` | Registers captured for that thread |
+ `processFound` | `u8` | The CR3 matched a known process |
+ `pid` | `u32` | Guest process id when `processFound`, otherwise zero |
+ `threadFound` | `u8` | The stack pointer matched one of that process's threads |
+ `tid` | `u32` | Guest thread id when `threadFound`, otherwise zero |
+
+The vCPU index is a position in the stub's thread list and is what `--vcpu` selects. The GDB thread id is the
+stable name QEMU prints (for example `p01.03`) and is what `DebugStepRequest.threadId` selects. The guest pid/tid are
+resolved through the CR3 and the process thread stack ranges; they are informational and do not change which thread
+a request operates on.
 
 ## Debug watch
 
@@ -328,6 +360,7 @@ download is started).
  `moduleOffset` | `u64` | `rip - module base` |
  `exportFound`, `exportAddress`, `exportOffset`, `exportName` | `u8`, `u64`, `u64`, string | Nearest export at or below `rip` |
  `pdbFound`, `pdbSymbol`, `pdbDisplacement` | `u8`, string, `u32` | Symbol from an already-loaded PDB, when present |
+ `guestPid`, `guestTid`, `processFound`, `threadFound` | `u32`, `u32`, `u8`, `u8` | Guest context of the stop, as in `DebugRegisterRecord` |
 
 `DebugWatchEnd` carries a `u8` status (`0` completed, `1` timeout, `2` cancelled, `3` error), the `u32` hit count, the
 `u32` skipped-hit count and an error string. Teardown removes the watchpoints, stops a stub the host started, resumes
@@ -358,7 +391,8 @@ modules is accepted because a user CR3 may be a shadow table that MemProcFS does
 `DebugBreakpointResponse` carries a `u8` status (`0` hit, `1` timeout, `2` cancelled, `3` error), the `u32` skipped
 count, an error string, then the hit fields: `vcpu`, `threadId`, `rip`, `rsp`, `cr3`, `address`, `bytesAtRip` (up to
 `kDebugBreakpointBytes` 16 bytes), `module`, `moduleOffset`, `exportFound/exportAddress/exportOffset/exportName` and
-`pdbFound/pdbSymbol/pdbDisplacement`. Teardown removes the breakpoint, closes the RSP connection, stops a stub the
+`pdbFound/pdbSymbol/pdbDisplacement`, then `guestPid`, `guestTid`, `processFound` and `threadFound` with the same
+meaning as in `DebugRegisterRecord`. Teardown removes the breakpoint, closes the RSP connection, stops a stub the
 host started, then resumes a guest it paused or re-pauses an already-paused one.
 
 A hardware breakpoint uses one of the four debug-register slots, so it competes with an active watchpoint; the host
@@ -370,12 +404,14 @@ to equal the requested address, so an unrelated stop is skipped rather than repo
 
 ## Debug single step
 
-`DebugStepRequest` carries one `u32` vCPU index (default `0`) and is valid only while the guest is paused and no other
-owner holds the debug channel; otherwise the host answers `InvalidState`. It starts a stub, selects that thread,
-executes one instruction with `vCont;s` (`s` when `vCont` is unavailable), captures the resulting registers and tears
-the stub down while leaving the guest paused. `DebugStepResponse` is one fixed `DebugRegisterRecord`, the same layout
-as one entry of `DebugRegistersResponse`. An index that is not present in the stub's thread list is reported as
-`Internal` with the reason, like `debug-registers`.
+`DebugStepRequest` carries a `u32` vCPU index (default `0`) followed by a string GDB thread id. A non-empty
+`threadId` selects that thread and ignores `vcpu`; the CLI and MCP reject supplying both. The request is valid only
+while the guest is paused and no other owner holds the debug channel; otherwise the host answers `InvalidState`. It
+starts a stub, selects that thread, executes one instruction with `vCont;s` (`s` when `vCont` is unavailable),
+captures the resulting registers and tears the stub down while leaving the guest paused. `DebugStepResponse` is one
+fixed `DebugRegisterRecord`, the same layout as one entry of `DebugRegistersResponse`, including the `threadId` of
+the thread that actually stepped. A vCPU index or thread id that is not present in the stub's thread list is
+reported as `InvalidState` with the reason; use `debug-threads` to discover them.
 
 ## Physical memory variants
 
@@ -425,7 +461,7 @@ into chunks that each fit in one `kMaxPayloadLength` frame and advances `offset`
  17 | `Cancelled` | request cancelled before it sent a frame |
  18 | `Timeout` | request budget expired before it sent a frame |
  19 | `Busy` | worker pool and pending queue are both full |
- 20 | `InvalidState` | `DebugRegistersRequest` or `DebugStepRequest` while the guest is running, or another stub owns the debug channel |
+ 20 | `InvalidState` | `DebugRegistersRequest`, `DebugThreadsRequest` or `DebugStepRequest` while the guest is running, another stub owns the debug channel, or a step selects an unknown thread |
 
 Codes are additive: adding a code or a message type keeps `kProtocolVersion` at `1`. Do not change the layout of an
 existing payload; if a change is unavoidable, ask the user first, because old clients will misparse it.

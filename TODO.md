@@ -15,23 +15,6 @@ model first, then extend it. Later tasks that change the wire protocol must foll
 `docs/PROTOCOL.md`; append message types and error codes, never renumber them. Live checks are run by the user as
 required by `AGENTS.md`; keep the unit suite free of `vmm.so`, `leechcore.so` and root.
 
-### 5. Add debug thread discovery
-
-`--vcpu` is the stub's thread-list index, and callers have no way to see which guest thread or process a register
-record belongs to.
-
-- Add `DebugThreadsRequest`/`DebugThreadsResponse`: for each stub thread, the vCPU index, GDB thread id, current
-  `rip`, `rsp`, `cr3` and, when the CR3 matches a known process, the pid and guest tid. Reuse the existing stub
-  startup and register reads, and stop the stub afterwards when no session is attached.
-- Add `--client debug-threads` and an MCP tool, and a `--thread` selector to `debug-step` in addition to `--vcpu`.
-  Report the thread id in every hit record, not only the index.
-- Tests: fake stub with several threads, pid/tid resolution for matching and non-matching CR3, invalid thread
-  selection, and no guest-memory logging.
-- Document the index-versus-thread distinction in `docs/DEBUGGING.md` and the request in `docs/PROTOCOL.md`.
-
-Acceptance: a caller can list every vCPU with its current context, resolve the target process threads, and select a
-specific thread for stepping.
-
 ### 6. Accept symbolic addresses in breakpoint and watch requests
 
 `debug-break` and `debug-watch` take raw hex only, although the host already resolves modules, exports and PDB

@@ -426,6 +426,11 @@ namespace mpfshost::testing
         std::optional<DebugRegistersRequest> lastRegistersRequest;
         std::uint32_t                        registersCalls {};
 
+        std::vector<DebugThreadRecord> threads;
+        std::string                    threadsFailure;
+        bool                           threadsInvalidState {};
+        std::uint32_t                  threadsCalls {};
+
         std::optional<DebugWatchRequest> lastWatchRequest;
         std::vector<DebugWatchData>      watchHits;
         DebugWatchEnd                    watchEnd;
@@ -1707,6 +1712,21 @@ namespace mpfshost::testing
             return _debugState->registers;
         }
 
+        [[nodiscard]] std::optional<std::vector<DebugThreadRecord>> debugThreads(
+            const DebugThreadsRequest&, bool& invalidState, bool& busy, std::string& error, bool& unavailable) override
+        {
+            ++_debugState->threadsCalls;
+            if (!_debugState->threadsFailure.empty())
+            {
+                invalidState = _debugState->threadsInvalidState;
+                unavailable  = _debugState->failureUnavailable;
+                error        = _debugState->threadsFailure;
+                return std::nullopt;
+            }
+            busy = false;
+            return _debugState->threads;
+        }
+
         [[nodiscard]] std::optional<DebugWatchEnd> debugWatch(const DebugWatchRequest&    request,
                                                               const DebugWatchHitSink&    onHit,
                                                               const DebugWatchAbortCheck& aborted,
@@ -2522,6 +2542,17 @@ namespace mpfshost::testing
         {
             _debugState->registersFailure      = std::move(message);
             _debugState->registersInvalidState = invalidState;
+        }
+
+        void setDebugThreads(std::vector<DebugThreadRecord> threads)
+        {
+            _debugState->threads = std::move(threads);
+        }
+
+        void failDebugThreadsWith(std::string message, bool invalidState = false)
+        {
+            _debugState->threadsFailure      = std::move(message);
+            _debugState->threadsInvalidState = invalidState;
         }
 
         void setDebugWatch(std::vector<DebugWatchData> hits, DebugWatchEnd end)

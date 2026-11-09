@@ -459,31 +459,57 @@ namespace mpfshost::mcp
         Json debugRecordJson(const DebugRegisterRecord& record)
         {
             return Json {
-                {     "vcpu",              record.vcpu},
-                {"thread_id",          record.threadId},
-                {      "rip",    hexString(record.rip)},
-                {      "rsp",    hexString(record.rsp)},
-                {      "rbp",    hexString(record.rbp)},
-                {   "eflags", hexString(record.eflags)},
-                {      "cr0",    hexString(record.cr0)},
-                {      "cr3",    hexString(record.cr3)},
-                {      "cr4",    hexString(record.cr4)},
-                {      "cr8",    hexString(record.cr8)},
-                {      "rax",    hexString(record.rax)},
-                {      "rbx",    hexString(record.rbx)},
-                {      "rcx",    hexString(record.rcx)},
-                {      "rdx",    hexString(record.rdx)},
-                {      "rsi",    hexString(record.rsi)},
-                {      "rdi",    hexString(record.rdi)},
-                {       "r8",     hexString(record.r8)},
-                {       "r9",     hexString(record.r9)},
-                {      "r10",    hexString(record.r10)},
-                {      "r11",    hexString(record.r11)},
-                {      "r12",    hexString(record.r12)},
-                {      "r13",    hexString(record.r13)},
-                {      "r14",    hexString(record.r14)},
-                {      "r15",    hexString(record.r15)}
+                {         "vcpu",              record.vcpu},
+                {    "thread_id",          record.threadId},
+                {          "rip",    hexString(record.rip)},
+                {          "rsp",    hexString(record.rsp)},
+                {          "rbp",    hexString(record.rbp)},
+                {       "eflags", hexString(record.eflags)},
+                {          "cr0",    hexString(record.cr0)},
+                {          "cr3",    hexString(record.cr3)},
+                {          "cr4",    hexString(record.cr4)},
+                {          "cr8",    hexString(record.cr8)},
+                {          "rax",    hexString(record.rax)},
+                {          "rbx",    hexString(record.rbx)},
+                {          "rcx",    hexString(record.rcx)},
+                {          "rdx",    hexString(record.rdx)},
+                {          "rsi",    hexString(record.rsi)},
+                {          "rdi",    hexString(record.rdi)},
+                {           "r8",     hexString(record.r8)},
+                {           "r9",     hexString(record.r9)},
+                {          "r10",    hexString(record.r10)},
+                {          "r11",    hexString(record.r11)},
+                {          "r12",    hexString(record.r12)},
+                {          "r13",    hexString(record.r13)},
+                {          "r14",    hexString(record.r14)},
+                {          "r15",    hexString(record.r15)},
+                {"process_found",      record.processFound},
+                {          "pid",          record.guestPid},
+                { "thread_found",       record.threadFound},
+                {          "tid",          record.guestTid}
             };
+        }
+
+        Json debugThreadJson(const DebugThreadRecord& thread)
+        {
+            Json result {
+                {         "vcpu",           thread.vcpu},
+                {    "thread_id",       thread.threadId},
+                {          "rip", hexString(thread.rip)},
+                {          "rsp", hexString(thread.rsp)},
+                {          "cr3", hexString(thread.cr3)},
+                {"process_found",   thread.processFound},
+                { "thread_found",    thread.threadFound}
+            };
+            if (thread.processFound)
+            {
+                result["pid"] = thread.pid;
+            }
+            if (thread.threadFound)
+            {
+                result["tid"] = thread.tid;
+            }
+            return result;
         }
 
         Json debugWatchJson(const DebugWatchData& hit)
@@ -511,7 +537,11 @@ namespace mpfshost::mcp
                 {     "export_name",                       hit.exportName},
                 {       "pdb_found",                         hit.pdbFound},
                 {      "pdb_symbol",                        hit.pdbSymbol},
-                {"pdb_displacement",                  hit.pdbDisplacement}
+                {"pdb_displacement",                  hit.pdbDisplacement},
+                {   "process_found",                     hit.processFound},
+                {             "pid",                         hit.guestPid},
+                {    "thread_found",                      hit.threadFound},
+                {             "tid",                         hit.guestTid}
             };
         }
 
@@ -536,7 +566,11 @@ namespace mpfshost::mcp
                 {     "export_name",                                      response.exportName},
                 {       "pdb_found",                                        response.pdbFound},
                 {      "pdb_symbol",                                       response.pdbSymbol},
-                {"pdb_displacement",                                 response.pdbDisplacement}
+                {"pdb_displacement",                                 response.pdbDisplacement},
+                {   "process_found",                                    response.processFound},
+                {             "pid",                                        response.guestPid},
+                {    "thread_found",                                     response.threadFound},
+                {             "tid",                                        response.guestTid}
             };
         }
 
@@ -582,7 +616,11 @@ namespace mpfshost::mcp
                 {     "export_name",                                                          hit.exportName},
                 {       "pdb_found",                                                            hit.pdbFound},
                 {      "pdb_symbol",                                                           hit.pdbSymbol},
-                {"pdb_displacement",                                                     hit.pdbDisplacement}
+                {"pdb_displacement",                                                     hit.pdbDisplacement},
+                {   "process_found",                                                 hit.record.processFound},
+                {             "pid",                                                     hit.record.guestPid},
+                {    "thread_found",                                                  hit.record.threadFound},
+                {             "tid",                                                     hit.record.guestTid}
             };
         }
 
@@ -856,6 +894,10 @@ namespace mpfshost::mcp
                 {      "debug_registers",
                  "Read vCPU registers",                        "Read the x86-64 register set of a paused guest through a temporary GDB stub.",
                  true,          {target, {"vcpu", "integer", "vCPU index from a previous read; omit for every vCPU", false}} },
+                {        "debug_threads",
+                 "List vCPU threads",                                             "List each GDB stub thread with its vCPU index, thread id, rip, rsp, CR3 and, "
+                                             "when resolvable, the guest pid and tid.",  true,
+                 {target}                                                                                                    },
                 {           "debug_stop",
                  "Pause the guest",     "Stop the guest through QEMU's QMP socket. Destructive: the guest stays paused until a continue.",
                  false,                                                                                              {target}},
@@ -881,7 +923,9 @@ namespace mpfshost::mcp
     {"timeout", "integer", "Seconds to wait for the breakpoint (default 30)", false}}                 },
                 {           "debug_step",
                  "Single-step a vCPU",                                    "Single-step one vCPU of a paused guest and return its registers.",
-                 false,                   {target, {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false}}},
+                 false,    {target,
+    {"vcpu", "integer", "vCPU index from debug_registers (default 0)", false},
+    {"thread", "string", "GDB thread id from debug_threads, instead of vcpu", false}}                 },
                 {         "debug_attach",
                  "Attach the debugger",                             "Start one persistent GDB stub and report its mode, architecture and guest state. Destructive: pauses "
                              "a running guest and resumes it if the attach paused it.", false,
@@ -2462,6 +2506,23 @@ namespace mpfshost::mcp
                 });
             }
 
+            if (name == "debug_threads")
+            {
+                const auto threads = debugThreads(socket, {requireString(args, "target")}, error);
+                if (!threads)
+                {
+                    return failure(error);
+                }
+                Json records = Json::array();
+                for (const auto& thread : *threads)
+                {
+                    records.push_back(debugThreadJson(thread));
+                }
+                return success(Json {
+                    {"threads", std::move(records)}
+                });
+            }
+
             if (name == "debug_stop" || name == "debug_continue")
             {
                 const auto action   = name == "debug_stop" ? DebugControlAction::Stop : DebugControlAction::Continue;
@@ -2564,7 +2625,12 @@ namespace mpfshost::mcp
             {
                 const auto vcpu =
                     hasArg(args, "vcpu") ? static_cast<std::uint32_t>(numberValue(args, "vcpu", true)) : 0;
-                const auto response = debugStep(socket, {requireString(args, "target"), vcpu}, error);
+                const auto thread = optionalString(args, "thread", "");
+                if (!thread.empty() && hasArg(args, "vcpu"))
+                {
+                    return failure("thread and vcpu cannot be combined");
+                }
+                const auto response = debugStep(socket, {requireString(args, "target"), vcpu, thread}, error);
                 if (!response)
                 {
                     return failure(error);

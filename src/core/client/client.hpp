@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mpfshost
@@ -75,6 +76,14 @@ namespace mpfshost
     [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
     debugRegisters(const std::filesystem::path& socketPath, const DebugRegistersQuery& query, std::string& error);
 
+    struct DebugThreadsQuery
+    {
+        std::string targetName;
+    };
+
+    [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>
+    debugThreads(const std::filesystem::path& socketPath, const DebugThreadsQuery& query, std::string& error);
+
     struct DebugWatchQuery
     {
         std::string      targetName;
@@ -108,8 +117,16 @@ namespace mpfshost
 
     struct DebugStepQuery
     {
+        DebugStepQuery() = default;
+
+        DebugStepQuery(std::string target, std::uint32_t selectedVcpu, std::string selectedThread = {})
+            : targetName {std::move(target)}, vcpu {selectedVcpu}, threadId {std::move(selectedThread)}
+        {
+        }
+
         std::string   targetName;
         std::uint32_t vcpu {0};
+        std::string   threadId; // when set, selects this GDB thread instead of the vCPU index
     };
 
     // Executes one instruction on a paused guest and returns the resulting registers.

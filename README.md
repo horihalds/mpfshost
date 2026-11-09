@@ -188,9 +188,10 @@ to it automatically.
  `--client debug-stop <vm>` | Pause the guest through QEMU's QMP socket (destructive). |
  `--client debug-continue <vm>` | Resume a paused guest (destructive). |
  `--client debug-registers <vm>` | Read every vCPU's x86-64 registers; `--vcpu <n>` selects one. Requires a paused guest. |
+ `--client debug-threads <vm>` | List each stub thread with its vCPU index, GDB thread id, `rip`, `rsp`, `cr3` and, when resolvable, the guest pid and tid. Requires a paused guest. |
  `--client debug-watch <vm>` | Watch a process address for writes; `--pid`, `--address`, `--width` (1/2/4/8), `--access write`, `--max-hits`, `--timeout` (seconds). Prints the trapped store when it can be decoded. Destructive. |
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). Reports the first hit and removes it. Destructive. |
- `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0). Destructive. |
+ `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0) or `--thread <id>` from `debug-threads`. Destructive. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
  `--client debug-detach <vm>` | End an attachment or stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |
@@ -261,10 +262,10 @@ Example session against VM `win11`, with the guest probe printing `PROBE pid=123
   directory lists as empty, because MemProcFS cannot tell it apart from a real one.
 - `vfs-write` is disabled unless the host was started with `--allow-vfs-write`; the host logs a warning when it is
   enabled, and the client receives `AccessDenied` otherwise. The guest file system must support writes.
-- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers`, `debug-watch`, `debug-break` and `debug-step`
-  use the QMP socket that the target scan already pairs with each QEMU process. `debug-stop` pauses the guest and
-  `debug-continue` resumes it; the host remembers whether **it** paused the VM. `debug-registers` and `debug-step`
-  only work on a paused guest and leave it paused. They start a temporary GDB stub on a Unix socket under `/tmp`, as
+- `debug-status`, `debug-stop`, `debug-continue`, `debug-registers`, `debug-threads`, `debug-watch`, `debug-break`
+  and `debug-step` use the QMP socket that the target scan already pairs with each QEMU process. `debug-stop` pauses the guest and
+  `debug-continue` resumes it; the host remembers whether **it** paused the VM. `debug-registers`, `debug-threads`
+  and `debug-step` only work on a paused guest and leave it paused. They start a temporary GDB stub on a Unix socket under `/tmp`, as
   do `debug-watch` and `debug-break`; a watch reports each write hit and a breakpoint reports its first hit, both with
   the trap PC and nearest symbol, and always remove the trap and stop the stub afterwards. A breakpoint is one-shot:
   repeat the command to stop again. These commands are destructive: a paused guest stops executing until it is
@@ -360,11 +361,12 @@ Write tools (`config_set`, `write_memory`, `write_vfs`, `write_physical_memory`,
  `config_set` | **Write:** set an allow-listed MemProcFS option. |
  `debug_status` | QEMU run state, vCPU count and host debug bookkeeping. |
  `debug_registers` | Read the x86-64 registers of a paused guest; optional `vcpu`. |
+ `debug_threads` | List each stub thread with its GDB id, `rip`, `rsp`, `cr3` and guest pid/tid when resolvable. |
  `debug_stop` | **Write:** pause the guest. |
  `debug_continue` | **Write:** resume a paused guest. |
  `debug_watch` | **Write:** arm a process write watchpoint and return each hit. |
  `debug_break` | **Write:** arm one software or hardware breakpoint and return its first hit. |
- `debug_step` | **Write:** single-step a vCPU of a paused guest. |
+ `debug_step` | **Write:** single-step a vCPU of a paused guest; optional `vcpu` or `thread`. |
  `write_memory` | **Write:** write process virtual memory. |
  `write_vfs` | **Write:** write a virtual file (host `--allow-vfs-write` also required). |
  `write_physical_memory` | **Write:** write guest physical memory. |

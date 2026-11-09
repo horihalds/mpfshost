@@ -97,6 +97,7 @@ namespace mpfshost
         void               handleDebugState(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugControl(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugRegisters(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleDebugThreads(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugWatch(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugBreakpoint(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugStep(std::uint64_t requestId, std::span<const std::byte> payload);

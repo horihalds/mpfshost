@@ -156,6 +156,61 @@ namespace mpfshost
         sendPayload(requestId, MessageType::DebugRegistersResponse, encodeDebugRegistersResponse({*records}));
     }
 
+    void Session::handleDebugThreads(std::uint64_t requestId, std::span<const std::byte> payload)
+    {
+        if (!_bound.has_value())
+        {
+            sendError(requestId, ErrorCode::NotBound, "session is not bound to a target");
+            return;
+        }
+
+        const auto request = decodeDebugThreadsRequest(payload);
+        if (!request.has_value())
+        {
+            sendError(requestId, ErrorCode::MalformedPayload, "debug-threads takes no payload");
+            return;
+        }
+
+        auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
+        if (provider == nullptr)
+        {
+            sendError(requestId, ErrorCode::CapabilityUnavailable, "the bound target cannot list debug threads");
+            return;
+        }
+
+        bool        invalidState = false;
+        bool        busy         = false;
+        std::string error;
+        bool        unavailable = false;
+        const auto  threads     = provider->debugThreads(*request, invalidState, busy, error, unavailable);
+        if (!threads.has_value())
+        {
+            if (busy)
+            {
+                sendError(requestId, ErrorCode::Busy, error.empty() ? "another debug operation is in progress" : error);
+                return;
+            }
+            if (invalidState)
+            {
+                sendError(requestId,
+                          ErrorCode::InvalidState,
+                          error.empty() ? "the guest is not in a state that allows this request" : error);
+                return;
+            }
+            if (unavailable)
+            {
+                sendError(requestId,
+                          ErrorCode::CapabilityUnavailable,
+                          error.empty() ? "the debug channel is unavailable" : error);
+                return;
+            }
+            sendError(requestId, ErrorCode::Internal, error.empty() ? "debug thread discovery failed" : error);
+            return;
+        }
+
+        sendPayload(requestId, MessageType::DebugThreadsResponse, encodeDebugThreadsResponse({*threads}));
+    }
+
     void Session::handleDebugWatch(std::uint64_t requestId, std::span<const std::byte> payload)
     {
         if (!_bound.has_value())

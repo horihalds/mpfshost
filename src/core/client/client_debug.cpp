@@ -103,6 +103,38 @@ namespace mpfshost
         return decoded->records;
     }
 
+    std::optional<std::vector<DebugThreadRecord>>
+    debugThreads(const std::filesystem::path& socketPath, const DebugThreadsQuery& query, std::string& error)
+    {
+        error.clear();
+        const auto connection = connectAndBind(socketPath, query.targetName, error);
+        if (!connection)
+        {
+            return std::nullopt;
+        }
+
+        const auto response =
+            exchange(connection->fd(), MessageType::DebugThreadsRequest, encodeDebugThreadsRequest({}), error);
+        if (!response)
+        {
+            return std::nullopt;
+        }
+
+        const auto payload = expectResponse(*response, MessageType::DebugThreadsResponse, error);
+        if (!payload)
+        {
+            return std::nullopt;
+        }
+
+        const auto decoded = decodeDebugThreadsResponse(*payload);
+        if (!decoded)
+        {
+            error = "server returned a malformed debug threads response";
+            return std::nullopt;
+        }
+        return decoded->threads;
+    }
+
     std::optional<DebugWatchEnd> debugWatch(const std::filesystem::path&                      socketPath,
                                             const DebugWatchQuery&                            query,
                                             const std::function<void(const DebugWatchData&)>& onHit,
@@ -230,8 +262,10 @@ namespace mpfshost
             return std::nullopt;
         }
 
-        const auto response =
-            exchange(connection->fd(), MessageType::DebugStepRequest, encodeDebugStepRequest({query.vcpu}), error);
+        const auto response = exchange(connection->fd(),
+                                       MessageType::DebugStepRequest,
+                                       encodeDebugStepRequest({query.vcpu, query.threadId}),
+                                       error);
         if (!response)
         {
             return std::nullopt;

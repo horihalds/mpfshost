@@ -241,22 +241,24 @@ namespace
             return packet;
         }
 
-        std::string              pending;
-        std::string              registersXml;
-        std::string              registerBytes;
-        bool                     noAck {false};
-        bool                     fail {false};
-        std::deque<StopReply>    stops;
-        std::vector<std::string> threads {"1.1"};
-        std::uint64_t            currentRip {};
-        std::uint64_t            currentRsp {};
-        std::uint64_t            currentCr3 {};
-        std::size_t              watchInserts {0};
-        std::size_t              watchRemoves {0};
-        std::size_t              breakpointInserts {0};
-        std::size_t              breakpointRemoves {0};
-        std::size_t              continues {0};
-        std::size_t              steps {0};
+        std::string                                      pending;
+        std::string                                      registersXml;
+        std::string                                      registerBytes;
+        std::string                                      selectedThread;
+        std::vector<std::pair<std::string, std::string>> registerBytesByThread;
+        bool                                             noAck {false};
+        bool                                             fail {false};
+        std::deque<StopReply>                            stops;
+        std::vector<std::string>                         threads {"1.1"};
+        std::uint64_t                                    currentRip {};
+        std::uint64_t                                    currentRsp {};
+        std::uint64_t                                    currentCr3 {};
+        std::size_t                                      watchInserts {0};
+        std::size_t                                      watchRemoves {0};
+        std::size_t                                      breakpointInserts {0};
+        std::size_t                                      breakpointRemoves {0};
+        std::size_t                                      continues {0};
+        std::size_t                                      steps {0};
 
         [[nodiscard]] bool open(const RspEndpoint&, std::chrono::milliseconds, std::string&) override
         {
@@ -345,6 +347,7 @@ namespace
                 const auto thread = body.substr(2);
                 if (std::find(threads.begin(), threads.end(), thread) != threads.end())
                 {
+                    selectedThread = thread;
                     quoteAck("OK");
                 }
                 else
@@ -354,7 +357,13 @@ namespace
             }
             else if (body == "g")
             {
-                quoteAck(registerBytes);
+                const auto found = std::find_if(registerBytesByThread.begin(),
+                                                registerBytesByThread.end(),
+                                                [this](const auto& entry)
+                                                {
+                                                    return entry.first == selectedThread;
+                                                });
+                quoteAck(found != registerBytesByThread.end() ? found->second : registerBytes);
             }
             else if (body.starts_with("Z2,"))
             {
@@ -464,7 +473,8 @@ namespace
                "bitsize=\"64\"/><reg name=\"pc\" bitsize=\"64\"/></feature>";
     }
 
-    std::string registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull)
+    std::string
+    registerBytes(std::uint64_t rip = 0xffffffffae89ab1bull, std::uint64_t rsp = 0, std::uint64_t cr3 = 0x1a2b3000ull)
     {
         std::string bytes(172, '\0');
         const auto  put = [&bytes](std::size_t offset, std::uint64_t value)
@@ -475,9 +485,10 @@ namespace
             }
         };
         put(0, 0x1122334455667788ull); // rax
+        put(56, rsp);                  // rsp
         put(128, rip);                 // rip
         put(140, 0x2468ace0ull);       // cr0
-        put(148, 0x1a2b3000ull);       // cr3
+        put(148, cr3);                 // cr3
         put(156, 0x0000f00eull);       // cr4
         put(164, 0x2ull);              // cr8
 
@@ -507,7 +518,31 @@ namespace
             mpfshost::debug::DebugPdbHit {"memcpy", 4}
         };
         bool                  hasModule {true};
+        std::size_t           memoryReads {0};
         std::function<void()> onWatchRead;
+
+        struct GuestMapping
+        {
+            std::uint64_t cr3 {};
+            std::uint32_t pid {};
+            std::uint32_t tid {};
+            bool          threadFound {true};
+        };
+
+        std::vector<GuestMapping> guests;
+
+        [[nodiscard]] std::optional<mpfshost::debug::DebugGuestThread>
+        guestThread(std::uint64_t cr3, std::uint64_t, std::uint64_t, std::string&) override
+        {
+            for (const auto& guest : guests)
+            {
+                if (guest.cr3 == cr3)
+                {
+                    return mpfshost::debug::DebugGuestThread {guest.pid, guest.tid, guest.threadFound};
+                }
+            }
+            return std::nullopt;
+        }
 
         [[nodiscard]] std::optional<mpfshost::debug::DebugProcessDtbs> processDtbs(std::uint32_t, std::string&) override
         {
@@ -542,6 +577,7 @@ namespace
                                       std::vector<std::byte>& out,
                                       std::string&            error) override
         {
+            ++memoryReads;
             out.clear();
             if (address == watchAddress)
             {
@@ -603,6 +639,69 @@ TEST_CASE("the debug controller starts and tears down a stub for register reads"
     REQUIRE((*records)[0].cr3 == 0x1a2b3000ull);
     REQUIRE((*records)[0].cr4 == 0x0000f00eull);
     REQUIRE((*records)[0].cr8 == 0x2ull);
+
+    REQUIRE(qmp->count("gdbserver unix:") == 1);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+    REQUIRE_FALSE(qmp->stubActive);
+}
+
+TEST_CASE("the debug controller lists stub threads and resolves guest contexts", "[core][debug][controller]")
+{
+    auto  qmp                  = std::make_shared<FakeQmpState>();
+    auto  qmpTransport         = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport         = std::make_unique<FakeRspTransport>();
+    auto* rsp                  = rspTransport.get();
+    rsp->registersXml          = x86RegisterXml();
+    rsp->threads               = {"p01.01", "p01.02", "p01.03"};
+    rsp->registerBytesByThread = {
+        {"p01.01", registerBytes(0x1111, 0x5000, 0x1000)},
+        {"p01.02", registerBytes(0x2222, 0x6000, 0x2000)},
+        {"p01.03", registerBytes(0x3333, 0x7000, 0x3000)},
+    };
+
+    FakeInspector inspector;
+    inspector.guests = {
+        {0x1000, 42, 100,  true},
+        {0x2000, 43,   0, false},
+    };
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                &inspector};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  threads     = controller.threads({}, invalidState, busy, error, unavailable);
+    REQUIRE(threads.has_value());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE(threads->size() == 3);
+
+    REQUIRE((*threads)[0].vcpu == 0);
+    REQUIRE((*threads)[0].threadId == "p01.01");
+    REQUIRE((*threads)[0].rip == 0x1111);
+    REQUIRE((*threads)[0].rsp == 0x5000);
+    REQUIRE((*threads)[0].cr3 == 0x1000);
+    REQUIRE((*threads)[0].processFound);
+    REQUIRE((*threads)[0].pid == 42);
+    REQUIRE((*threads)[0].threadFound);
+    REQUIRE((*threads)[0].tid == 100);
+
+    REQUIRE((*threads)[1].processFound);
+    REQUIRE((*threads)[1].pid == 43);
+    REQUIRE_FALSE((*threads)[1].threadFound);
+
+    REQUIRE_FALSE((*threads)[2].processFound);
+    REQUIRE(inspector.memoryReads == 0); // thread identity comes from the thread map, not guest memory
 
     REQUIRE(qmp->count("gdbserver unix:") == 1);
     REQUIRE(qmp->count("gdbserver none") == 1);
@@ -1601,6 +1700,75 @@ TEST_CASE("the debug controller single-steps a paused guest", "[core][debug][con
     REQUIRE(qmp->count("gdbserver none") == 1);
     REQUIRE_FALSE(qmp->stubActive);
     REQUIRE_FALSE(qmp->running);
+}
+
+TEST_CASE("a single step selects an explicit GDB thread", "[core][debug][controller]")
+{
+    auto  qmp          = std::make_shared<FakeQmpState>();
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->registerBytes = registerBytes(0x7ff84522b1f1ull);
+    rsp->threads       = {"p01.01", "p01.02"};
+    rsp->stops.push_back({"p01.02", 0x7ff84522b1f1ull, 0x1234, 0x200123});
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response    = controller.step({0, "p01.02"}, invalidState, busy, error, unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE_FALSE(invalidState);
+    REQUIRE(response->record.vcpu == 1);
+    REQUIRE(response->record.threadId == "p01.02");
+    REQUIRE(rsp->selectedThread == "p01.02");
+    REQUIRE(rsp->steps == 1);
+}
+
+TEST_CASE("a single step refuses an unknown GDB thread", "[core][debug][controller]")
+{
+    auto  qmp          = std::make_shared<FakeQmpState>();
+    auto  qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto  rspTransport = std::make_unique<FakeRspTransport>();
+    auto* rsp          = rspTransport.get();
+    rsp->registersXml  = x86RegisterXml();
+    rsp->registerBytes = registerBytes();
+    rsp->threads       = {"p01.01"};
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  response    = controller.step({0, "p09.99"}, invalidState, busy, error, unavailable);
+    REQUIRE_FALSE(response.has_value());
+    REQUIRE(invalidState);
+    REQUIRE(error.find("p09.99") != std::string::npos);
+    REQUIRE(rsp->steps == 0);
+    REQUIRE(qmp->count("gdbserver none") == 1);
+    REQUIRE_FALSE(qmp->stubActive);
 }
 
 TEST_CASE("a single step refuses a running guest", "[core][debug][controller]")

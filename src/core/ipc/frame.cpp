@@ -482,6 +482,8 @@ namespace mpfshost
             return "DebugContinueRequest";
         case MessageType::DebugWaitRequest:
             return "DebugWaitRequest";
+        case MessageType::DebugThreadsRequest:
+            return "DebugThreadsRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -652,6 +654,8 @@ namespace mpfshost
             return "DebugWaitHit";
         case MessageType::DebugWaitEnd:
             return "DebugWaitEnd";
+        case MessageType::DebugThreadsResponse:
+            return "DebugThreadsResponse";
         case MessageType::ProcessInfoResponse:
             return "ProcessInfoResponse";
         case MessageType::SymbolLookupResponse:

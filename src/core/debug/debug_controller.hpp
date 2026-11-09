@@ -53,22 +53,26 @@ namespace mpfshost::debug
                                                                                 bool&        busy,
                                                                                 std::string& error,
                                                                                 bool&        unavailable);
+        // Lists the stub's threads with their current context and, where the CR3 and stack resolve, the guest
+        // process and thread. Reuses an attachment; otherwise starts and stops a temporary stub.
+        [[nodiscard]] std::optional<std::vector<DebugThreadRecord>>   threads(
+            const DebugThreadsRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
         // Runs one process-scoped write watchpoint to completion, a hit limit or a timeout. A start failure
         // returns nullopt; once the watch is armed, an error is reported through the end record instead.
-        [[nodiscard]] std::optional<DebugWatchEnd>                    watch(const DebugWatchRequest&    request,
-                                                                            const DebugWatchHitSink&    onHit,
-                                                                            const DebugWatchAbortCheck& aborted,
-                                                                            bool&                       busy,
-                                                                            std::string&                error,
-                                                                            bool&                       unavailable);
+        [[nodiscard]] std::optional<DebugWatchEnd>           watch(const DebugWatchRequest&    request,
+                                                                   const DebugWatchHitSink&    onHit,
+                                                                   const DebugWatchAbortCheck& aborted,
+                                                                   bool&                       busy,
+                                                                   std::string&                error,
+                                                                   bool&                       unavailable);
         // Runs one breakpoint to its first hit or a timeout. Once the breakpoint is armed an error is
         // reported through the response; only setup failures return nullopt.
-        [[nodiscard]] std::optional<DebugBreakpointResponse>          breakpoint(const DebugBreakpointRequest& request,
-                                                                                 const DebugWatchAbortCheck&   aborted,
-                                                                                 bool&                         invalidState,
-                                                                                 bool&                         busy,
-                                                                                 std::string&                  error,
-                                                                                 bool&                         unavailable);
+        [[nodiscard]] std::optional<DebugBreakpointResponse> breakpoint(const DebugBreakpointRequest& request,
+                                                                        const DebugWatchAbortCheck&   aborted,
+                                                                        bool&                         invalidState,
+                                                                        bool&                         busy,
+                                                                        std::string&                  error,
+                                                                        bool&                         unavailable);
         // Executes one instruction on a paused guest and returns the resulting registers.
         [[nodiscard]] std::optional<DebugStepResponse>
         step(const DebugStepRequest& request, bool& invalidState, bool& busy, std::string& error, bool& unavailable);
@@ -209,6 +213,15 @@ namespace mpfshost::debug
                                                                     std::uint32_t               vcpu,
                                                                     const std::string&          thread,
                                                                     std::string&                error);
+        // Fills the guest pid/tid fields from the inspector. A missing process is normal and leaves the flags
+        // clear; a lookup error is swallowed because hit reporting must not fail over symbolization.
+        void                                             resolveGuestContext(std::uint64_t  cr3,
+                                                                             std::uint64_t  rip,
+                                                                             std::uint64_t  rsp,
+                                                                             std::uint32_t& pid,
+                                                                             std::uint32_t& tid,
+                                                                             bool&          processFound,
+                                                                             bool&          threadFound) noexcept;
 
         // Serializes the exclusive operations (registers, watch, breakpoint, step).
         std::mutex                 _operationMutex;

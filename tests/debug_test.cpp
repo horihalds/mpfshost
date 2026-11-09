@@ -222,12 +222,16 @@ TEST_CASE("debug register requests and responses round trip", "[core][debug][cod
     REQUIRE(request->vcpu == 3);
 
     mpfshost::DebugRegisterRecord record;
-    record.vcpu     = 2;
-    record.threadId = "p01.03";
-    record.rip      = 0x1234;
-    record.cr3      = 0xabc000;
-    record.rax      = 0x55;
-    record.r15      = 0x66;
+    record.vcpu         = 2;
+    record.threadId     = "p01.03";
+    record.rip          = 0x1234;
+    record.cr3          = 0xabc000;
+    record.rax          = 0x55;
+    record.r15          = 0x66;
+    record.guestPid     = 42;
+    record.guestTid     = 100;
+    record.processFound = true;
+    record.threadFound  = true;
 
     mpfshost::DebugRegistersResponse response;
     response.records.push_back(record);
@@ -240,10 +244,46 @@ TEST_CASE("debug register requests and responses round trip", "[core][debug][cod
     REQUIRE(decoded->records[0].cr3 == 0xabc000);
     REQUIRE(decoded->records[0].rax == 0x55);
     REQUIRE(decoded->records[0].r15 == 0x66);
+    REQUIRE(decoded->records[0].guestPid == 42);
+    REQUIRE(decoded->records[0].guestTid == 100);
+    REQUIRE(decoded->records[0].processFound);
+    REQUIRE(decoded->records[0].threadFound);
 
     REQUIRE_FALSE(mpfshost::decodeDebugRegistersResponse({}).has_value());
     REQUIRE_FALSE(
         mpfshost::decodeDebugRegistersRequest(std::vector<std::byte> {static_cast<std::byte>(0)}).has_value());
+}
+
+TEST_CASE("debug thread requests and responses round trip", "[core][debug][codec]")
+{
+    REQUIRE(mpfshost::decodeDebugThreadsRequest(mpfshost::encodeDebugThreadsRequest({})).has_value());
+    REQUIRE_FALSE(mpfshost::decodeDebugThreadsRequest(std::vector<std::byte> {static_cast<std::byte>(1)}).has_value());
+
+    mpfshost::DebugThreadRecord record;
+    record.vcpu         = 2;
+    record.threadId     = "p01.03";
+    record.rip          = 0x7ff84522b1f1;
+    record.rsp          = 0x1234;
+    record.cr3          = 0x200123;
+    record.processFound = true;
+    record.pid          = 42;
+    record.threadFound  = true;
+    record.tid          = 100;
+
+    const auto decoded = mpfshost::decodeDebugThreadsResponse(mpfshost::encodeDebugThreadsResponse({{record}}));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->threads.size() == 1);
+    REQUIRE(decoded->threads[0].vcpu == 2);
+    REQUIRE(decoded->threads[0].threadId == "p01.03");
+    REQUIRE(decoded->threads[0].rip == record.rip);
+    REQUIRE(decoded->threads[0].rsp == record.rsp);
+    REQUIRE(decoded->threads[0].cr3 == record.cr3);
+    REQUIRE(decoded->threads[0].processFound);
+    REQUIRE(decoded->threads[0].pid == 42);
+    REQUIRE(decoded->threads[0].threadFound);
+    REQUIRE(decoded->threads[0].tid == 100);
+
+    REQUIRE_FALSE(mpfshost::decodeDebugThreadsResponse({}).has_value());
 }
 
 TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec]")
@@ -277,6 +317,10 @@ TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec
     hit.pdbFound        = true;
     hit.pdbSymbol       = "memcpy";
     hit.pdbDisplacement = 4;
+    hit.guestPid        = 7;
+    hit.guestTid        = 100;
+    hit.processFound    = true;
+    hit.threadFound     = true;
 
     const auto decodedHit = mpfshost::decodeDebugWatchData(mpfshost::encodeDebugWatchData(hit));
     REQUIRE(decodedHit.has_value());
@@ -293,6 +337,10 @@ TEST_CASE("debug watch requests, hits and ends round trip", "[core][debug][codec
     REQUIRE(decodedHit->exportName == "memcpy");
     REQUIRE(decodedHit->pdbFound);
     REQUIRE(decodedHit->pdbDisplacement == 4);
+    REQUIRE(decodedHit->guestPid == 7);
+    REQUIRE(decodedHit->guestTid == 100);
+    REQUIRE(decodedHit->processFound);
+    REQUIRE(decodedHit->threadFound);
 
     const auto decodedEnd = mpfshost::decodeDebugWatchEnd(
         mpfshost::encodeDebugWatchEnd({mpfshost::DebugWatchStatus::Timeout, 2, 1, "timed out"}));
@@ -337,6 +385,10 @@ TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]
     response.pdbFound        = true;
     response.pdbSymbol       = "memcpy";
     response.pdbDisplacement = 4;
+    response.guestPid        = 9;
+    response.guestTid        = 100;
+    response.processFound    = true;
+    response.threadFound     = true;
 
     const auto decoded = mpfshost::decodeDebugBreakpointResponse(mpfshost::encodeDebugBreakpointResponse(response));
     REQUIRE(decoded.has_value());
@@ -348,10 +400,20 @@ TEST_CASE("debug breakpoint and step messages round trip", "[core][debug][codec]
     REQUIRE(decoded->module == "msvcrt.dll");
     REQUIRE(decoded->exportFound);
     REQUIRE(decoded->pdbFound);
+    REQUIRE(decoded->guestPid == 9);
+    REQUIRE(decoded->guestTid == 100);
+    REQUIRE(decoded->processFound);
+    REQUIRE(decoded->threadFound);
 
     const auto stepRequest = mpfshost::decodeDebugStepRequest(mpfshost::encodeDebugStepRequest({2}));
     REQUIRE(stepRequest.has_value());
     REQUIRE(stepRequest->vcpu == 2);
+    REQUIRE(stepRequest->threadId.empty());
+
+    const auto threadStep =
+        mpfshost::decodeDebugStepRequest(mpfshost::encodeDebugStepRequest({mpfshost::DebugStepRequest(0, "p01.03")}));
+    REQUIRE(threadStep.has_value());
+    REQUIRE(threadStep->threadId == "p01.03");
 
     mpfshost::DebugStepResponse step;
     step.record.vcpu       = 2;
@@ -426,6 +488,7 @@ TEST_CASE("debug capabilities are listed", "[core][debug][session]")
     };
     REQUIRE(has(mpfshost::MessageType::DebugStateRequest));
     REQUIRE(has(mpfshost::MessageType::DebugControlRequest));
+    REQUIRE(has(mpfshost::MessageType::DebugThreadsRequest));
     REQUIRE(has(mpfshost::MessageType::DebugWatchRequest));
     REQUIRE(has(mpfshost::MessageType::DebugBreakpointRequest));
     REQUIRE(has(mpfshost::MessageType::DebugStepRequest));
@@ -509,6 +572,32 @@ TEST_CASE("debug registers are delivered through the fake backend", "[core][debu
     const auto single = mpfshost::debugRegisters(fixture.socketPath(), {"vm1", 0}, error);
     REQUIRE(single.has_value());
     REQUIRE(fixture.backend().debugState()->lastRegistersRequest->vcpu == 0);
+}
+
+TEST_CASE("debug threads are delivered through the fake backend", "[core][debug][session]")
+{
+    DebugFixture                fixture;
+    mpfshost::DebugThreadRecord record;
+    record.vcpu         = 1;
+    record.threadId     = "p01.02";
+    record.rip          = 0x1000;
+    record.rsp          = 0x2000;
+    record.cr3          = 0x3000;
+    record.processFound = true;
+    record.pid          = 42;
+    record.threadFound  = true;
+    record.tid          = 100;
+    fixture.backend().setDebugThreads({record});
+    RunningServer server {fixture.socketPath(), fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  threads = mpfshost::debugThreads(fixture.socketPath(), {"vm1"}, error);
+    REQUIRE(threads.has_value());
+    REQUIRE(threads->size() == 1);
+    REQUIRE((*threads)[0].threadId == "p01.02");
+    REQUIRE((*threads)[0].pid == 42);
+    REQUIRE((*threads)[0].tid == 100);
+    REQUIRE(fixture.backend().debugState()->threadsCalls == 1);
 }
 
 TEST_CASE("an invalid debug state is reported as InvalidState", "[core][debug][session]")

@@ -145,6 +145,7 @@ namespace mpfshost
         DebugWatchListRequest        = 0x0048,
         DebugContinueRequest         = 0x0049,
         DebugWaitRequest             = 0x004A, // streamed: DebugWaitHit* then DebugWaitEnd
+        DebugThreadsRequest          = 0x004B,
         ListTargetsResponse          = 0x8001,
         BindResponse                 = 0x8002,
         ProcessListResponse          = 0x8003,
@@ -249,6 +250,7 @@ namespace mpfshost
         DebugContinueResponse        = 0x806C,
         DebugWaitHit                 = 0x806D,
         DebugWaitEnd                 = 0x806E,
+        DebugThreadsResponse         = 0x806F,
         ErrorResponse                = 0x8FFF,
     };
 

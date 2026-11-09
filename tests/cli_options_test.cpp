@@ -653,6 +653,23 @@ TEST_CASE("debug breakpoint and step options are parsed and validated", "[cli-op
     const auto stepRange = parse({"--client", "debug-step", "vm1", "--vcpu", "256"});
     REQUIRE_FALSE(stepRange.options.has_value());
     CHECK(stepRange.error.find("--vcpu") != std::string::npos);
+
+    const auto stepThread = parse({"--client", "debug-step", "vm1", "--thread", "p01.03"});
+    REQUIRE(stepThread.options.has_value());
+    CHECK(stepThread.options->threadSet);
+    CHECK(stepThread.options->threadId == "p01.03");
+
+    const auto bothSelectors = parse({"--client", "debug-step", "vm1", "--vcpu", "1", "--thread", "p01.03"});
+    REQUIRE_FALSE(bothSelectors.options.has_value());
+    CHECK(bothSelectors.error.find("--thread") != std::string::npos);
+
+    const auto misplacedThread = parse({"--client", "debug-registers", "vm1", "--thread", "p01.03"});
+    REQUIRE_FALSE(misplacedThread.options.has_value());
+    CHECK(misplacedThread.error.find("--thread") != std::string::npos);
+
+    const auto threads = parse({"--client", "debug-threads", "vm1"});
+    REQUIRE(threads.options.has_value());
+    CHECK(threads.options->command == "debug-threads");
 }
 
 TEST_CASE("decimal u32 values are parsed strictly", "[util][number]")

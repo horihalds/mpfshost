@@ -139,6 +139,26 @@ On 2026-11-09 against the same `windows` target (12 vCPUs), with the rebuilt hos
   had no `gdb:` line, and `/tmp/mpfshost-gdb-<pid>.sock` was gone.
 - `debug-continue` reported `running`, `host-paused=no`, and the next status stayed `running`.
 
+## Thread discovery and selection
+
+`debug-threads` lists every thread the GDB stub reports. It is the same list `debug-registers` reads, but each record
+carries only the vCPU index, GDB thread id, `rip`, `rsp` and `cr3`, plus the guest pid and tid when they can be
+resolved. The vCPU index is a position in the stub's thread list and is what `--vcpu` uses. The GDB thread id (for
+example `p01.03`) is a name QEMU keeps for that stub thread; `debug-registers` and `debug-step` print it too. Use the
+index when you want "the nth vCPU"; use the id when you want to pass `--thread` to `debug-step` or `--thread` in the
+MCP `debug_step` tool. The two are not interchangeable: an index moves if the stub's list order changes, while the
+id stays tied to the thread.
+
+The guest pid/tid are derived from the stopped thread's CR3 and stack: the CR3 selects the process, then the stack
+pointer selects one of its threads. A shadow user page table can make the CR3 match no process, and an unusual stack
+can match no thread; those records report `pid=?` or `tid=?` instead of guessing. The same guest pid/tid appear on
+every register record and on watch, breakpoint and wait hits, so a mixed stop can be attributed to a process without
+a second lookup. This is informational output, not a filter — a request still works from the index or GDB thread id
+alone.
+
+`debug-threads` requires a paused guest and the same stub ownership rules as `debug-registers`. It reuses an
+attachment, or starts and stops a temporary stub and leaves the guest paused. It never logs guest memory.
+
 ## Stub endpoint and ownership
 
 `debug-registers` starts a stub only after `query-status` reports `paused` and `info chardev` has no `gdb:` entry,
@@ -409,12 +429,17 @@ first hit, and removes it again.
 
    ```sh
    ./build/mpfshost --client debug-stop <vm>
+   ./build/mpfshost --client debug-threads <vm>
    ./build/mpfshost --client debug-registers <vm> --vcpu 0
    ./build/mpfshost --client debug-step <vm> --vcpu 0
+   ./build/mpfshost --client debug-step <vm> --thread p01.03
    ```
 
-   Expect the full register record with a new `rip`; the guest stays paused. A `debug-step` while running must fail
-   with `InvalidState`. Finish with `debug-continue`.
+   Expect each thread record to carry `vcpu`, `thread`, `rip`, `rsp`, `cr3` and, when resolvable, `pid`/`tid`; a
+   process-executable thread should resolve and a kernel or shadow-CR3 thread may not. Each step returns the full
+   register record with a new `rip` and the same `thread` it selected; the guest stays paused. Unknown `--thread` or
+   `--vcpu` values fail with `InvalidState`, and `--thread` with `--vcpu` is rejected by the client. A `debug-step`
+   while running must fail with `InvalidState`. Finish with `debug-continue`.
 
 4. Run the same sequence through MCP `debug_break` and `debug_step`. Confirm both are marked destructive, and that
    cancelling `debug_break` with Ctrl-C still leaves the VM running and the stub stopped.
@@ -511,6 +536,9 @@ build:
   restart gives the module marker a new ASLR base if a shared base causes a stop storm.
 - The first watch hit immediately after a host restart once reported RIP and CR3 from the previous probe process;
   a rerun was correct. Check whether a queued stop needs draining when a new stub session starts.
+- `debug-threads` and `debug-step --thread` have only fake-stub coverage. On a live guest, confirm that each vCPU in
+  the probe process reports the expected pid/tid, that an idle kernel vCPU reports `pid=?` or a kernel thread, and
+  that stepping by GDB thread id advances that thread and not the first vCPU.
 
 Record the remaining answers here after the next live run.
 
