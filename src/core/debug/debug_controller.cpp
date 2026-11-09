@@ -1390,16 +1390,34 @@ namespace mpfshost::debug
             // caused by the breakpoint. Require the PC to be at the requested address, then accept either a CR3
             // match or a hit inside one of the target's modules, which covers a user CR3 that MemProcFS does not
             // report as the process DTB.
-            const auto hitDtb = canonicalDtb(cr3);
+            const auto hitDtb    = canonicalDtb(cr3);
+            bool       moduleHit = false;
             bool       matches =
                 rip == request.address && (hitDtb == canonicalDtb(dtbs->dtb) || hitDtb == canonicalDtb(dtbs->dtbUser));
             if (!matches && rip == request.address)
             {
                 std::string moduleError;
-                matches = _inspector->moduleForAddress(request.pid, request.address, moduleError).has_value();
+                moduleHit = _inspector->moduleForAddress(request.pid, request.address, moduleError).has_value();
+                matches   = moduleHit;
             }
             if (!matches)
             {
+                if (response.skippedCount == 0)
+                {
+                    log::info("host",
+                              "skipping breakpoint stop: rip=",
+                              rip,
+                              " requested=",
+                              request.address,
+                              " cr3=",
+                              cr3,
+                              " dtb=",
+                              dtbs->dtb,
+                              " dtbUser=",
+                              dtbs->dtbUser,
+                              " module=",
+                              moduleHit);
+                }
                 ++response.skippedCount;
                 if (!rsp->continueExecution(kRspTimeout, error))
                 {
