@@ -290,6 +290,8 @@ same records the arm responses use.
 (`u32`, 1–`kMaxDebugWaitHits` 64). It resumes a stopped guest, waits for a stop from any armed resource, and streams
 zero or more `DebugWaitHit` records followed by exactly one `DebugWaitEnd`, or one `ErrorResponse` instead of all of
 them. The guest is left stopped at the last reported hit, so a later `DebugWaitRequest` continues to the next one.
+The session extends its generic request deadline to cover `timeoutMs` plus a teardown margin, so a long wait is not
+cut short by the host's default request budget. `DebugWatchRequest` and `DebugBreakpointRequest` do the same.
 
 A `DebugWaitHit` carries `id` (`u32`), `kind` (`u8`: `0` breakpoint, `1` watchpoint), `breakpointKind` (`u8`),
 `address` (`u64`), one fixed `DebugRegisterRecord`, then `module`, `moduleOffset`, the export fields and the PDB

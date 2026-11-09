@@ -314,6 +314,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "the watch timeout is out of range");
             return;
         }
+        extendRequestDeadline(std::chrono::milliseconds {request->timeoutMs});
 
         auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
         if (provider == nullptr)
@@ -427,6 +428,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "the breakpoint timeout is out of range");
             return;
         }
+        extendRequestDeadline(std::chrono::milliseconds {request->timeoutMs});
 
         auto* provider = dynamic_cast<DebugProvider*>(_bound->handle.get());
         if (provider == nullptr)
@@ -1091,6 +1093,7 @@ namespace mpfshost
             sendError(requestId, ErrorCode::MalformedPayload, "the debug wait timeout is out of range");
             return;
         }
+        extendRequestDeadline(std::chrono::milliseconds {request->timeoutMs});
         if (request->maxHits == 0 || request->maxHits > kMaxDebugWaitHits)
         {
             sendError(requestId, ErrorCode::MalformedPayload, "the debug wait hit limit is out of range");

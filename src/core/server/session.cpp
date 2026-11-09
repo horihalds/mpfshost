@@ -628,6 +628,20 @@ namespace mpfshost
         sendPayload(requestId, MessageType::CancelResponse, encodeCancelResponse({1, targetId}));
     }
 
+    void Session::extendRequestDeadline(std::chrono::milliseconds work)
+    {
+        constexpr auto kDebugTeardownMargin = std::chrono::seconds {10};
+        if (_requestTimeout <= std::chrono::milliseconds::zero())
+        {
+            return;
+        }
+        const auto budget = work + kDebugTeardownMargin;
+        if (budget > _requestTimeout)
+        {
+            _deadline.restart(budget);
+        }
+    }
+
     void Session::abortRequest(std::uint64_t requestId, ErrorCode code)
     {
         if (requestId != _inFlight || _cancelled)

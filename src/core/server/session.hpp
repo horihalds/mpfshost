@@ -137,6 +137,9 @@ namespace mpfshost
         // True when a non-blocking peek sees the client's end of the connection; used by long streams that
         // would otherwise keep the guest paused after the client disappears.
         [[nodiscard]] bool peerGone();
+        // Long debug operations carry their own timeout; give the request enough budget to finish its teardown
+        // and answer instead of being turned into the generic deadline error.
+        void               extendRequestDeadline(std::chrono::milliseconds work);
         void               abortRequest(std::uint64_t requestId, ErrorCode code);
         [[nodiscard]] ScatterSession* findScatter(std::uint32_t scatterId);
         [[nodiscard]] bool

@@ -80,7 +80,14 @@ namespace
         RunningServer(const std::filesystem::path&  socketPath,
                       const mpfshost::TargetSource& targets,
                       mpfshost::VmBackend&          backend)
-            : _server {mpfshost::ServerOptions {socketPath}, targets, backend},
+            : RunningServer(mpfshost::ServerOptions {socketPath}, targets, backend)
+        {
+        }
+
+        RunningServer(mpfshost::ServerOptions       options,
+                      const mpfshost::TargetSource& targets,
+                      mpfshost::VmBackend&          backend)
+            : _server {std::move(options), targets, backend},
               _thread {[this]
                        {
                            std::string error;
@@ -1068,6 +1075,29 @@ TEST_CASE("persistent debug resource messages round trip", "[core][debug][codec]
 
     REQUIRE_FALSE(mpfshost::decodeDebugBreakpointArmRequest({}).has_value());
     REQUIRE_FALSE(mpfshost::decodeDebugWaitRequest(std::vector<std::byte> {std::byte {0}}).has_value());
+}
+
+TEST_CASE("a debug timeout above the server request budget still answers", "[core][debug][session]")
+{
+    DebugFixture fixture;
+
+    mpfshost::DebugBreakpointResponse response;
+    response.status  = mpfshost::DebugBreakpointStatus::Hit;
+    response.address = 0x1000;
+    response.rip     = 0x1000;
+    fixture.backend().setDebugBreakpoint(response);
+    fixture.backend().debugState()->breakpointDelay = 200ms;
+
+    mpfshost::ServerOptions options {fixture.socketPath()};
+    options.requestTimeout = 50ms;
+    RunningServer server {options, fixture.targets(), fixture.backend()};
+
+    std::string error;
+    const auto  breakpoint = mpfshost::debugBreakpoint(
+        fixture.socketPath(), {"vm1", 42, 0x1000, mpfshost::DebugBreakpointKind::Hardware, 500, {}, {}}, error);
+    REQUIRE(breakpoint.has_value());
+    REQUIRE(breakpoint->status == mpfshost::DebugBreakpointStatus::Hit);
+    REQUIRE(error.empty());
 }
 
 TEST_CASE("persistent debug resources are delivered through the fake backend", "[core][debug][session]")

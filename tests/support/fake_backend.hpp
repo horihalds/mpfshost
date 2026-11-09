@@ -457,6 +457,7 @@ namespace mpfshost::testing
 
         std::optional<DebugBreakpointRequest> lastBreakpointRequest;
         DebugBreakpointResponse               breakpointResponse;
+        std::chrono::milliseconds             breakpointDelay {0};
         std::string                           breakpointFailure;
         bool                                  breakpointInvalidState {};
         bool                                  breakpointBusy {};
@@ -1828,6 +1829,10 @@ namespace mpfshost::testing
                 notFound     = _debugState->breakpointNotFound;
                 error        = _debugState->breakpointFailure;
                 return std::nullopt;
+            }
+            if (_debugState->breakpointDelay > std::chrono::milliseconds::zero())
+            {
+                std::this_thread::sleep_for(_debugState->breakpointDelay);
             }
             if (aborted && aborted())
             {

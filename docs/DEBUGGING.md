@@ -591,7 +591,8 @@ Any future slice that starts a stub or arms a watchpoint must:
 - remove the watchpoint or breakpoint, close the RSP connection, then stop the stub; otherwise QEMU can stay in its
   gdb stop state and ignore the resume;
 - stop the stub on success, timeout, cancellation, error and client death, using the bounded QMP timeout even when
-  the request budget has already expired;
+  the request budget has already expired; a watch, breakpoint or wait also extends the session deadline past its own
+  timeout so teardown and the response fit;
 - stop an owned stub and resume a host-paused guest during host shutdown; use `debug-detach` to stop a stale foreign
   stub, never the shutdown path;
 - resume the VM if the request paused it, re-pause an already-paused guest, then verify with `query-status`;
