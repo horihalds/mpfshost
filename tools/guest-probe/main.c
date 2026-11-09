@@ -24,8 +24,6 @@
 #define PROBE_DEFAULT_WATCH_MS     500u
 #define PROBE_PATTERN_SIZE         64u
 
-static const unsigned char kBreakpointStub[] = {0xF3, 0x0F, 0x1E, 0xFA, 0xC3};
-
 #if defined(__GNUC__)
 #define PROBE_NOINLINE __attribute__((noinline, used))
 #else
@@ -65,14 +63,13 @@ static Region g_regions[8];
 static size_t g_regionCount    = 0;
 static size_t g_regionCapacity = sizeof(g_regions) / sizeof(g_regions[0]);
 
-static volatile unsigned char* g_trigger      = NULL;
-static unsigned                g_heartbeatMs  = PROBE_DEFAULT_HEARTBEAT_MS;
-static unsigned                g_heartbeatCpu = 0;
-static void (*g_breakpointTarget)(void)       = NULL;
-static unsigned char* g_watchBuffer           = NULL;
-static unsigned char* g_watchSnapshot         = NULL;
-static size_t         g_watchSize             = 0;
-static unsigned       g_watchIntervalMs       = PROBE_DEFAULT_WATCH_MS;
+static volatile unsigned char* g_trigger         = NULL;
+static unsigned                g_heartbeatMs     = PROBE_DEFAULT_HEARTBEAT_MS;
+static unsigned                g_heartbeatCpu    = 0;
+static unsigned char*          g_watchBuffer     = NULL;
+static unsigned char*          g_watchSnapshot   = NULL;
+static size_t                  g_watchSize       = 0;
+static unsigned                g_watchIntervalMs = PROBE_DEFAULT_WATCH_MS;
 
 #if defined(__cplusplus)
 extern "C"
@@ -94,10 +91,6 @@ extern "C"
         if (g_trigger != NULL)
         {
             g_trigger[0] = (unsigned char)((tick & 1u) != 0 ? 0xA5u : 0x5Au);
-        }
-        if (g_breakpointTarget != NULL)
-        {
-            g_breakpointTarget();
         }
         GuestProbeMarker(tick);
     }
@@ -409,13 +402,7 @@ static void print_export_inventory(void)
     emit("PROBE-EXPORT name=GuestProbeCounter address=0x%llx\n", (unsigned long long)(uintptr_t)&GuestProbeCounter);
 }
 
-static void* create_region(const char*          name,
-                           unsigned char        fill,
-                           const char*          protection,
-                           DWORD                protect,
-                           int                  isReserve,
-                           const unsigned char* code,
-                           size_t               codeSize)
+static void create_region(const char* name, unsigned char fill, const char* protection, DWORD protect, int isReserve)
 {
     DWORD oldProtection = 0;
     void* address       = NULL;
@@ -426,35 +413,30 @@ static void* create_region(const char*          name,
         if (address == NULL)
         {
             report_last_error("VirtualAlloc(reserve)");
-            return NULL;
+            return;
         }
         remember_region(name, address, PROBE_REGION_SIZE);
         emit_region(name, address, PROBE_REGION_SIZE, "reserve", protection);
-        return address;
+        return;
     }
 
     address = VirtualAlloc(NULL, PROBE_REGION_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (address == NULL)
     {
         report_last_error("VirtualAlloc");
-        return NULL;
+        return;
     }
 
     memset(address, fill, PROBE_REGION_SIZE);
-    if (code != NULL && codeSize > 0 && codeSize <= PROBE_REGION_SIZE)
-    {
-        memcpy(address, code, codeSize);
-    }
     if (!VirtualProtect(address, PROBE_REGION_SIZE, protect, &oldProtection))
     {
         report_last_error("VirtualProtect");
         VirtualFree(address, 0, MEM_RELEASE);
-        return NULL;
+        return;
     }
 
     remember_region(name, address, PROBE_REGION_SIZE);
     emit_region(name, address, PROBE_REGION_SIZE, "commit", protection);
-    return address;
 }
 
 static DWORD WINAPI heartbeat_thread(void* parameter)
@@ -642,16 +624,11 @@ int main(int argc, char** argv)
 
         if (options.regions)
         {
-            create_region("ro", 0x52, "r", PAGE_READONLY, 0, NULL, 0);
-            void* rx = create_region("rx", 0x90, "rx", PAGE_EXECUTE_READ, 0, kBreakpointStub, sizeof(kBreakpointStub));
-            if (rx != NULL)
-            {
-                g_breakpointTarget = (void (*)(void))rx;
-                emit("PROBE-BREAKPOINT address=0x%llx\n", (unsigned long long)(uintptr_t)rx);
-            }
-            create_region("noaccess", 0x4E, "noaccess", PAGE_NOACCESS, 0, NULL, 0);
-            create_region("guard", 0x47, "guard", PAGE_READWRITE | PAGE_GUARD, 0, NULL, 0);
-            create_region("reserve", 0, "noaccess", PAGE_NOACCESS, 1, NULL, 0);
+            create_region("ro", 0x52, "r", PAGE_READONLY, 0);
+            create_region("rx", 0x90, "rx", PAGE_EXECUTE_READ, 0);
+            create_region("noaccess", 0x4E, "noaccess", PAGE_NOACCESS, 0);
+            create_region("guard", 0x47, "guard", PAGE_READWRITE | PAGE_GUARD, 0);
+            create_region("reserve", 0, "noaccess", PAGE_NOACCESS, 1);
         }
 
         if (options.heartbeatMs > 0)

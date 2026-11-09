@@ -56,7 +56,6 @@ PROBE-PATTERN offset=0x0 size=64 hex=4d504653...
 PROBE-REGION name=main address=0x... size=4096 state=commit protection=rw
 PROBE-REGION name=ro address=0x... size=4096 state=commit protection=r
 PROBE-REGION name=rx address=0x... size=4096 state=commit protection=rx
-PROBE-BREAKPOINT address=0x...
 PROBE-REGION name=noaccess address=0x... size=4096 state=commit protection=noaccess
 PROBE-REGION name=guard address=0x... size=4096 state=commit protection=guard
 PROBE-REGION name=reserve address=0x... size=4096 state=reserve protection=noaccess
@@ -67,10 +66,6 @@ PROBE-THREAD role=watch index=0 tid=...
 PROBE-THREAD role=worker index=0 tid=...
 PROBE-THREAD role=worker index=1 tid=...
 ```
-
-`PROBE-BREAKPOINT` is the entry of a small `endbr64; ret` stub in the probe's own RX page. It is called by the
-heartbeat every interval, so it is a breakpoint target whose address is not shared with another process's module.
-The exported `GuestProbeMarker` remains available for symbol and export tests.
 
 `CHANGE offset=0x.. old=0x.. new=0x..` is printed for every byte of the main buffer changed from outside. The
 heartbeat writes to the separate `trigger` region, so `--watch` does not report the probe's own heartbeat.
@@ -149,18 +144,18 @@ The trap should resolve inside `guest-probe.exe` (near `GuestProbeHeartbeat`). T
 
 ### Breakpoint and single step
 
-Use `PROBE-BREAKPOINT` as the hardware breakpoint target. It is called once per heartbeat and lives in a page owned
-only by the probe, so a global hardware breakpoint cannot collide with a hot address in another process:
+`GuestProbeMarker` is called once per heartbeat and is exported from the probe module, so it is the intended hardware
+breakpoint target:
 
 ```sh
-./build/mpfshost --client debug-break win11 --pid 1234 --address <PROBE-BREAKPOINT address> \
+./build/mpfshost --client debug-break win11 --pid 1234 --address <GuestProbeMarker address> \
     --kind hardware --timeout 30
 ```
 
-`GuestProbeMarker` is still exported and callable, but its address is inside `guest-probe.exe`; on a guest where
-another process maps a module at the same base, a hardware breakpoint there can trap far more often than the
-heartbeat. The guest must be running before the breakpoint is armed. For single-step checks, use the same
-paused-guest sequence
+The guest must be running before the breakpoint is armed. On the current live host, user-mode hardware breakpoints
+are still an open host issue: the stub reports repeated stops that the controller rejects. See the validation
+record in [`docs/DEBUGGING.md`](../../docs/DEBUGGING.md) before relying on this recipe. For single-step checks, use
+the same paused-guest sequence
 as any other process:
 
 ```sh
@@ -180,8 +175,6 @@ that module is present.
 ## Notes
 
 - The probe is a Windows program; it is cross-compiled with mingw and is never linked into the host or the tests.
-- `PROBE-BREAKPOINT` only exists with `--regions` (the default). `--no-regions` removes it along with the protection
-  regions.
 - The heartbeat is pinned to vCPU 0 by default. If a debug test targets a different vCPU, pass `--heartbeat-cpu <n>`
   and use the `cpu=` value in `PROBE-TRIGGER`.
 - A heartbeat interval below 500 ms makes a watch hit sooner, but also makes `--max-hits` fill quickly.

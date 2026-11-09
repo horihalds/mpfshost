@@ -223,19 +223,20 @@ re-run successfully after this record was written.
 This procedure needs a live Windows guest and root. Breakpoints are one-shot: each request arms one, reports the
 first hit, and removes it again.
 
-1. Start the guest probe and use its `PROBE pid=<pid>` and `PROBE-BREAKPOINT address=<hex>`. The heartbeat calls
-   that stub once per interval; it lives in a page owned only by the probe, so a global hardware breakpoint does not
-   collide with another process's module.
+1. Start the guest probe and use its `PROBE pid=<pid>` and
+   `PROBE-EXPORT name=GuestProbeMarker address=<hex>`. The heartbeat calls the exported marker once per interval.
+   This target is inside the probe module, which the current breakpoint matcher requires; see the validation record
+   below for the open user-mode hardware breakpoint issue.
 2. Run the breakpoint with a dedicated connection:
 
    ```sh
-   ./build/mpfshost --client debug-break <vm> --pid <pid> --address <PROBE-BREAKPOINT address> --kind hardware --timeout 30
+   ./build/mpfshost --client debug-break <vm> --pid <pid> --address <GuestProbeMarker address> --kind hardware --timeout 30
    ```
 
-   Expect one hit with `rip` equal to the address, the per-vCPU registers, and `skipped=0`. The target page is not
-   part of a module, so `module` may be empty; that is expected. Repeat with `--kind software`; the stub runs in the
-   target process, so the software form should be reachable, but the `Z0` address-space limitation below still
-   applies. Confirm the guest is running again and the stub is gone:
+   Expect one hit with `rip` equal to the address, the per-vCPU registers, `module`/`export`/`symbol` when they
+   resolve, and `skipped=0`. Repeat with `--kind software`; the marker runs in the target process, so the software
+   form should be reachable, but the `Z0` address-space limitation below still applies. Confirm the guest is running
+   again and the stub is gone:
 
    ```sh
    ./build/mpfshost --client debug-status <vm>
@@ -311,13 +312,18 @@ build:
 - `debug-watch` on the trigger byte (width 1, 10 s) and on `GuestProbeCounter` (width 8, 15 s) armed and trapped at
   the 500 ms heartbeat rate, but every stop was rejected: `hits=0 skipped=20` and `hits=0 skipped=29`.
 - `debug-break --kind hardware` on `GuestProbeMarker` timed out with `skipped=4705`, and the heartbeat counter barely
-  advanced during the run. The probe's module base is a plausible shared address, so a global hardware breakpoint can
-  trap in other processes. The fixture now provides `PROBE-BREAKPOINT`, an `endbr64; ret` stub in the probe's own RX
-  page, and pins the heartbeat to vCPU 0.
+  advanced during the run.
+- A second run used the updated fixture (pid 248) with the heartbeat pinned to vCPU 0. A `PROBE-BREAKPOINT` stub in
+  the probe's RX page timed out with `skipped=3295`; a hardware breakpoint on `ntdll!RtlEnterCriticalSection` timed
+  out with `skipped=1612`; and `debug-watch` on the trigger still reported `hits=0 skipped=20`.
+- `module-at` rejects the RX stub because it is not in a loaded module, so the breakpoint matcher cannot accept it
+  even though the stop PC matches. The module marker and the ntdll user address are also rejected, so the repeated
+  stops are a host-side user-mode breakpoint problem, not a probe problem. The guest is effectively starved while
+  the host rejects each stop.
 - `debug-break --kind software` on `GuestProbeMarker` was rejected with `E22`, as the `Z0` address-space limitation
   predicts.
 - A control hardware breakpoint on `ntoskrnl.exe!HalProcessorIdle+0xf` hit immediately with `skipped=0`, so the
-  breakpoint path itself works when the address is unique and mapped in every context.
+  breakpoint path itself works for a kernel address that matches the process DTB.
 
 ## Checks still owed to a live guest
 
@@ -326,12 +332,13 @@ build:
   QEMU therefore keeps one global debug-register set, and the host arms the watchpoint once.
 - Whether a `debug-stop` pause interacts badly with snapshots, `system_reset` or migration. A reset or snapshot drops
   debug registers and the stub; treat a watch as ephemeral and tear it down before either operation.
-- Re-run the watchpoint and breakpoint procedures against the updated `guest-probe` with `PROBE-BREAKPOINT` and
-  `--heartbeat-cpu`. The first fixture run showed that the watch stops are rejected and that the module-address
-  breakpoint can collide; the unique RX stub has not been validated on a live guest yet.
-- Explain why `debug-watch` rejects every probe heartbeat stop (`skipped` equal to the trap count) while the
-  breakpoint path works for a kernel address. The trigger value visibly changes between reads and the store is
-  inside `guest-probe.exe`, so the remaining suspect is the stop's CR3/RIP view or the value read after the trap.
+- Diagnose the user-mode hardware breakpoint path. A user address produces a stream of rejected stops that starves
+  the guest, while a kernel address hits immediately. The rejected stops match the requested PC, so the CR3/module
+  acceptance check or the stop context is the remaining suspect.
+- Diagnose `debug-watch` rejecting every probe heartbeat stop (`skipped` equal to the trap count). The trigger value
+  visibly changes between reads and the store is inside `guest-probe.exe`, so the same CR3/module or value-read
+  logic is the likely cause.
+- Re-run the probe watch and breakpoint recipes after those host fixes.
 
 Record the remaining answers here after the next live run.
 

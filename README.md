@@ -406,8 +406,8 @@ guest-probe.exe [--size <bytes>] [--magic <hex byte>] [--pattern] [--regions] [-
 
 All features are enabled by default. The probe prints key/value lines such as
 `PROBE pid=<pid> address=0x<address> size=<bytes> magic=0x<byte>`,
-`PROBE-REGION name=ro address=0x<address> ...`, `PROBE-EXPORT name=GuestProbeMarker address=0x<address>`,
-`PROBE-BREAKPOINT address=0x<address>` and `PROBE-TRIGGER address=0x<address>`, then idles. Use those values with `read`, `write`, `scatter`, `search`,
+`PROBE-REGION name=ro address=0x<address> ...`, `PROBE-EXPORT name=GuestProbeMarker address=0x<address>` and
+`PROBE-TRIGGER address=0x<address>`, then idles. Use those values with `read`, `write`, `scatter`, `search`,
 `vquery`, `maps`, `symbol`, `resolve`, `threads`, `debug-watch` and `debug-break`. With the default watch it also
 prints `CHANGE offset=0x.. old=0x.. new=0x..` for every byte changed from outside.
 
