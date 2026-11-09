@@ -736,14 +736,30 @@ namespace mpfshost::debug
 
             ~Cleanup()
             {
-                std::string ignored;
+                std::string   ignored;
+                // The gdbstub refuses most packets while the target is running, so stop it before touching the
+                // debug registers. This is separate from whether the request itself paused the guest.
+                QmpStatusInfo beforeRemove;
+                if (client.queryStatus(beforeRemove, kQmpTimeout, ignored) && beforeRemove.status == "running")
+                {
+                    std::string ignoredStop;
+                    if (!client.execute("stop", ignoredStop, kQmpTimeout, ignored))
+                    {
+                        log::warn("host", "could not pause the guest to remove the watchpoint: ", ignored);
+                    }
+                }
                 rsp.drainPending();
                 if (armedThread)
                 {
-                    if (rsp.selectThread(*armedThread, kRspTimeout, ignored)
-                        && !rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
+                    // The watchpoint is global, so removal does not depend on which thread is selected. Retry
+                    // once after dropping a stale reply: leaving a debug register armed breaks the next watch.
+                    if (!rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
                     {
-                        log::warn("host", "could not remove the watchpoint: ", ignored);
+                        rsp.drainPending();
+                        if (!rsp.removeWatchpoint(request.address, request.width, kRspTimeout, ignored))
+                        {
+                            log::warn("host", "could not remove the watchpoint: ", ignored);
+                        }
                     }
                 }
                 self._watchCount = 0;
