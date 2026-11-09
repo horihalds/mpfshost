@@ -28,6 +28,10 @@ clients over a Unix socket with a length-prefixed binary protocol. One binary is
   `MemProcFS/` headers are marked `SYSTEM` so their own warnings are not attributed to us. Never add a new `-Wno-*`,
   `#pragma` or cast just to silence a warning; ask first if a suppression seems unavoidable.
 - Never run tests or the test binary as root. `tests/main.cpp` refuses to, by design; do not remove that guard.
+- Do not preserve backward compatibility. There is no stable API, ABI, wire format, CLI, configuration, include path,
+  or install-layout contract. Rename, remove, reshape, and replace freely, and update every caller, test, example, and
+  document in the same change. Never add compatibility shims, deprecated aliases, forwarding headers, dual code paths,
+  or migration layers for old consumers. The host and the client library are always built and deployed together.
 - Commit when the task is complete, then push (see "Done checklist"). Never leave the tree dirty.
 
 ## Git commits
@@ -77,8 +81,9 @@ clang-format -i <files>                       # format in place
 
 ## What can be tested without a VM
 
-- Everything in `mpfshost_core`: frame/message codecs, target scanning, `Session` dispatch, `Server`, the client
-  library, the handle cache, access policy, deadlines, cancellation, filters, batching, hex and page-range helpers.
+- Everything in `mpfshost_ipc`, `mpfshost_util`, `mpfshost_client` and `mpfshost_server`: frame/message codecs,
+  target scanning, `Session` dispatch, `Server`, the client library, the handle cache, access policy, deadlines,
+  cancellation, filters, batching, hex and page-range helpers.
 - Tests run a real `Server` on a socket under `./tmp` against `tests/support/fake_backend.hpp`. Configure behaviour
   with `FakeBackend` setters (`set<Thing>`, `fail<Thing>With`); use `BareHandle` for `CapabilityUnavailable`.
 - Nothing in `src/host/` is unit-tested. It needs MemProcFS, root and a live VM. If you change `src/host/`, build it,
@@ -104,11 +109,12 @@ Do all of these before you finish, in order:
  Path | Contents |
 ------|----------|
  `src/main.cpp` | Entry point: `main`, signal handling, `runServer` (the host bootstrap). |
- `src/cli/` | The client side of the same binary: `options.*` (`parseCommandLine` over the server flags), `run_client.*`, `render.*` (raw wire enums to text), `usage.*` (`printUsage`). Never linked into `mpfshost_core`. |
+ `src/cli/` | The command-line front end: `options.*` (`parseCommandLine` over the server flags), `client_options.*` (`ClientOptions`, `parseClientOptions`), `run_client.*`, `render.*` (raw wire enums to text), `usage.*` (`printUsage`). Built as `mpfshost_cli`, never part of the installed client library. |
  `src/core/ipc/` | `frame.{hpp,cpp}`: header, `MessageType`, `ErrorCode`, limits, `ByteWriter`/`ByteReader`, `readFrame`/`writeFrame`. `message.hpp` + `message_<area>.cpp`: payload structs and codecs; `message_codec.hpp` holds the internal descriptor helpers. |
  `src/core/server/` | `session.*` per-connection dispatcher, `server.*` socket + worker pool, `handle_cache.*`, `access_policy.*`, `request_deadline.*`, `map_batching.hpp`, `backend.hpp`, one `*_provider.hpp` interface per capability. |
- `src/core/client/` | `client.*` one function per capability, `cli_options.*` (`ClientOptions`, `parseClientOptions`), `connect_diagnostics.*`. |
- `src/core/mcp/` | MCP stdio front end: `mcp_server.*` (JSON-RPC state machine) and `mcp_tools.*` (tool catalogue and mapping over `client.hpp`). |
+ `src/mpfshost/` | `client.hpp`, the installed API (`Client`, `ClientSession`, `Scatter`, `Error`, `Result`, `List`). |
+ `src/core/client/` | `client_session.*` implements the installed API, `client_<area>.cpp` hold the internal capability bodies, `client_legacy.hpp` declares those internal free functions, and `client_transport.*` owns framing, connections and errors. `connect_diagnostics.*` explains denied connections. |
+ `src/core/mcp/` | MCP stdio front end: `mcp_server.*` (JSON-RPC state machine) and `mcp_tools.*` (tool catalogue and mapping over `client_legacy.hpp`). |
  `src/core/debug/` | QMP client, GDB remote-protocol client and the per-VM debug controller (`qmp_client.*`, `rsp_client.*`, `debug_controller.*`), all with injectable transports. |
  `src/core/disasm/` | Standalone x86-64 disassembly: the Zydis decoder (`x86_decoder.*`, which also holds the watchpoint store decoder) and the bounded-window service (`disassembler.*`). Needs no debugger stub. |
  `src/core/target/` | QEMU target discovery logic (`<vm>.pid` + `<vm>.sock` pairing). |
@@ -118,7 +124,7 @@ Do all of these before you finish, in order:
  `tests/` | Catch2 v2 tests, mostly one `<area>_test.cpp` per area (name new files that way); `tests/support/fake_backend.hpp` fakes. |
  `tools/guest-probe/` | Optional Windows probe cross-compiled with mingw; never linked into the host. |
  `packaging/`, `scripts/` | systemd unit and pkg-config templates; configure/build/install/fetch scripts. |
- `docs/` | `ARCHITECTURE.md`, `PROTOCOL.md`. |
+ `docs/` | `ARCHITECTURE.md`, `PROTOCOL.md`, `CLIENT_API.md`, `DEBUGGING.md`. |
 
 `src/core/` must never include `vmmdll.h` or anything from `src/host/`.
 
@@ -141,10 +147,13 @@ Line numbers are approximate and drift. Search for the function name.
   `sendFrame`. The `handle<Name>` methods live in the family file that matches the message family:
   `session_{memory,process,maps,system,kernel,vfs,scatter}.cpp`.
 - `src/core/client/client_transport.{hpp,cpp}` (internal, not installed): the connection helpers `connectToServer`,
-  `connectAndBind`, `exchange`, `exchangeStreamed`, `expectResponse`, `request` and the `FileDescriptor` guard.
-- `src/core/client/client_{memory,process,maps,system,kernel,vfs}.cpp`: one public function per capability, split like
-  the server families. `readMemory` and `readPhysicalMemory` split reads into `kMaxReadSize` chunks; `ScatterSession`
-  lives in `client_memory.cpp`, the physical and VM functions in `client_system.cpp`.
+  `connectAndBind`, `exchange`, `exchangeStreamed`, `expectResponse`, `request`, the `FileDescriptor` guard, the
+  thread-local active-session scope and the last-error-code slot.
+- `src/core/client/client_session.cpp`: the public `Client`/`ClientSession`/`Scatter` methods. It binds the session's
+  connection on the calling thread, then calls the internal bodies in `client_{memory,process,maps,system,kernel,vfs,
+  debug,disasm}.cpp` and converts their `std::optional`/`std::string` result to `Result<T>`.
+- `client_legacy.hpp` is internal: it still declares the free-function bodies used by the CLI, MCP and tests. Do not
+  install it and do not add new public surface there.
 
 ## Invariants that are easy to break
 
@@ -158,8 +167,8 @@ Protocol:
   std::nullopt;`.
 - `write<X>`, `read<X>` (in `message_codec.hpp`) and `<x>EncodedSize` (in `map_batching.hpp`) must agree field for field.
   If they drift, batches exceed 1 MiB or decode fails.
-- Never renumber or reuse a `MessageType` or `ErrorCode` value. Append new values. Never change an existing payload
-  layout without asking; `kProtocolVersion` stays `1`.
+- There is no cross-version wire contract: host and client are always deployed together. Values may be renumbered,
+  reused, and reshaped; keep the wire self-consistent and change `kProtocolVersion` only when it helps diagnostics.
 - Add every new `MessageType` to `messageTypeName` in `frame.cpp` and to the `switch` in `Session::dispatch`.
 
 Session lifecycle:
@@ -194,8 +203,8 @@ pattern.
 - Everything is in `namespace mpfshost`; tests helpers in `mpfshost::testing`. Close with `} // namespace mpfshost`.
 - Types `PascalCase`; functions and locals `lowerCamelCase`; private members `_name`; constants `kName`.
 - Mark accessors and query functions `[[nodiscard]]`.
-- Fallible functions return `std::optional<T>` or `bool` and report text through a `std::string& error` parameter.
-  Follow that pattern in new code.
+- Fallible client-library functions return `mpfshost::Result<T>` (a `std::expected` carrying `mpfshost::Error`).
+  Internal and provider code may keep the `std::optional<T>`/`std::string& error` pattern.
 - Use RAII and `std::` containers; no raw `new`/`delete`.
 - Comment only why, never what. No commented-out code.
 - Tests: Catch2 v2 (`#include <catch2/catch.hpp>`), `TEST_CASE("description", "[tag]")`. Add a new test file to the
@@ -205,4 +214,3 @@ pattern.
 
 - `MemProcFS/`, `reference/`, `.clang-format`, compiler flags in `CMakeLists.txt`, `tests/main.cpp` root guard.
 - Install rules, `packaging/` and `scripts/` (they are run as root by the user).
-- The public client headers `client.hpp`, `message.hpp`, `frame.hpp`, `version.hpp`: change them additively only.
