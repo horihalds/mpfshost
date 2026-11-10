@@ -3236,6 +3236,27 @@ namespace mpfshost::debug
             return std::nullopt;
         }
 
+        // A pause issued through QMP is independent of the GDB stub's own run state. Resume the VM before
+        // continuing the stub, or the guest stays frozen even though vCont was accepted.
+        if (_controlPaused.load() || _hostPaused.load())
+        {
+            QmpStatusInfo current;
+            if (!qmpQueryStatus(current, error, unavailable))
+            {
+                return std::nullopt;
+            }
+            if (current.status != "running")
+            {
+                std::string ignored;
+                if (!qmpExecute("cont", ignored, error, unavailable))
+                {
+                    return std::nullopt;
+                }
+            }
+            _controlPaused = false;
+            _hostPaused    = false;
+        }
+
         if (!_sessionRunning.load())
         {
             _attachedRsp->drainPending();

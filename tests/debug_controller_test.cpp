@@ -2907,6 +2907,43 @@ TEST_CASE("debug status reports the architecture of an unsupported guest", "[cor
     REQUIRE(status->runState == mpfshost::DebugRunState::Paused);
 }
 
+TEST_CASE("continueGuest resumes a guest the host paused through QMP", "[core][debug][controller]")
+{
+    auto qmp                    = std::make_shared<FakeQmpState>();
+    qmp->running                = true;
+    auto qmpTransport           = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport           = std::make_unique<FakeRspTransport>();
+    rspTransport->registersXml  = x86RegisterXml();
+    rspTransport->registerBytes = registerBytes();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    bool        invalidState = false;
+    bool        busy         = false;
+    std::string error;
+    bool        unavailable = false;
+    const auto  attached    = controller.attach(7, invalidState, busy, error, unavailable);
+    REQUIRE(attached.has_value());
+    REQUIRE(attached->guestPaused);
+    REQUIRE_FALSE(qmp->running);
+
+    const auto continued = controller.continueGuest(7, invalidState, busy, error, unavailable);
+    REQUIRE(continued.has_value());
+    REQUIRE(qmp->running);
+    REQUIRE(qmp->count(R"("execute":"cont")") >= 1);
+
+    REQUIRE(controller.detach(7, busy, error, unavailable).has_value());
+}
+
 TEST_CASE("debug attach pauses the guest and detach restores it", "[core][debug][controller]")
 {
     auto qmp                   = std::make_shared<FakeQmpState>();
