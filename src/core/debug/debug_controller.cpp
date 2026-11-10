@@ -3401,6 +3401,12 @@ namespace mpfshost::debug
             _sessionRunning = true;
         }
 
+        log::info("host",
+                  "debug wait started with ",
+                  _resources.size(),
+                  " resource(s), session running=",
+                  _sessionRunning.load() ? "yes" : "no");
+
         DebugWaitEnd end;
         end.status                 = DebugWatchStatus::Completed;
         std::uint32_t hits         = 0;
@@ -3528,6 +3534,7 @@ namespace mpfshost::debug
             if (resource == nullptr)
             {
                 ++end.skippedCount;
+                log::debug("host", "debug wait skipped a stop that matched no armed resource");
                 if (!_attachedRsp->continueExecution(kRspTimeout, error))
                 {
                     end.status = DebugWatchStatus::Error;
@@ -3547,6 +3554,14 @@ namespace mpfshost::debug
                     index = static_cast<std::uint32_t>(std::distance(threads.begin(), found));
                 }
             }
+            log::info("host",
+                      "debug wait matched resource ",
+                      resource->id,
+                      " at address ",
+                      resource->address,
+                      " (hits so far ",
+                      hits + 1,
+                      ")");
             auto record = readRecord(*_attachedRsp, _attachedDescription, index, threads[index], error);
             if (!record)
             {
