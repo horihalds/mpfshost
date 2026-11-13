@@ -14,9 +14,13 @@
 #include <cstdio>
 #include <limits>
 #include <optional>
+#include <random>
+#include <set>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -30,6 +34,20 @@ namespace mpfshost::debug
         constexpr auto kQmpTimeout     = std::chrono::seconds {5};
         constexpr auto kRspTimeout     = std::chrono::seconds {5};
         constexpr auto kRspConnectWait = std::chrono::seconds {2};
+
+        // A press looks more like a person when it is held for a short random interval instead of ending in the
+        // same instant it began. The ranges are inclusive.
+        constexpr int kKeyHoldMinMs   = 80;
+        constexpr int kKeyHoldMaxMs   = 120;
+        constexpr int kMouseHoldMinMs = 70;
+        constexpr int kMouseHoldMaxMs = 100;
+
+        std::chrono::milliseconds randomHold(int minimumMs, int maximumMs)
+        {
+            thread_local std::mt19937          generator {std::random_device {}()};
+            std::uniform_int_distribution<int> distribution {minimumMs, maximumMs};
+            return std::chrono::milliseconds {distribution(generator)};
+        }
 
         // The register layout, rip/cr3 lookups and the x86 decoder only understand x86-64.
         constexpr std::string_view kSupportedArchitecture = "x86_64";
@@ -611,8 +629,18 @@ namespace mpfshost::debug
         }
 
         // QEMU silently drops an event when several arrive in one input-send-event call, so every QMP event is
-        // sent on its own. A pointer move therefore costs two calls, one per axis.
-        std::vector<std::string> qmpEvents;
+        // sent on its own. A pointer move therefore costs two calls, one per axis. A release that follows a press
+        // in the same batch waits for a short random hold so the guest sees a human-length press.
+        struct PendingEvent
+        {
+            std::string               json;
+            std::chrono::milliseconds delayBefore {0};
+        };
+
+        std::vector<PendingEvent>  pending;
+        std::set<std::string>      heldKeys;
+        std::set<InputMouseButton> heldButtons;
+
         for (const auto& event : request.events)
         {
             switch (event.kind)
@@ -625,25 +653,36 @@ namespace mpfshost::debug
                     error = "unknown input key '" + event.key + "'";
                     return std::nullopt;
                 }
-                std::string item = R"({"type":"key","data":{"down":)";
-                item.append(event.down ? "true" : "false");
-                item.append(R"(,"key":{"type":"qcode","data":")");
-                item.append(*code);
-                item.append(R"("}}})");
-                qmpEvents.push_back(std::move(item));
+
+                PendingEvent item;
+                if (event.down)
+                {
+                    heldKeys.insert(*code);
+                }
+                else if (heldKeys.erase(*code) > 0)
+                {
+                    item.delayBefore = randomHold(kKeyHoldMinMs, kKeyHoldMaxMs);
+                }
+                item.json = R"({"type":"key","data":{"down":)";
+                item.json.append(event.down ? "true" : "false");
+                item.json.append(R"(,"key":{"type":"qcode","data":")");
+                item.json.append(*code);
+                item.json.append(R"("}}})");
+                pending.push_back(std::move(item));
                 break;
             }
             case InputEventKind::PointerMove:
             {
                 const auto appendAxis = [&](std::string_view axis, std::int32_t value)
                 {
-                    std::string item =
+                    PendingEvent item;
+                    item.json =
                         event.absolute ? R"({"type":"abs","data":{"axis":")" : R"({"type":"rel","data":{"axis":")";
-                    item.append(axis);
-                    item.append(R"(","value":)");
-                    item.append(std::to_string(value));
-                    item.append("}}");
-                    qmpEvents.push_back(std::move(item));
+                    item.json.append(axis);
+                    item.json.append(R"(","value":)");
+                    item.json.append(std::to_string(value));
+                    item.json.append("}}");
+                    pending.push_back(std::move(item));
                 };
                 appendAxis("x", event.x);
                 appendAxis("y", event.y);
@@ -651,21 +690,35 @@ namespace mpfshost::debug
             }
             case InputEventKind::PointerButton:
             {
-                std::string item = R"({"type":"btn","data":{"down":)";
-                item.append(event.down ? "true" : "false");
-                item.append(R"(,"button":")");
-                item.append(inputMouseButtonName(event.button));
-                item.append(R"("}})");
-                qmpEvents.push_back(std::move(item));
+                PendingEvent item;
+                if (event.down)
+                {
+                    heldButtons.insert(event.button);
+                }
+                else if (heldButtons.erase(event.button) > 0)
+                {
+                    item.delayBefore = randomHold(kMouseHoldMinMs, kMouseHoldMaxMs);
+                }
+                item.json = R"({"type":"btn","data":{"down":)";
+                item.json.append(event.down ? "true" : "false");
+                item.json.append(R"(,"button":")");
+                item.json.append(inputMouseButtonName(event.button));
+                item.json.append(R"("}})");
+                pending.push_back(std::move(item));
                 break;
             }
             }
         }
 
-        for (const auto& qmpEvent : qmpEvents)
+        for (const auto& qmpEvent : pending)
         {
+            if (qmpEvent.delayBefore > std::chrono::milliseconds::zero())
+            {
+                std::this_thread::sleep_for(qmpEvent.delayBefore);
+            }
+
             std::string arguments = R"({"events":[)";
-            arguments.append(qmpEvent);
+            arguments.append(qmpEvent.json);
             arguments.append("]}");
 
             std::string result;
@@ -685,7 +738,7 @@ namespace mpfshost::debug
                 return std::nullopt;
             }
         }
-        return InputEventResponse {static_cast<std::uint32_t>(qmpEvents.size())};
+        return InputEventResponse {static_cast<std::uint32_t>(pending.size())};
     }
 
     bool DebugController::hasActiveStub(bool& active, std::string& error, bool& unavailable)
