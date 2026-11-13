@@ -91,6 +91,19 @@ namespace mpfshost
         bool                                configOptionSet {};
         std::uint64_t                       value {};
         bool                                valueSet {};
+        std::string                         inputKey;
+        bool                                inputKeySet {};
+        std::string                         inputText;
+        bool                                inputTextSet {};
+        std::int32_t                        inputX {};
+        std::int32_t                        inputY {};
+        bool                                inputXSet {};
+        bool                                inputYSet {};
+        bool                                inputRelative {};
+        std::string                         inputButton;
+        bool                                inputButtonSet {};
+        bool                                inputDown {};
+        bool                                inputUp {};
     };
 
     // `args` is the ordered subsequence of the command line that the server-flag loop did not consume,

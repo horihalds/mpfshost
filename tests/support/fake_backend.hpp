@@ -9,6 +9,7 @@
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
+#include "core/server/input_provider.hpp"
 #include "core/server/kernel_device_provider.hpp"
 #include "core/server/kernel_driver_provider.hpp"
 #include "core/server/kernel_object_provider.hpp"
@@ -430,6 +431,11 @@ namespace mpfshost::testing
         std::uint32_t                     stateCalls {};
         std::uint32_t                     controlCalls {};
 
+        std::optional<InputEventRequest> lastInputRequest;
+        std::string                      inputFailure;
+        bool                             inputUnavailable {};
+        std::uint32_t                    inputCalls {};
+
         std::vector<DebugRegisterRecord>     registers;
         std::string                          registersFailure;
         bool                                 registersInvalidState {};
@@ -684,6 +690,7 @@ namespace mpfshost::testing
                        public PfnProvider,
                        public ConfigProvider,
                        public DebugProvider,
+                       public InputProvider,
                        public DisasmProvider
     {
     public:
@@ -1711,6 +1718,25 @@ namespace mpfshost::testing
                 results.push_back(std::move(result));
             }
             return true;
+        }
+
+        [[nodiscard]] std::optional<InputEventResponse>
+        input(const InputEventRequest& request, std::string& error, bool& unavailable) override
+        {
+            ++_debugState->inputCalls;
+            _debugState->lastInputRequest = request;
+            if (!_debugState->inputFailure.empty())
+            {
+                unavailable = _debugState->inputUnavailable;
+                error       = _debugState->inputFailure;
+                return std::nullopt;
+            }
+            std::uint32_t sent = 0;
+            for (const auto& event : request.events)
+            {
+                sent += event.kind == InputEventKind::PointerMove ? 2u : 1u;
+            }
+            return InputEventResponse {sent};
         }
 
         [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error, bool& unavailable) override

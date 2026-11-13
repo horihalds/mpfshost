@@ -70,6 +70,12 @@ namespace mpfshost
                                                           DebugControlAction           action,
                                                           std::string&                 error);
 
+    // Sends keyboard and pointer events through QEMU's input core.
+    [[nodiscard]] std::optional<InputEventResponse> sendInput(const std::filesystem::path&   socketPath,
+                                                              const DebugQuery&              query,
+                                                              const std::vector<InputEvent>& events,
+                                                              std::string&                   error);
+
     struct DebugRegistersQuery
     {
         std::string   targetName;

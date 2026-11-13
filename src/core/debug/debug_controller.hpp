@@ -49,6 +49,10 @@ namespace mpfshost::debug
         [[nodiscard]] std::optional<DebugStatus> state(bool& busy, std::string& error, bool& unavailable);
         [[nodiscard]] std::optional<DebugStatus>
         control(DebugControlAction action, bool& busy, std::string& error, bool& unavailable);
+        // Injects a batch of keyboard and pointer events through QMP's input core. This needs no stub and takes
+        // only the QMP mutex, so input still works while a watch or breakpoint holds the operation lock.
+        [[nodiscard]] std::optional<InputEventResponse>
+        input(const InputEventRequest& request, std::string& error, bool& unavailable);
         // `invalidState` is set when the guest is running or another stub owns the debug channel.
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>> registers(const DebugRegistersRequest& request,
                                                                                 bool&        invalidState,

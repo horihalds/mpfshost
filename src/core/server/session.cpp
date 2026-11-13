@@ -291,6 +291,9 @@ namespace mpfshost
         case MessageType::DebugWaitRequest:
             handleDebugWait(requestId, payload);
             return;
+        case MessageType::InputEventRequest:
+            handleInput(requestId, payload);
+            return;
         case MessageType::ConfigSetRequest:
             handleConfigSet(requestId, payload);
             return;
@@ -450,6 +453,7 @@ namespace mpfshost
             static_cast<std::uint16_t>(MessageType::DebugBreakpointRequest),
             static_cast<std::uint16_t>(MessageType::DebugStepRequest),
             static_cast<std::uint16_t>(MessageType::DebugSetRegisterRequest),
+            static_cast<std::uint16_t>(MessageType::InputEventRequest),
             static_cast<std::uint16_t>(MessageType::DebugAttachRequest),
             static_cast<std::uint16_t>(MessageType::DebugDetachRequest),
             static_cast<std::uint16_t>(MessageType::DebugBreakpointArmRequest),

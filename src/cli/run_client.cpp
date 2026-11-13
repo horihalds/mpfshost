@@ -8,11 +8,13 @@
 #include "core/log/log.hpp"
 #include "core/util/display.hpp"
 #include "core/util/hex.hpp"
+#include "core/util/key_map.hpp"
 #include "core/util/symbol_expression.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mpfshost::cli
@@ -1715,6 +1717,91 @@ namespace mpfshost::cli
             }
 
             printDebugStatus(*status);
+            return 0;
+        }
+
+        if (options.command == "input-key" || options.command == "input-text" || options.command == "input-mouse")
+        {
+            std::vector<mpfshost::InputEvent> events;
+
+            if (options.command == "input-key")
+            {
+                const auto code = mpfshost::inputKeyCode(options.inputKey);
+                if (!code)
+                {
+                    mpfshost::log::error("client", "unknown key '", options.inputKey, "'");
+                    return 1;
+                }
+                auto addKey = [&](bool down)
+                {
+                    mpfshost::InputEvent event;
+                    event.kind = mpfshost::InputEventKind::Key;
+                    event.key  = *code;
+                    event.down = down;
+                    events.push_back(std::move(event));
+                };
+                if (!options.inputUp)
+                {
+                    addKey(true);
+                }
+                if (!options.inputDown)
+                {
+                    addKey(false);
+                }
+            }
+            else if (options.command == "input-text")
+            {
+                if (!mpfshost::appendTextInput(options.inputText, events, error))
+                {
+                    mpfshost::log::error("client", error);
+                    return 1;
+                }
+            }
+            else
+            {
+                if (options.inputXSet)
+                {
+                    mpfshost::InputEvent event;
+                    event.kind     = mpfshost::InputEventKind::PointerMove;
+                    event.absolute = !options.inputRelative;
+                    event.x        = options.inputX;
+                    event.y        = options.inputY;
+                    events.push_back(std::move(event));
+                }
+                if (options.inputButtonSet)
+                {
+                    const auto button = mpfshost::inputMouseButton(options.inputButton);
+                    if (!button)
+                    {
+                        mpfshost::log::error("client", "--button only accepts left, middle or right");
+                        return 1;
+                    }
+                    auto addButton = [&](bool down)
+                    {
+                        mpfshost::InputEvent event;
+                        event.kind   = mpfshost::InputEventKind::PointerButton;
+                        event.button = *button;
+                        event.down   = down;
+                        events.push_back(std::move(event));
+                    };
+                    if (!options.inputUp)
+                    {
+                        addButton(true);
+                    }
+                    if (!options.inputDown)
+                    {
+                        addButton(false);
+                    }
+                }
+            }
+
+            const auto response = mpfshost::sendInput(options.socketPath, {options.target}, events, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+            std::printf("sent %u events\n", static_cast<unsigned>(response->eventsSent));
             return 0;
         }
 

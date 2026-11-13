@@ -10,6 +10,7 @@
 #include "core/server/handle_provider.hpp"
 #include "core/server/heap_alloc_provider.hpp"
 #include "core/server/heap_provider.hpp"
+#include "core/server/input_provider.hpp"
 #include "core/server/kernel_device_provider.hpp"
 #include "core/server/kernel_driver_provider.hpp"
 #include "core/server/kernel_object_provider.hpp"
@@ -86,6 +87,7 @@ namespace mpfshost
                       public MemorySearchProvider,
                       public ConfigProvider,
                       public DebugProvider,
+                      public InputProvider,
                       public DisasmProvider,
                       public debug::DebugInspector
     {
@@ -264,6 +266,8 @@ namespace mpfshost
         [[nodiscard]] std::optional<DebugStatus> debugState(bool& busy, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<DebugStatus>
         debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable) override;
+        [[nodiscard]] std::optional<InputEventResponse>
+        input(const InputEventRequest& request, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
                                                                     debugRegisters(const DebugRegistersRequest& request,
                                                                                    bool&                        invalidState,

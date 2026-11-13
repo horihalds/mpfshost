@@ -16,6 +16,7 @@ add_executable(mpfshost_tests
     handle_cache_test.cpp
     handles_test.cpp
     hex_test.cpp
+    key_map_test.cpp
     log_test.cpp
     mcp_protocol_test.cpp
     mcp_tools_test.cpp

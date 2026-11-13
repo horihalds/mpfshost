@@ -114,6 +114,7 @@ namespace mpfshost
         void               handleDebugWatchList(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugContinue(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleDebugWait(std::uint64_t requestId, std::span<const std::byte> payload);
+        void               handleInput(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleConfigSet(std::uint64_t requestId, std::span<const std::byte> payload);
         void               handleVmList(std::uint64_t requestId);
         void               handleGpaTranslate(std::uint64_t requestId, std::span<const std::byte> payload);

@@ -97,6 +97,29 @@ auto results  = scatter->execute();
 `Client::capabilities()` returns the host version and the request types it handles. Use
 `Capabilities::supports(MessageType)` instead of inspecting the raw values.
 
+## Guest input
+
+`ClientSession::sendInput` sends a batch of keyboard and pointer events through QEMU's input core. It needs no
+debugger attachment and works while the guest runs:
+
+```cpp
+std::vector<mpfshost::InputEvent> events;
+
+mpfshost::InputEvent key;
+key.kind = mpfshost::InputEventKind::Key;
+key.key  = "ret"; // QEMU qcode, for example a, ret, esc, ctrl or f5
+key.down = true;
+events.push_back(key);
+
+auto sent = session->sendInput(events);
+```
+
+Key names and text expansion are helpers in `core/util/key_map.hpp`, which is built into the installed archive:
+`inputKeyCode("enter")` resolves aliases to qcodes and `appendTextInput("hello", events, error)` types printable
+ASCII with a US layout. Pointer events use `InputEventKind::PointerMove` with `absolute` and signed `x`/`y`, or
+`InputEventKind::PointerButton` with `left`, `middle` or `right`. Absolute movement needs a tablet-like device;
+relative movement works with `virtio-mouse`.
+
 ## Compatibility
 
 There is no stable client API or ABI. The host and the library are built and deployed together. Public headers,

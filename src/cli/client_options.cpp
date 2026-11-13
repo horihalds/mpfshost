@@ -1,6 +1,7 @@
 #include "cli/client_options.hpp"
 
 #include "core/util/hex.hpp"
+#include "core/util/key_map.hpp"
 #include "core/util/number.hpp"
 #include "core/util/symbol_expression.hpp"
 
@@ -45,6 +46,21 @@ namespace mpfshost
             return parseHeapSelector(text);
         }
 
+        std::optional<std::int32_t> parseSigned32(std::string_view text)
+        {
+            if (text.empty())
+            {
+                return std::nullopt;
+            }
+            std::int32_t parsed {};
+            const auto   result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+            if (result.ec != std::errc {} || result.ptr != text.data() + text.size())
+            {
+                return std::nullopt;
+            }
+            return parsed;
+        }
+
         // Every command but list-targets and capabilities takes a mandatory target name.
         bool commandTakesTarget(const std::string& command)
         {
@@ -68,7 +84,8 @@ namespace mpfshost
                 || command == "debug-arm-break" || command == "debug-arm-watch" || command == "debug-remove-break"
                 || command == "debug-remove-watch" || command == "debug-breakpoints" || command == "debug-watchpoints"
                 || command == "debug-wait" || command == "debug-resume" || command == "debug-threads"
-                || command == "disassemble" || command == "debug-backtrace";
+                || command == "disassemble" || command == "debug-backtrace" || command == "input-key"
+                || command == "input-text" || command == "input-mouse";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -168,6 +185,32 @@ namespace mpfshost
                 error = "--id is only valid for --client debug-remove-break and debug-remove-watch";
                 return false;
             }
+            if (command != "input-key" && options.inputKeySet)
+            {
+                error = "--key is only valid for --client input-key";
+                return false;
+            }
+            if (command != "input-text" && options.inputTextSet)
+            {
+                error = "--text is only valid for --client input-text";
+                return false;
+            }
+            if (command != "input-mouse"
+                && (options.inputXSet || options.inputYSet || options.inputRelative || options.inputButtonSet))
+            {
+                error = "--x, --y, --relative and --button are only valid for --client input-mouse";
+                return false;
+            }
+            if (command != "input-key" && command != "input-mouse" && (options.inputDown || options.inputUp))
+            {
+                error = "--down and --up are only valid for --client input-key and input-mouse";
+                return false;
+            }
+            if ((command == "input-key" || command == "input-mouse") && options.inputDown && options.inputUp)
+            {
+                error = "--down and --up cannot be combined";
+                return false;
+            }
             if (command == "debug-watch" || command == "debug-arm-watch")
             {
                 if (options.watchWidth != 1 && options.watchWidth != 2 && options.watchWidth != 4
@@ -252,6 +295,42 @@ namespace mpfshost
                 if (!options.registerSet || !options.valueSet)
                 {
                     error = "--client debug-set-register needs --register and --value";
+                    return false;
+                }
+            }
+            else if (command == "input-key")
+            {
+                if (!options.inputKeySet || options.inputKey.empty())
+                {
+                    error = "--client input-key needs --key";
+                    return false;
+                }
+            }
+            else if (command == "input-text")
+            {
+                if (!options.inputTextSet)
+                {
+                    error = "--client input-text needs --text";
+                    return false;
+                }
+            }
+            else if (command == "input-mouse")
+            {
+                if (options.inputXSet != options.inputYSet)
+                {
+                    error = "--x and --y must be given together";
+                    return false;
+                }
+                if (!options.inputXSet && !options.inputButtonSet)
+                {
+                    error = "--client input-mouse needs --x/--y or --button";
+                    return false;
+                }
+                if (options.inputXSet && !options.inputRelative
+                    && (options.inputX < 0 || options.inputX > kInputAbsoluteMax || options.inputY < 0
+                        || options.inputY > kInputAbsoluteMax))
+                {
+                    error = "absolute pointer coordinates must be between 0 and " + std::to_string(kInputAbsoluteMax);
                     return false;
                 }
             }
@@ -1201,6 +1280,79 @@ namespace mpfshost
                     return std::nullopt;
                 }
                 options.pageCount = *parsed;
+                continue;
+            }
+            if (argument == "--key")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--key needs a key name";
+                    return std::nullopt;
+                }
+                options.inputKey    = args[++index];
+                options.inputKeySet = true;
+                continue;
+            }
+            if (argument == "--text")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--text needs a value";
+                    return std::nullopt;
+                }
+                options.inputText    = args[++index];
+                options.inputTextSet = true;
+                continue;
+            }
+            if (argument == "--x" || argument == "--y")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--" + std::string {argument.substr(2)} + " needs a signed integer";
+                    return std::nullopt;
+                }
+                const auto parsed = parseSigned32(args[++index]);
+                if (!parsed)
+                {
+                    error = "--" + std::string {argument.substr(2)} + " needs a signed integer";
+                    return std::nullopt;
+                }
+                if (argument == "--x")
+                {
+                    options.inputX    = *parsed;
+                    options.inputXSet = true;
+                }
+                else
+                {
+                    options.inputY    = *parsed;
+                    options.inputYSet = true;
+                }
+                continue;
+            }
+            if (argument == "--relative")
+            {
+                options.inputRelative = true;
+                continue;
+            }
+            if (argument == "--button")
+            {
+                if (index + 1 >= args.size() || !mpfshost::inputMouseButton(args[index + 1]).has_value())
+                {
+                    error = "--button only accepts left, middle or right";
+                    return std::nullopt;
+                }
+                options.inputButton    = args[++index];
+                options.inputButtonSet = true;
+                continue;
+            }
+            if (argument == "--down")
+            {
+                options.inputDown = true;
+                continue;
+            }
+            if (argument == "--up")
+            {
+                options.inputUp = true;
                 continue;
             }
             if (argument == "--client")

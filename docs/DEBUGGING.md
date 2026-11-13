@@ -443,6 +443,48 @@ process DTB, the host now also requires a value change **and** a RIP inside one 
 change alone accepted one stale idle-loop stop (`CR3=0x1ae000`, kernel `rip`). The stricter path was installed and
 re-run successfully after this record was written.
 
+## Manual check: input injection
+
+Input is sent with QMP `input-send-event` on the host's existing QMP connection. It does not use SPICE, and it does
+not need a paused guest or a debugger stub.
+
+1. Open Notepad in the guest and confirm the guest is running:
+
+   ```sh
+   ./build/mpfshost --client debug-status <vm>
+   ```
+
+2. Type text and a named key:
+
+   ```sh
+   ./build/mpfshost --client input-text <vm> --text "mpfshost input test"
+   ./build/mpfshost --client input-key <vm> --key ret
+   ```
+
+   Each command prints `sent N events`. The text appears in Notepad; the return key inserts a newline.
+
+3. Hold Ctrl and press A:
+
+   ```sh
+   ./build/mpfshost --client input-key <vm> --key ctrl --down
+   ./build/mpfshost --client input-key <vm> --key a
+   ./build/mpfshost --client input-key <vm> --key ctrl --up
+   ```
+
+4. Move the pointer and click. A relative-only device such as `virtio-mouse-pci` needs `--relative`; absolute
+   coordinates need a tablet device:
+
+   ```sh
+   ./build/mpfshost --client input-mouse <vm> --x 40 --y -20 --relative
+   ./build/mpfshost --client input-mouse <vm> --button left
+   ```
+
+5. While a watch is running on another connection, repeat one of the commands above. Input must still reach the
+   guest because it takes only the QMP mutex, not the debug operation lock.
+
+An unsupported `input-send-event` command, or a missing QMP socket, is reported as `CapabilityUnavailable`. A key
+name outside the US layout vocabulary is rejected before a frame is sent.
+
 ## Manual check: breakpoint and single-step
 
 This procedure needs a live Windows guest and root. Breakpoints are one-shot: each request arms one, reports the

@@ -3,6 +3,7 @@
 #include "core/log/log.hpp"
 #include "core/server/process_info_provider.hpp"
 #include "core/server/request_deadline.hpp"
+#include "core/util/key_map.hpp"
 
 #include <algorithm>
 #include <array>
@@ -598,6 +599,94 @@ namespace mpfshost::debug
             return std::nullopt;
         }
         return status;
+    }
+
+    std::optional<InputEventResponse>
+    DebugController::input(const InputEventRequest& request, std::string& error, bool& unavailable)
+    {
+        unavailable = false;
+        if (request.events.empty())
+        {
+            return InputEventResponse {0};
+        }
+
+        std::string   arguments = R"({"events":[)";
+        std::uint32_t sent      = 0;
+        bool          first     = true;
+        for (const auto& event : request.events)
+        {
+            auto append = [&](std::string_view item)
+            {
+                if (!first)
+                {
+                    arguments.push_back(',');
+                }
+                first = false;
+                arguments.append(item);
+            };
+
+            switch (event.kind)
+            {
+            case InputEventKind::Key:
+            {
+                const auto code = inputKeyCode(event.key);
+                if (!code)
+                {
+                    error = "unknown input key '" + event.key + "'";
+                    return std::nullopt;
+                }
+                append(R"({"type":"key","down":)");
+                arguments.append(event.down ? "true" : "false");
+                arguments.append(R"(,"key":{"type":"qcode","data":")");
+                arguments.append(*code);
+                arguments.append(R"("}})");
+                ++sent;
+                break;
+            }
+            case InputEventKind::PointerMove:
+            {
+                const auto appendAxis = [&](std::string_view axis, std::int32_t value)
+                {
+                    append(event.absolute ? R"({"type":"abs","axis":")" : R"({"type":"rel","axis":")");
+                    arguments.append(axis);
+                    arguments.append(R"(","value":)");
+                    arguments.append(std::to_string(value));
+                    arguments.push_back('}');
+                    ++sent;
+                };
+                appendAxis("x", event.x);
+                appendAxis("y", event.y);
+                break;
+            }
+            case InputEventKind::PointerButton:
+                append(R"({"type":"btn","down":)");
+                arguments.append(event.down ? "true" : "false");
+                arguments.append(R"(,"button":")");
+                arguments.append(inputMouseButtonName(event.button));
+                arguments.append(R"("})");
+                ++sent;
+                break;
+            }
+        }
+        arguments.append("]}");
+
+        std::string result;
+        if (!qmpCall(
+                [&](QmpClient& client, std::chrono::milliseconds timeout, std::string& callError)
+                {
+                    return client.execute("input-send-event", arguments, result, timeout, callError);
+                },
+                error,
+                unavailable))
+        {
+            if (error.find("CommandNotFound") != std::string::npos)
+            {
+                unavailable = true;
+                error       = "QEMU does not support input-send-event";
+            }
+            return std::nullopt;
+        }
+        return InputEventResponse {sent};
     }
 
     bool DebugController::hasActiveStub(bool& active, std::string& error, bool& unavailable)

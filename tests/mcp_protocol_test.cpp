@@ -286,23 +286,11 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "debug_list_watches",
     };
     const std::vector<std::string> writeCapabilities = {
-        "config_set",
-        "write_memory",
-        "write_vfs",
-        "write_physical_memory",
-        "debug_stop",
-        "debug_continue",
-        "debug_watch",
-        "debug_break",
-        "debug_step",
-        "debug_attach",
-        "debug_detach",
-        "debug_arm_break",
-        "debug_remove_break",
-        "debug_arm_watch",
-        "debug_remove_watch",
-        "debug_resume",
-        "debug_wait",
+        "config_set",         "write_memory",    "write_vfs",          "write_physical_memory",
+        "debug_stop",         "debug_continue",  "debug_watch",        "debug_break",
+        "debug_step",         "debug_attach",    "debug_detach",       "debug_arm_break",
+        "debug_remove_break", "debug_arm_watch", "debug_remove_watch", "debug_resume",
+        "debug_wait",         "input_key",       "input_text",         "input_mouse",
     };
 
     const auto infos = mpfshost::mcp::toolInfos();

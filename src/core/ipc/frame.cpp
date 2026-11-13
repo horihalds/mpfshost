@@ -490,6 +490,8 @@ namespace mpfshost
             return "DebugBacktraceRequest";
         case MessageType::DebugSetRegisterRequest:
             return "DebugSetRegisterRequest";
+        case MessageType::InputEventRequest:
+            return "InputEventRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -668,6 +670,8 @@ namespace mpfshost
             return "DebugBacktraceResponse";
         case MessageType::DebugSetRegisterResponse:
             return "DebugSetRegisterResponse";
+        case MessageType::InputEventResponse:
+            return "InputEventResponse";
         case MessageType::DebugWatchHeartbeat:
             return "DebugWatchHeartbeat";
         case MessageType::ProcessInfoResponse:

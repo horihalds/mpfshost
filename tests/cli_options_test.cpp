@@ -85,6 +85,9 @@ namespace
         "debug-break",
         "debug-step",
         "debug-detach",
+        "input-key",
+        "input-text",
+        "input-mouse",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)
@@ -779,4 +782,64 @@ TEST_CASE("persistent debug commands are parsed and validated", "[cli-options]")
     REQUIRE(wait.options.has_value());
     CHECK(wait.options->maxHits == 4);
     CHECK(wait.options->watchTimeoutSeconds == 10);
+}
+
+TEST_CASE("input commands parse their flags", "[cli-options][input]")
+{
+    const auto key = parse({"--client", "input-key", "vm1", "--key", "Enter"});
+    REQUIRE(key.options.has_value());
+    CHECK(key.options->inputKey == "Enter");
+    CHECK_FALSE(key.options->inputDown);
+    CHECK_FALSE(key.options->inputUp);
+
+    const auto held = parse({"--client", "input-key", "vm1", "--key", "ctrl", "--down"});
+    REQUIRE(held.options.has_value());
+    CHECK(held.options->inputDown);
+    CHECK_FALSE(held.options->inputUp);
+
+    const auto both = parse({"--client", "input-key", "vm1", "--key", "a", "--down", "--up"});
+    REQUIRE_FALSE(both.options.has_value());
+    CHECK(both.error.find("cannot be combined") != std::string::npos);
+
+    const auto missingKey = parse({"--client", "input-key", "vm1"});
+    REQUIRE_FALSE(missingKey.options.has_value());
+    CHECK(missingKey.error.find("--key") != std::string::npos);
+
+    const auto text = parse({"--client", "input-text", "vm1", "--text", "hello"});
+    REQUIRE(text.options.has_value());
+    CHECK(text.options->inputText == "hello");
+
+    const auto missingText = parse({"--client", "input-text", "vm1"});
+    REQUIRE_FALSE(missingText.options.has_value());
+    CHECK(missingText.error.find("--text") != std::string::npos);
+
+    const auto absolute = parse({"--client", "input-mouse", "vm1", "--x", "100", "--y", "200"});
+    REQUIRE(absolute.options.has_value());
+    CHECK(absolute.options->inputX == 100);
+    CHECK(absolute.options->inputY == 200);
+    CHECK_FALSE(absolute.options->inputRelative);
+
+    const auto relative = parse({"--client", "input-mouse", "vm1", "--x", "-4", "--y", "8", "--relative"});
+    REQUIRE(relative.options.has_value());
+    CHECK(relative.options->inputX == -4);
+    CHECK(relative.options->inputRelative);
+
+    const auto click = parse({"--client", "input-mouse", "vm1", "--button", "right"});
+    REQUIRE(click.options.has_value());
+    CHECK(click.options->inputButton == "right");
+
+    const auto outOfRange = parse({"--client", "input-mouse", "vm1", "--x", "40000", "--y", "0"});
+    REQUIRE_FALSE(outOfRange.options.has_value());
+    CHECK(outOfRange.error.find("between 0") != std::string::npos);
+
+    const auto halfPoint = parse({"--client", "input-mouse", "vm1", "--x", "10"});
+    REQUIRE_FALSE(halfPoint.options.has_value());
+    CHECK(halfPoint.error.find("together") != std::string::npos);
+
+    const auto badButton = parse({"--client", "input-mouse", "vm1", "--button", "side"});
+    REQUIRE_FALSE(badButton.options.has_value());
+
+    const auto misplaced = parse({"--client", "debug-status", "vm1", "--key", "a"});
+    REQUIRE_FALSE(misplaced.options.has_value());
+    CHECK(misplaced.error.find("--key") != std::string::npos);
 }

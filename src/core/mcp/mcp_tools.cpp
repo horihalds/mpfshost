@@ -4,6 +4,7 @@
 #include "core/disasm/x86_decoder.hpp"
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"
+#include "core/util/key_map.hpp"
 #include "core/util/number.hpp"
 #include "core/util/symbol_expression.hpp"
 
@@ -277,6 +278,37 @@ namespace mpfshost::mcp
                 return *parsed;
             }
             return decimalFromString(text, name);
+        }
+
+        std::int32_t signedNumberValue(const Json& args, std::string_view name, std::int32_t fallback = 0)
+        {
+            const auto* value = findArg(args, name);
+            if (value == nullptr)
+            {
+                return fallback;
+            }
+            if (value->is_number_integer())
+            {
+                const auto parsed = value->get<std::int64_t>();
+                if (parsed < std::numeric_limits<std::int32_t>::min()
+                    || parsed > std::numeric_limits<std::int32_t>::max())
+                {
+                    throw ArgumentError("argument '" + std::string {name} + "' is out of range");
+                }
+                return static_cast<std::int32_t>(parsed);
+            }
+            if (!value->is_string())
+            {
+                throw ArgumentError("argument '" + std::string {name} + "' must be an integer");
+            }
+            std::int32_t parsed {};
+            const auto   text   = value->get<std::string>();
+            const auto   result = std::from_chars(text.data(), text.data() + text.size(), parsed);
+            if (result.ec != std::errc {} || result.ptr != text.data() + text.size())
+            {
+                throw ArgumentError("argument '" + std::string {name} + "' is not a valid integer");
+            }
+            return parsed;
         }
 
         std::uint32_t u32Value(const Json&      args,
@@ -1057,6 +1089,27 @@ namespace mpfshost::mcp
                  {target,
                  {"max_hits", "integer", "Stop after this many hits (default 1)", false},
                  {"timeout", "integer", "Seconds to wait (default 30)", false}}                                              },
+                {            "input_key",
+                 "Send a key",                                              "Press and release one key through QEMU's input core, or hold it with down or up. "
+                                              "Destructive: sends input to the guest.", false,
+                 {target,
+                 {"key", "string", "Key name such as a, ret, esc, ctrl or f5", true},
+                 {"down", "boolean", "Press without releasing", false},
+                 {"up", "boolean", "Release without pressing", false}}                                                       },
+                {           "input_text",
+                 "Type text",                                              "Type printable ASCII text with a US layout through QEMU's input core. "
+                                              "Destructive: sends input to the guest.", false,
+                 {target, {"text", "string", "Text to type; non-ASCII is rejected", true}}                                   },
+                {          "input_mouse",
+                 "Move or click the pointer",                                     "Move the pointer or press a mouse button. Absolute coordinates need an absolute device; "
+                                     "a relative-only device needs relative movement.", false,
+                 {target,
+                 {"x", "integer", "Absolute X 0..32767, or a signed delta with relative", false},
+                 {"y", "integer", "Absolute Y 0..32767, or a signed delta with relative", false},
+                 {"relative", "boolean", "Treat x and y as relative movement", false},
+                 {"button", "string", "left, middle or right; without down or up the button is clicked", false},
+                 {"down", "boolean", "Press without releasing", false},
+                 {"up", "boolean", "Release without pressing", false}}                                                       },
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -2996,6 +3049,138 @@ namespace mpfshost::mcp
                     {"skipped_count",                               end->skippedCount},
                     {        "error",                                      end->error},
                     {         "hits",                                 std::move(hits)}
+                });
+            }
+
+            if (name == "input_key")
+            {
+                const auto keyText = requireString(args, "key");
+                const auto code    = inputKeyCode(keyText);
+                if (!code)
+                {
+                    return failure("unknown key '" + keyText + "'");
+                }
+                const bool down = optionalBool(args, "down");
+                const bool up   = optionalBool(args, "up");
+                if (down && up)
+                {
+                    return failure("down and up cannot be combined");
+                }
+
+                std::vector<InputEvent> events;
+                auto                    addKey = [&](bool pressed)
+                {
+                    InputEvent event;
+                    event.kind = InputEventKind::Key;
+                    event.key  = *code;
+                    event.down = pressed;
+                    events.push_back(std::move(event));
+                };
+                if (!up)
+                {
+                    addKey(true);
+                }
+                if (!down)
+                {
+                    addKey(false);
+                }
+
+                const auto response = sendInput(socket, {requireString(args, "target")}, events, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {"events_sent", response->eventsSent}
+                });
+            }
+
+            if (name == "input_text")
+            {
+                std::vector<InputEvent> events;
+                if (!appendTextInput(requireString(args, "text"), events, error))
+                {
+                    return failure(error);
+                }
+                const auto response = sendInput(socket, {requireString(args, "target")}, events, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {"events_sent", response->eventsSent}
+                });
+            }
+
+            if (name == "input_mouse")
+            {
+                const bool hasX = hasArg(args, "x");
+                const bool hasY = hasArg(args, "y");
+                if (hasX != hasY)
+                {
+                    return failure("x and y must be given together");
+                }
+                const bool relative   = optionalBool(args, "relative");
+                const auto buttonText = optionalString(args, "button");
+                if (!hasX && buttonText.empty())
+                {
+                    return failure("input_mouse needs x/y or button");
+                }
+
+                std::vector<InputEvent> events;
+                if (hasX)
+                {
+                    InputEvent event;
+                    event.kind     = InputEventKind::PointerMove;
+                    event.absolute = !relative;
+                    event.x        = signedNumberValue(args, "x");
+                    event.y        = signedNumberValue(args, "y");
+                    if (event.absolute
+                        && (event.x < 0 || event.x > kInputAbsoluteMax || event.y < 0 || event.y > kInputAbsoluteMax))
+                    {
+                        return failure("absolute pointer coordinates must be between 0 and "
+                                       + std::to_string(kInputAbsoluteMax));
+                    }
+                    events.push_back(std::move(event));
+                }
+                if (!buttonText.empty())
+                {
+                    const auto button = inputMouseButton(buttonText);
+                    if (!button)
+                    {
+                        return failure("button only accepts left, middle or right");
+                    }
+                    const bool down = optionalBool(args, "down");
+                    const bool up   = optionalBool(args, "up");
+                    if (down && up)
+                    {
+                        return failure("down and up cannot be combined");
+                    }
+                    auto addButton = [&](bool pressed)
+                    {
+                        InputEvent event;
+                        event.kind   = InputEventKind::PointerButton;
+                        event.button = *button;
+                        event.down   = pressed;
+                        events.push_back(std::move(event));
+                    };
+                    if (!up)
+                    {
+                        addButton(true);
+                    }
+                    if (!down)
+                    {
+                        addButton(false);
+                    }
+                }
+
+                const auto response = sendInput(socket, {requireString(args, "target")}, events, error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+                return success(Json {
+                    {"events_sent", response->eventsSent}
                 });
             }
 

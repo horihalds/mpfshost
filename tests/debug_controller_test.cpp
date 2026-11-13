@@ -59,6 +59,7 @@ namespace
         bool                      stall {false};
         bool                      failZeroTimeout {false};
         std::string               failCommand;
+        bool                      failCommandNotFound {false};
         std::string               architecture {"x86_64"};
         std::size_t               opens {0};
         std::chrono::milliseconds lastReadTimeout {0};
@@ -101,7 +102,16 @@ namespace
 
             if (!_state->failCommand.empty() && text.find(_state->failCommand) != std::string::npos)
             {
-                _state->incoming.emplace_back(R"({"error":{"class":"GenericError","desc":"the fake command failed"}})");
+                if (_state->failCommandNotFound)
+                {
+                    _state->incoming.emplace_back(
+                        R"({"error":{"class":"CommandNotFound","desc":"the fake command is unknown"}})");
+                }
+                else
+                {
+                    _state->incoming.emplace_back(
+                        R"({"error":{"class":"GenericError","desc":"the fake command failed"}})");
+                }
             }
             else if (text.find("qmp_capabilities") != std::string::npos)
             {
@@ -3799,4 +3809,92 @@ TEST_CASE("a backtrace frame keeps its raw address when symbolization fails", "[
     REQUIRE(response->frames[0].module.empty());
     REQUIRE_FALSE(response->frames[0].exportFound);
     REQUIRE_FALSE(response->frames[0].pdbFound);
+}
+
+TEST_CASE("the debug controller translates input events into input-send-event", "[core][debug][controller][input]")
+{
+    auto qmp          = std::make_shared<FakeQmpState>();
+    auto qmpTransport = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport = std::make_unique<FakeRspTransport>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    mpfshost::InputEventRequest request;
+
+    mpfshost::InputEvent key;
+    key.kind = mpfshost::InputEventKind::Key;
+    key.key  = "enter";
+    key.down = true;
+    request.events.push_back(key);
+
+    mpfshost::InputEvent move;
+    move.kind     = mpfshost::InputEventKind::PointerMove;
+    move.absolute = true;
+    move.x        = 100;
+    move.y        = 200;
+    request.events.push_back(move);
+
+    mpfshost::InputEvent button;
+    button.kind   = mpfshost::InputEventKind::PointerButton;
+    button.button = mpfshost::InputMouseButton::Left;
+    button.down   = true;
+    request.events.push_back(button);
+
+    std::string error;
+    bool        unavailable = false;
+    const auto  response    = controller.input(request, error, unavailable);
+    REQUIRE(response.has_value());
+    REQUIRE(response->eventsSent == 4);
+    REQUIRE_FALSE(unavailable);
+    REQUIRE(qmp->count("input-send-event") == 1);
+    REQUIRE(qmp->count(R"("data":"ret")") == 1);
+    REQUIRE(qmp->count(R"({"axis":"x","type":"abs","value":100})") == 1);
+    REQUIRE(qmp->count(R"({"axis":"y","type":"abs","value":200})") == 1);
+    REQUIRE(qmp->count(R"({"button":"left","down":true,"type":"btn"})") == 1);
+}
+
+TEST_CASE("the debug controller reports an unsupported input command as unavailable",
+          "[core][debug][controller][input]")
+{
+    auto qmp                 = std::make_shared<FakeQmpState>();
+    qmp->failCommand         = "input-send-event";
+    qmp->failCommandNotFound = true;
+    auto qmpTransport        = std::make_unique<FakeQmpTransport>(qmp);
+    auto rspTransport        = std::make_unique<FakeRspTransport>();
+
+    DebugController controller {"/tmp/qmp.sock",
+                                "/tmp/stub.sock",
+                                [transport = std::move(qmpTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                },
+                                [transport = std::move(rspTransport)]() mutable
+                                {
+                                    return std::move(transport);
+                                }};
+
+    mpfshost::InputEventRequest request;
+    mpfshost::InputEvent        key;
+    key.kind = mpfshost::InputEventKind::Key;
+    key.key  = "a";
+    key.down = true;
+    request.events.push_back(key);
+
+    std::string error;
+    bool        unavailable = false;
+    REQUIRE_FALSE(controller.input(request, error, unavailable).has_value());
+    REQUIRE(unavailable);
+    REQUIRE(error.find("input-send-event") != std::string::npos);
+
+    bool unusedBusy = false;
+    REQUIRE(controller.state(unusedBusy, error, unavailable).has_value());
 }

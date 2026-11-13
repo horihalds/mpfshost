@@ -236,6 +236,9 @@ to it automatically.
  `--client debug-break <vm>` | Arm one software or hardware breakpoint; `--pid`, `--address`, `--kind software\|hardware`, `--timeout` (seconds). `--address` accepts the same symbolic forms. Reports the resolved address, first hit and symbol, then removes it. Destructive. |
  `--client debug-step <vm>` | Single-step one vCPU of a paused guest; `--vcpu <n>` (default 0) or `--thread <id>` from `debug-threads`. Destructive. |
  `--client debug-set-register <vm>` | Write `--register <name>` to `--value` on a stopped, attached thread selected by `--vcpu <n>` or `--thread <id>`. Destructive. |
+ `--client input-key <vm>` | Press and release one `--key` through QEMU's input core; `--down` or `--up` holds or releases it instead. Key names include `a`, `ret`, `esc`, `ctrl` and `f5`. Destructive. |
+ `--client input-text <vm>` | Type printable ASCII `--text` with a US layout, including shift for uppercase and shifted symbols. Destructive. |
+ `--client input-mouse <vm>` | Move the pointer with `--x`/`--y` (absolute 0–32767, or signed deltas with `--relative`) or press `--button left\|middle\|right`; no `--down`/`--up` clicks. Absolute movement needs a tablet device. Destructive. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
  `--client debug-detach <vm>` | End an attachment or stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |

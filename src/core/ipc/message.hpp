@@ -919,6 +919,47 @@ namespace mpfshost
         DebugRegisterRecord record; // the selected thread after the write
     };
 
+    // Guest input through QEMU's `input-send-event`. A request carries a batch so a typed string reaches the guest
+    // in one QMP call. Key names are QEMU qcodes, resolved from user-facing names before the frame is encoded.
+    enum class InputEventKind : std::uint8_t
+    {
+        Key           = 0,
+        PointerMove   = 1,
+        PointerButton = 2,
+    };
+
+    enum class InputMouseButton : std::uint8_t
+    {
+        Left   = 0,
+        Middle = 1,
+        Right  = 2,
+    };
+
+    inline constexpr std::size_t  kMaxInputEvents      = 4096;
+    inline constexpr std::size_t  kMaxInputKeyNameSize = 32;
+    inline constexpr std::int32_t kInputAbsoluteMax    = 0x7FFF;
+
+    struct InputEvent
+    {
+        InputEventKind   kind {InputEventKind::Key};
+        std::string      key;                             // Key: QEMU qcode
+        bool             down {true};                     // Key and PointerButton
+        bool             absolute {true};                 // PointerMove: absolute 0..32767 or signed relative
+        std::int32_t     x {};                            // PointerMove
+        std::int32_t     y {};                            // PointerMove
+        InputMouseButton button {InputMouseButton::Left}; // PointerButton
+    };
+
+    struct InputEventRequest
+    {
+        std::vector<InputEvent> events;
+    };
+
+    struct InputEventResponse
+    {
+        std::uint32_t eventsSent {}; // QMP events emitted, so a pointer move counts as two
+    };
+
     struct DebugAttachRequest
     {
         // Empty payload; the target comes from the binding and the owner is the requesting session.
@@ -2334,6 +2375,12 @@ namespace mpfshost
     [[nodiscard]] std::vector<std::byte> encodeDebugSetRegisterResponse(const DebugSetRegisterResponse& message);
     [[nodiscard]] std::optional<DebugSetRegisterResponse>
     decodeDebugSetRegisterResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>           encodeInputEventRequest(const InputEventRequest& message);
+    [[nodiscard]] std::optional<InputEventRequest> decodeInputEventRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>            encodeInputEventResponse(const InputEventResponse& message);
+    [[nodiscard]] std::optional<InputEventResponse> decodeInputEventResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>             encodeDebugAttachRequest(const DebugAttachRequest& message);
     [[nodiscard]] std::optional<DebugAttachRequest>  decodeDebugAttachRequest(std::span<const std::byte> payload);

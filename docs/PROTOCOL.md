@@ -69,7 +69,7 @@ shorter `bytesDelivered`. Without the flag a short read is a failure, as before.
 
 ## Message types
 
-Requests are `0x0001`–`0x004D`; responses are `0x8001`–`0x8071` plus `ErrorResponse` = `0x8FFF`. Values
+Requests are `0x0001`–`0x004F`; responses are `0x8001`–`0x8074` plus `ErrorResponse` = `0x8FFF`. Values
 `0x8030`–`0x8035` are unused; do not reuse them silently, and always take the next free value at the end of each
 range.
 
@@ -143,6 +143,7 @@ range.
  `DebugBreakpointRequest` | `0x003F` | `DebugBreakpointResponse` `0x8063` | single | `debug-break` |
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
  `DebugSetRegisterRequest` | `0x004E` | `DebugSetRegisterResponse` `0x8073` | single | — |
+ `InputEventRequest` | `0x004F` | `InputEventResponse` `0x8074` | single | `input-key` / `input-text` / `input-mouse` |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
  `DebugAttachRequest` | `0x0042` | `DebugAttachResponse` `0x8066` | single | `debug-attach` |
  `DebugBreakpointArmRequest` | `0x0043` | `DebugBreakpointArmResponse` `0x8067` | single | `debug-arm-break` |
@@ -532,6 +533,32 @@ requesting session must own the debug attachment; otherwise the host answers `In
 register name through `target.xml` (with the x86-64 fallback table), sends a GDB `P` packet with the register's
 advertised width, and returns `DebugSetRegisterResponse`, one `DebugRegisterRecord` read back after the write. A
 name the stub does not expose is `InvalidState`; a rejected write is `Internal`.
+
+## Input injection
+
+`InputEventRequest` carries a `u32` count and that many events. It is the only message that sends keyboard and
+pointer input to the guest. Events are applied through QMP `input-send-event` on the host's existing QMP connection,
+so the guest may be running, no GDB stub is involved, and input still works while a watch or breakpoint holds the
+debug operation lock.
+
+| Kind | Payload after the `u8` kind | Meaning |
+|------|-----------------------------|---------|
+| `Key` (`0`) | `u8 down`, `string key` | One QEMU qcode transition. `key` is 1–32 characters from `[a-z0-9_]`. |
+| `PointerMove` (`1`) | `u8 absolute`, `i32 x`, `i32 y` | Pointer movement. Absolute coordinates are `0..32767`; relative values are signed deltas. |
+| `PointerButton` (`2`) | `u8 down`, `u8 button` | `left` (`0`), `middle` (`1`) or `right` (`2`). |
+
+A request may carry up to `kMaxInputEvents` (`4096`) events. A pointer move expands to two QMP events (one per
+axis); `InputEventResponse.eventsSent` counts the QMP events, so a move counts as two. An empty batch is accepted and
+answers zero without touching QMP.
+
+The client resolves user-facing key names (for example `enter` → `ret`, `escape` → `esc`, `space` → `spc`) and
+expands text into key events for a US layout, including `shift` transitions for uppercase and shifted symbols.
+Only printable ASCII text is accepted; non-ASCII input is rejected instead of guessed. The wire carries qcodes, not
+text, so a malformed name is answered with `MalformedPayload`.
+
+Absolute movement needs an absolute pointer device such as `virtio-tablet-pci`. A relative-only device such as
+`virtio-mouse-pci` needs relative deltas. QEMU's `input-send-event` has no wheel axis, so wheel input is not exposed.
+A QEMU that does not advertise `input-send-event` is reported as `CapabilityUnavailable`, never as a silent no-op.
 
 ## Physical memory variants
 

@@ -2019,3 +2019,50 @@ TEST_CASE("client session scatters on its bound connection", "[ipc][client][sess
     REQUIRE(backend.scatterState()->creates == 1);
     REQUIRE(backend.acquireCount() == 1);
 }
+
+TEST_CASE("client sends an input event batch to the bound target", "[ipc][client][input]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-input", 111, fixture.root() / "vm-input.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    RunningServer                  server {fixture.socketPath(), targets, backend};
+
+    std::vector<mpfshost::InputEvent> events;
+    mpfshost::InputEvent              key;
+    key.kind = mpfshost::InputEventKind::Key;
+    key.key  = "ret";
+    key.down = true;
+    events.push_back(key);
+
+    std::string error;
+    const auto  response = mpfshost::sendInput(fixture.socketPath(), {"vm-input"}, events, error);
+    REQUIRE(response.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(response->eventsSent == 1);
+
+    const auto state = backend.debugState();
+    REQUIRE(state->inputCalls == 1);
+    REQUIRE(state->lastInputRequest.has_value());
+    REQUIRE(state->lastInputRequest->events.size() == 1);
+    REQUIRE(state->lastInputRequest->events[0].key == "ret");
+}
+
+TEST_CASE("input failures reach the client as errors", "[ipc][client][input]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-input", 111, fixture.root() / "vm-input.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.debugState()->inputFailure     = "the input channel is unavailable";
+    backend.debugState()->inputUnavailable = true;
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    std::string error;
+    REQUIRE_FALSE(mpfshost::sendInput(fixture.socketPath(), {"vm-input"}, {}, error).has_value());
+    REQUIRE_FALSE(error.empty());
+}

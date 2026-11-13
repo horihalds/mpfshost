@@ -322,6 +322,7 @@ namespace mpfshost
 
         [[nodiscard]] Result<DebugStatus>                      debugState();
         [[nodiscard]] Result<DebugStatus>                      debugControl(DebugControlAction action);
+        [[nodiscard]] Result<InputEventResponse>               sendInput(std::vector<InputEvent> events);
         [[nodiscard]] Result<std::vector<DebugRegisterRecord>> debugRegisters(std::uint32_t vcpu = kDebugAllVcpus);
         [[nodiscard]] Result<std::vector<DebugThreadRecord>>   debugThreads();
         [[nodiscard]] Result<DisassembleResponse>

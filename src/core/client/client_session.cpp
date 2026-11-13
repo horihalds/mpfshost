@@ -77,6 +77,7 @@ namespace mpfshost
         using ::mpfshost::resolveAddress;
         using ::mpfshost::scatterRead;
         using ::mpfshost::searchMemory;
+        using ::mpfshost::sendInput;
         using ::mpfshost::setConfig;
         using ::mpfshost::translateGpa;
         using ::mpfshost::virt2Phys;
@@ -1160,6 +1161,16 @@ namespace mpfshost
                                      {
                                          return legacy::debugControl({}, {targetName()}, action, error);
                                      });
+    }
+
+    Result<InputEventResponse> ClientSession::sendInput(std::vector<InputEvent> events)
+    {
+        return runBound<InputEventResponse>(fd(),
+                                            targetName(),
+                                            [&](std::string& error)
+                                            {
+                                                return legacy::sendInput({}, {targetName()}, events, error);
+                                            });
     }
 
     Result<std::vector<DebugRegisterRecord>> ClientSession::debugRegisters(std::uint32_t vcpu)

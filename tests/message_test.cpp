@@ -2259,3 +2259,77 @@ TEST_CASE("malformed capabilities payloads are rejected", "[ipc][message]")
     trailing.push_back(std::byte {0});
     REQUIRE_FALSE(mpfshost::decodeCapabilitiesResponse(trailing).has_value());
 }
+
+TEST_CASE("input event requests round trip", "[ipc][message][input]")
+{
+    mpfshost::InputEventRequest request;
+
+    mpfshost::InputEvent key;
+    key.kind = mpfshost::InputEventKind::Key;
+    key.key  = "a";
+    key.down = true;
+    request.events.push_back(key);
+
+    mpfshost::InputEvent move;
+    move.kind     = mpfshost::InputEventKind::PointerMove;
+    move.absolute = false;
+    move.x        = -12;
+    move.y        = 34;
+    request.events.push_back(move);
+
+    mpfshost::InputEvent button;
+    button.kind   = mpfshost::InputEventKind::PointerButton;
+    button.button = mpfshost::InputMouseButton::Right;
+    button.down   = false;
+    request.events.push_back(button);
+
+    const auto decoded = mpfshost::decodeInputEventRequest(mpfshost::encodeInputEventRequest(request));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->events.size() == 3);
+    REQUIRE(decoded->events[0].key == "a");
+    REQUIRE(decoded->events[0].down);
+    REQUIRE_FALSE(decoded->events[1].absolute);
+    REQUIRE(decoded->events[1].x == -12);
+    REQUIRE(decoded->events[1].y == 34);
+    REQUIRE(decoded->events[2].button == mpfshost::InputMouseButton::Right);
+    REQUIRE_FALSE(decoded->events[2].down);
+}
+
+TEST_CASE("malformed input event requests are rejected", "[ipc][message][input]")
+{
+    REQUIRE_FALSE(mpfshost::decodeInputEventRequest({}).has_value());
+
+    mpfshost::ByteWriter unknownKind;
+    unknownKind.writeU32(1);
+    unknownKind.writeU8(9);
+    REQUIRE_FALSE(mpfshost::decodeInputEventRequest(unknownKind.bytes()).has_value());
+
+    mpfshost::ByteWriter badKey;
+    badKey.writeU32(1);
+    badKey.writeU8(0);
+    badKey.writeU8(1);
+    badKey.writeString("A B");
+    REQUIRE_FALSE(mpfshost::decodeInputEventRequest(badKey.bytes()).has_value());
+
+    mpfshost::ByteWriter absoluteOutOfRange;
+    absoluteOutOfRange.writeU32(1);
+    absoluteOutOfRange.writeU8(1);
+    absoluteOutOfRange.writeU8(1);
+    absoluteOutOfRange.writeU32(0x8000);
+    absoluteOutOfRange.writeU32(0);
+    REQUIRE_FALSE(mpfshost::decodeInputEventRequest(absoluteOutOfRange.bytes()).has_value());
+
+    auto trailing = mpfshost::encodeInputEventRequest({});
+    trailing.push_back(std::byte {0});
+    REQUIRE_FALSE(mpfshost::decodeInputEventRequest(trailing).has_value());
+}
+
+TEST_CASE("input event responses round trip", "[ipc][message][input]")
+{
+    const auto decoded = mpfshost::decodeInputEventResponse(mpfshost::encodeInputEventResponse({7}));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->eventsSent == 7);
+
+    const std::vector<std::byte> empty;
+    REQUIRE_FALSE(mpfshost::decodeInputEventResponse(empty).has_value());
+}
