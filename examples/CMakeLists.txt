@@ -5,6 +5,7 @@ set(MPFSHOST_EXAMPLES
     scatter_read
     list_vfs
     guest_input
+    special_keys
 )
 
 foreach(example IN LISTS MPFSHOST_EXAMPLES)

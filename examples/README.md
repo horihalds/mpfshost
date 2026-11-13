@@ -12,6 +12,7 @@ of the `mpfshost` group).
 | `scatter_read.cpp` | Reading several process ranges in one batched request. |
 | `list_vfs.cpp` | Listing a directory of the MemProcFS virtual file system. |
 | `guest_input.cpp` | Sending keyboard events by QEMU qcode and an optional relative mouse move and click. |
+| `special_keys.cpp` | Pressing named non-printable keys such as Page Up, Page Down, Home, End, arrows and F-keys. |
 
 Every example opens one client, binds one session, and keeps that connection for all calls.
 
@@ -59,6 +60,9 @@ and `win11` with a target name from `list-targets`.
 ./build/examples/mpfshost_example_list_vfs /run/mpfshost.sock win11 /
 ./build/examples/mpfshost_example_guest_input /run/mpfshost.sock win11
 ./build/examples/mpfshost_example_guest_input /run/mpfshost.sock win11 --click
+./build/examples/mpfshost_example_special_keys /run/mpfshost.sock win11
+./build/examples/mpfshost_example_special_keys /run/mpfshost.sock win11 page-up page-down home end
+./build/examples/mpfshost_example_special_keys /run/mpfshost.sock win11 f5 escape tab
 ```
 
 Each program prints an error to `stderr` and exits non-zero when a request fails.
