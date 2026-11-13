@@ -635,11 +635,11 @@ namespace mpfshost::debug
                     error = "unknown input key '" + event.key + "'";
                     return std::nullopt;
                 }
-                append(R"({"type":"key","down":)");
+                append(R"({"type":"key","data":{"down":)");
                 arguments.append(event.down ? "true" : "false");
                 arguments.append(R"(,"key":{"type":"qcode","data":")");
                 arguments.append(*code);
-                arguments.append(R"("}})");
+                arguments.append(R"("}}})");
                 ++sent;
                 break;
             }
@@ -647,11 +647,11 @@ namespace mpfshost::debug
             {
                 const auto appendAxis = [&](std::string_view axis, std::int32_t value)
                 {
-                    append(event.absolute ? R"({"type":"abs","axis":")" : R"({"type":"rel","axis":")");
+                    append(event.absolute ? R"({"type":"abs","data":{"axis":")" : R"({"type":"rel","data":{"axis":")");
                     arguments.append(axis);
                     arguments.append(R"(","value":)");
                     arguments.append(std::to_string(value));
-                    arguments.push_back('}');
+                    arguments.append("}}");
                     ++sent;
                 };
                 appendAxis("x", event.x);
@@ -659,11 +659,11 @@ namespace mpfshost::debug
                 break;
             }
             case InputEventKind::PointerButton:
-                append(R"({"type":"btn","down":)");
+                append(R"({"type":"btn","data":{"down":)");
                 arguments.append(event.down ? "true" : "false");
                 arguments.append(R"(,"button":")");
                 arguments.append(inputMouseButtonName(event.button));
-                arguments.append(R"("})");
+                arguments.append(R"("}})");
                 ++sent;
                 break;
             }

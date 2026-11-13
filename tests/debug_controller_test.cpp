@@ -3857,9 +3857,9 @@ TEST_CASE("the debug controller translates input events into input-send-event", 
     REQUIRE_FALSE(unavailable);
     REQUIRE(qmp->count("input-send-event") == 1);
     REQUIRE(qmp->count(R"("data":"ret")") == 1);
-    REQUIRE(qmp->count(R"({"axis":"x","type":"abs","value":100})") == 1);
-    REQUIRE(qmp->count(R"({"axis":"y","type":"abs","value":200})") == 1);
-    REQUIRE(qmp->count(R"({"button":"left","down":true,"type":"btn"})") == 1);
+    REQUIRE(qmp->count(R"({"data":{"axis":"x","value":100},"type":"abs"})") == 1);
+    REQUIRE(qmp->count(R"({"data":{"axis":"y","value":200},"type":"abs"})") == 1);
+    REQUIRE(qmp->count(R"({"data":{"button":"left","down":true},"type":"btn"})") == 1);
 }
 
 TEST_CASE("the debug controller reports an unsupported input command as unavailable",
