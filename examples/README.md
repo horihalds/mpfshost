@@ -11,6 +11,7 @@ of the `mpfshost` group).
 | `read_process_memory.cpp` | Reading and hex-dumping process virtual memory. |
 | `scatter_read.cpp` | Reading several process ranges in one batched request. |
 | `list_vfs.cpp` | Listing a directory of the MemProcFS virtual file system. |
+| `guest_input.cpp` | Sending keyboard events by QEMU qcode and an optional relative mouse move and click. |
 
 Every example opens one client, binds one session, and keeps that connection for all calls.
 
@@ -56,6 +57,8 @@ and `win11` with a target name from `list-targets`.
 ./build/examples/mpfshost_example_read_process_memory /run/mpfshost.sock win11 1234 0x7ff6a0000000 64
 ./build/examples/mpfshost_example_scatter_read /run/mpfshost.sock win11 1234 0x7ff6a0000000:16 0x7ff6a0001000:16
 ./build/examples/mpfshost_example_list_vfs /run/mpfshost.sock win11 /
+./build/examples/mpfshost_example_guest_input /run/mpfshost.sock win11
+./build/examples/mpfshost_example_guest_input /run/mpfshost.sock win11 --click
 ```
 
 Each program prints an error to `stderr` and exits non-zero when a request fails.

@@ -114,11 +114,11 @@ events.push_back(key);
 auto sent = session->sendInput(events);
 ```
 
-Key names and text expansion are helpers in `core/util/key_map.hpp`, which is built into the installed archive:
-`inputKeyCode("enter")` resolves aliases to qcodes and `appendTextInput("hello", events, error)` types printable
-ASCII with a US layout. Pointer events use `InputEventKind::PointerMove` with `absolute` and signed `x`/`y`, or
-`InputEventKind::PointerButton` with `left`, `middle` or `right`. Absolute movement needs a tablet-like device;
-relative movement works with `virtio-mouse`.
+Key names are QEMU qcodes (`a`, `ret`, `esc`, `ctrl`, `f5`, …). The CLI and MCP resolve friendly names and expand
+text with an internal key-map helper; the library itself takes qcodes and explicit events. Pointer events use
+`InputEventKind::PointerMove` with `absolute` and signed `x`/`y`, or `InputEventKind::PointerButton` with `left`,
+`middle` or `right`. Absolute movement needs a tablet-like device; relative movement works with `virtio-mouse`.
+See `examples/guest_input.cpp` for a complete keyboard and pointer example.
 
 ## Compatibility
 

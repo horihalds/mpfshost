@@ -4,6 +4,7 @@ set(MPFSHOST_EXAMPLES
     read_process_memory
     scatter_read
     list_vfs
+    guest_input
 )
 
 foreach(example IN LISTS MPFSHOST_EXAMPLES)
