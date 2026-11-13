@@ -610,21 +610,11 @@ namespace mpfshost::debug
             return InputEventResponse {0};
         }
 
-        std::string   arguments = R"({"events":[)";
-        std::uint32_t sent      = 0;
-        bool          first     = true;
+        // QEMU silently drops an event when several arrive in one input-send-event call, so every QMP event is
+        // sent on its own. A pointer move therefore costs two calls, one per axis.
+        std::vector<std::string> qmpEvents;
         for (const auto& event : request.events)
         {
-            auto append = [&](std::string_view item)
-            {
-                if (!first)
-                {
-                    arguments.push_back(',');
-                }
-                first = false;
-                arguments.append(item);
-            };
-
             switch (event.kind)
             {
             case InputEventKind::Key:
@@ -635,58 +625,67 @@ namespace mpfshost::debug
                     error = "unknown input key '" + event.key + "'";
                     return std::nullopt;
                 }
-                append(R"({"type":"key","data":{"down":)");
-                arguments.append(event.down ? "true" : "false");
-                arguments.append(R"(,"key":{"type":"qcode","data":")");
-                arguments.append(*code);
-                arguments.append(R"("}}})");
-                ++sent;
+                std::string item = R"({"type":"key","data":{"down":)";
+                item.append(event.down ? "true" : "false");
+                item.append(R"(,"key":{"type":"qcode","data":")");
+                item.append(*code);
+                item.append(R"("}}})");
+                qmpEvents.push_back(std::move(item));
                 break;
             }
             case InputEventKind::PointerMove:
             {
                 const auto appendAxis = [&](std::string_view axis, std::int32_t value)
                 {
-                    append(event.absolute ? R"({"type":"abs","data":{"axis":")" : R"({"type":"rel","data":{"axis":")");
-                    arguments.append(axis);
-                    arguments.append(R"(","value":)");
-                    arguments.append(std::to_string(value));
-                    arguments.append("}}");
-                    ++sent;
+                    std::string item =
+                        event.absolute ? R"({"type":"abs","data":{"axis":")" : R"({"type":"rel","data":{"axis":")";
+                    item.append(axis);
+                    item.append(R"(","value":)");
+                    item.append(std::to_string(value));
+                    item.append("}}");
+                    qmpEvents.push_back(std::move(item));
                 };
                 appendAxis("x", event.x);
                 appendAxis("y", event.y);
                 break;
             }
             case InputEventKind::PointerButton:
-                append(R"({"type":"btn","data":{"down":)");
-                arguments.append(event.down ? "true" : "false");
-                arguments.append(R"(,"button":")");
-                arguments.append(inputMouseButtonName(event.button));
-                arguments.append(R"("}})");
-                ++sent;
+            {
+                std::string item = R"({"type":"btn","data":{"down":)";
+                item.append(event.down ? "true" : "false");
+                item.append(R"(,"button":")");
+                item.append(inputMouseButtonName(event.button));
+                item.append(R"("}})");
+                qmpEvents.push_back(std::move(item));
                 break;
             }
-        }
-        arguments.append("]}");
-
-        std::string result;
-        if (!qmpCall(
-                [&](QmpClient& client, std::chrono::milliseconds timeout, std::string& callError)
-                {
-                    return client.execute("input-send-event", arguments, result, timeout, callError);
-                },
-                error,
-                unavailable))
-        {
-            if (error.find("CommandNotFound") != std::string::npos)
-            {
-                unavailable = true;
-                error       = "QEMU does not support input-send-event";
             }
-            return std::nullopt;
         }
-        return InputEventResponse {sent};
+
+        for (const auto& qmpEvent : qmpEvents)
+        {
+            std::string arguments = R"({"events":[)";
+            arguments.append(qmpEvent);
+            arguments.append("]}");
+
+            std::string result;
+            if (!qmpCall(
+                    [&](QmpClient& client, std::chrono::milliseconds timeout, std::string& callError)
+                    {
+                        return client.execute("input-send-event", arguments, result, timeout, callError);
+                    },
+                    error,
+                    unavailable))
+            {
+                if (error.find("CommandNotFound") != std::string::npos)
+                {
+                    unavailable = true;
+                    error       = "QEMU does not support input-send-event";
+                }
+                return std::nullopt;
+            }
+        }
+        return InputEventResponse {static_cast<std::uint32_t>(qmpEvents.size())};
     }
 
     bool DebugController::hasActiveStub(bool& active, std::string& error, bool& unavailable)

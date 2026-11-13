@@ -3855,7 +3855,7 @@ TEST_CASE("the debug controller translates input events into input-send-event", 
     REQUIRE(response.has_value());
     REQUIRE(response->eventsSent == 4);
     REQUIRE_FALSE(unavailable);
-    REQUIRE(qmp->count("input-send-event") == 1);
+    REQUIRE(qmp->count("input-send-event") == 4);
     REQUIRE(qmp->count(R"("data":"ret")") == 1);
     REQUIRE(qmp->count(R"({"data":{"axis":"x","value":100},"type":"abs"})") == 1);
     REQUIRE(qmp->count(R"({"data":{"axis":"y","value":200},"type":"abs"})") == 1);

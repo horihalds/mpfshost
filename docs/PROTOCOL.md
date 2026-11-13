@@ -549,7 +549,8 @@ debug operation lock.
 
 A request may carry up to `kMaxInputEvents` (`4096`) events. A pointer move expands to two QMP events (one per
 axis); `InputEventResponse.eventsSent` counts the QMP events, so a move counts as two. An empty batch is accepted and
-answers zero without touching QMP.
+answers zero without touching QMP. The host issues each QMP event in its own `input-send-event` call, because QEMU
+silently drops events that share one call.
 
 The client resolves user-facing key names (for example `enter` → `ret`, `escape` → `esc`, `space` → `spc`) and
 expands text into key events for a US layout, including `shift` transitions for uppercase and shifted symbols.
