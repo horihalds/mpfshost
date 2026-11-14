@@ -6,6 +6,7 @@ set(MPFSHOST_EXAMPLES
     list_vfs
     guest_input
     special_keys
+    keyboard_state
 )
 
 foreach(example IN LISTS MPFSHOST_EXAMPLES)
