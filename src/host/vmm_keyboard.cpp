@@ -133,23 +133,27 @@ namespace mpfshost
 
         std::optional<ModuleInfo> findDriverModule(VMM_HANDLE handle, std::string_view name)
         {
-            PVMMDLL_MAP_KDRIVER map = nullptr;
-            if (!VMMDLL_Map_GetKDriverU(handle, &map) || map == nullptr)
+            // Kernel drivers are not driver objects in the KDriver map; their images are listed as modules of the
+            // system process, which is pid 4 on every supported Windows.
+            constexpr DWORD kSystemPid = 4;
+
+            PVMMDLL_MAP_MODULE map = nullptr;
+            if (!VMMDLL_Map_GetModuleU(handle, kSystemPid, &map, 0) || map == nullptr)
             {
                 return std::nullopt;
             }
-            const std::unique_ptr<VMMDLL_MAP_KDRIVER, decltype(&VMMDLL_MemFree)> guard {map, &VMMDLL_MemFree};
+            const std::unique_ptr<VMMDLL_MAP_MODULE, decltype(&VMMDLL_MemFree)> guard {map, &VMMDLL_MemFree};
 
             for (DWORD i = 0; i < map->cMap; ++i)
             {
                 const auto& entry = map->pMap[i];
-                if (!equalsIgnoreCase(copyMapText(entry.uszName), name))
+                if (!equalsIgnoreCase(copyMapText(entry.uszText), name))
                 {
                     continue;
                 }
                 ModuleInfo module;
-                module.base = entry.vaDriverStart;
-                module.size = entry.cbDriverSize;
+                module.base = entry.vaBase;
+                module.size = entry.cbImageSize;
                 module.name = std::string {name};
                 return module;
             }
