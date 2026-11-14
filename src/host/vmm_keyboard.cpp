@@ -1,5 +1,6 @@
 #include "host/vmm_keyboard.hpp"
 
+#include "core/log/log.hpp"
 #include "core/server/request_deadline.hpp"
 #include "core/util/keyboard_state.hpp"
 #include "core/util/signature.hpp"
@@ -75,29 +76,18 @@ namespace mpfshost
             return true;
         }
 
-        bool tryRead(VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address, std::span<std::byte> out)
+        bool tryReadMode(
+            VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address, std::span<std::byte> out, bool kernelMemory)
         {
             if (handle == nullptr || address == 0 || out.empty())
             {
                 return false;
             }
             DWORD      bytesRead {};
-            const auto flags = VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOCACHEPUT;
-            if (VMMDLL_MemReadEx(handle,
-                                 pid,
-                                 address,
-                                 reinterpret_cast<PBYTE>(out.data()),
-                                 static_cast<DWORD>(out.size()),
-                                 &bytesRead,
-                                 flags)
-                && bytesRead == out.size())
-            {
-                return true;
-            }
-
-            bytesRead = 0;
+            const auto flags   = VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_NOCACHEPUT;
+            const auto readPid = kernelMemory ? (pid | kKernelMemoryBit) : pid;
             return VMMDLL_MemReadEx(handle,
-                                    pid | kKernelMemoryBit,
+                                    readPid,
                                     address,
                                     reinterpret_cast<PBYTE>(out.data()),
                                     static_cast<DWORD>(out.size()),
@@ -106,10 +96,34 @@ namespace mpfshost
                 && bytesRead == out.size();
         }
 
-        std::optional<std::uint64_t> readPointer(VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address)
+        // Tries the last known-good read mode first. A successful fallback updates the mode for later calls.
+        bool tryReadPreferred(
+            VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address, std::span<std::byte> out, bool& kernelMemory)
+        {
+            if (tryReadMode(handle, pid, address, out, kernelMemory))
+            {
+                return true;
+            }
+            const auto other = !kernelMemory;
+            if (tryReadMode(handle, pid, address, out, other))
+            {
+                kernelMemory = other;
+                return true;
+            }
+            return false;
+        }
+
+        bool tryRead(VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address, std::span<std::byte> out)
+        {
+            bool kernelMemory = false;
+            return tryReadPreferred(handle, pid, address, out, kernelMemory);
+        }
+
+        std::optional<std::uint64_t>
+        readPointer(VMM_HANDLE handle, std::uint32_t pid, std::uint64_t address, bool& kernelMemory)
         {
             std::array<std::byte, sizeof(std::uint64_t)> buffer {};
-            if (!tryRead(handle, pid, address, buffer))
+            if (!tryReadPreferred(handle, pid, address, buffer, kernelMemory))
             {
                 return std::nullopt;
             }
@@ -365,64 +379,55 @@ namespace mpfshost
 
         std::lock_guard lock {_mutex};
 
-        const auto cacheKey = request.sessionId;
-        auto       cached   = _cache.find(cacheKey);
+        auto remember = [&](const Resolution& resolution)
+        {
+            _cache[request.sessionId] = resolution;
+            if (resolution.sessionId != request.sessionId)
+            {
+                _cache[resolution.sessionId] = resolution;
+            }
+        };
+        auto forget = [&](const Resolution& resolution)
+        {
+            _cache.erase(request.sessionId);
+            if (resolution.sessionId != request.sessionId)
+            {
+                _cache.erase(resolution.sessionId);
+            }
+        };
+
+        auto cached = _cache.find(request.sessionId);
         if (cached != _cache.end())
         {
+            auto                  resolution = cached->second;
             KeyboardStateResponse response;
-            response.sessionId       = cached->second.sessionId;
-            response.proxyPid        = cached->second.proxyPid;
-            response.windowsBuild    = cached->second.windowsBuild;
-            response.keyStateAddress = cached->second.keyStateAddress;
-            response.moduleBase      = cached->second.moduleBase;
-            response.keyStateOffset  = cached->second.keyStateOffset;
-            response.moduleName      = cached->second.moduleName;
-            response.state.resize(kKeyboardStateBytes);
-
-            if (tryRead(handle,
-                        response.proxyPid,
-                        response.keyStateAddress,
-                        std::span<std::byte> {response.state.data(), response.state.size()}))
+            log::debug("keyboard", "cache hit for session ", resolution.sessionId);
+            if (validate(handle, resolution) && readState(handle, resolution, response))
             {
-                response.pressedKeys = decodeKeyboardState(response.state);
+                remember(resolution);
                 return response;
             }
-            _cache.erase(cached);
+
+            log::info("keyboard", "cached keyboard state for session ", resolution.sessionId, " is stale");
+            forget(resolution);
         }
 
-        const auto resolution = resolve(handle, request.sessionId, error, unavailable);
+        log::debug("keyboard", "resolving the keyboard state");
+        auto resolution = resolve(handle, request.sessionId, error, unavailable);
         if (!resolution)
         {
             return std::nullopt;
         }
 
         KeyboardStateResponse response;
-        response.sessionId       = resolution->sessionId;
-        response.proxyPid        = resolution->proxyPid;
-        response.windowsBuild    = resolution->windowsBuild;
-        response.keyStateAddress = resolution->keyStateAddress;
-        response.moduleBase      = resolution->moduleBase;
-        response.keyStateOffset  = resolution->keyStateOffset;
-        response.moduleName      = resolution->moduleName;
-        response.state.resize(kKeyboardStateBytes);
-
-        if (!tryRead(handle,
-                     response.proxyPid,
-                     response.keyStateAddress,
-                     std::span<std::byte> {response.state.data(), response.state.size()}))
+        if (!readState(handle, *resolution, response))
         {
             error = "the resolved keyboard state is not readable";
             return std::nullopt;
         }
 
-        response.pressedKeys = decodeKeyboardState(response.state);
-        _cache[cacheKey]     = Resolution {resolution->sessionId,
-                                           resolution->proxyPid,
-                                           resolution->windowsBuild,
-                                           resolution->keyStateAddress,
-                                           resolution->moduleBase,
-                                           resolution->keyStateOffset,
-                                           resolution->moduleName};
+        remember(*resolution);
+        log::debug("keyboard", "resolved the keyboard state for session ", resolution->sessionId);
         return response;
     }
 
@@ -490,7 +495,9 @@ namespace mpfshost
             return std::nullopt;
         }
 
-        const auto slotArray = readPointer(handle, proxy->pid, globalSlots->address);
+        bool kernelMemory = false;
+
+        const auto slotArray = readPointer(handle, proxy->pid, globalSlots->address, kernelMemory);
         if (!slotArray || *slotArray == 0)
         {
             error = "the Win32k session global slots are not readable";
@@ -498,14 +505,14 @@ namespace mpfshost
         }
 
         const auto slotAddress = *slotArray + static_cast<std::uint64_t>(sessionId - 1) * 8;
-        const auto slot        = readPointer(handle, proxy->pid, slotAddress);
+        const auto slot        = readPointer(handle, proxy->pid, slotAddress, kernelMemory);
         if (!slot || *slot == 0)
         {
             error = "the requested keyboard session state is not readable";
             return std::nullopt;
         }
 
-        const auto sessionState = readPointer(handle, proxy->pid, *slot);
+        const auto sessionState = readPointer(handle, proxy->pid, *slot, kernelMemory);
         if (!sessionState || *sessionState == 0)
         {
             error = "the requested keyboard session state is not readable";
@@ -516,11 +523,59 @@ namespace mpfshost
         resolution.sessionId       = sessionId;
         resolution.proxyPid        = proxy->pid;
         resolution.windowsBuild    = build;
+        resolution.triggerAddress  = globalSlots->address;
+        resolution.statePointer    = *sessionState;
         resolution.keyStateAddress = *sessionState + *keyStateOffset;
         resolution.moduleBase      = globalSlots->module.base;
         resolution.keyStateOffset  = *keyStateOffset;
         resolution.moduleName      = globalSlots->module.name;
+        resolution.kernelMemory    = kernelMemory;
         return resolution;
+    }
+
+    bool VmmKeyboardResolver::validate(VMM_HANDLE handle, Resolution& resolution) const
+    {
+        const auto slotArray =
+            readPointer(handle, resolution.proxyPid, resolution.triggerAddress, resolution.kernelMemory);
+        if (!slotArray || *slotArray == 0)
+        {
+            return false;
+        }
+
+        const auto slotAddress = *slotArray + static_cast<std::uint64_t>(resolution.sessionId - 1) * 8;
+        const auto slot        = readPointer(handle, resolution.proxyPid, slotAddress, resolution.kernelMemory);
+        if (!slot || *slot == 0)
+        {
+            return false;
+        }
+
+        const auto state = readPointer(handle, resolution.proxyPid, *slot, resolution.kernelMemory);
+        return state && *state == resolution.statePointer;
+    }
+
+    bool
+    VmmKeyboardResolver::readState(VMM_HANDLE handle, Resolution& resolution, KeyboardStateResponse& response) const
+    {
+        response.sessionId       = resolution.sessionId;
+        response.proxyPid        = resolution.proxyPid;
+        response.windowsBuild    = resolution.windowsBuild;
+        response.keyStateAddress = resolution.keyStateAddress;
+        response.moduleBase      = resolution.moduleBase;
+        response.keyStateOffset  = resolution.keyStateOffset;
+        response.moduleName      = resolution.moduleName;
+        response.state.resize(kKeyboardStateBytes);
+
+        if (!tryReadPreferred(handle,
+                              resolution.proxyPid,
+                              resolution.keyStateAddress,
+                              std::span<std::byte> {response.state.data(), response.state.size()},
+                              resolution.kernelMemory))
+        {
+            return false;
+        }
+
+        response.pressedKeys = decodeKeyboardState(response.state);
+        return true;
     }
 
     std::optional<KeyboardStateResponse>
