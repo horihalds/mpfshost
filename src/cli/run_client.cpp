@@ -9,6 +9,7 @@
 #include "core/util/display.hpp"
 #include "core/util/hex.hpp"
 #include "core/util/key_map.hpp"
+#include "core/util/keyboard_state.hpp"
 #include "core/util/symbol_expression.hpp"
 
 #include <cstdint>
@@ -1802,6 +1803,54 @@ namespace mpfshost::cli
                 return 1;
             }
             std::printf("sent %u events\n", static_cast<unsigned>(response->eventsSent));
+            return 0;
+        }
+
+        if (options.command == "keyboard-state")
+        {
+            const auto response =
+                mpfshost::keyboardState(options.socketPath, {options.target, options.keyboardSession}, error);
+            if (!response)
+            {
+                mpfshost::log::error("client", error);
+                return 1;
+            }
+
+            std::printf("session=%u proxy-pid=%u build=%u module=%s base=0x%016llx offset=0x%llx "
+                        "address=0x%016llx\n",
+                        static_cast<unsigned>(response->sessionId),
+                        static_cast<unsigned>(response->proxyPid),
+                        static_cast<unsigned>(response->windowsBuild),
+                        response->moduleName.c_str(),
+                        static_cast<unsigned long long>(response->moduleBase),
+                        static_cast<unsigned long long>(response->keyStateOffset),
+                        static_cast<unsigned long long>(response->keyStateAddress));
+            if (response->pressedKeys.empty())
+            {
+                std::printf("pressed: (none)\n");
+            }
+            else
+            {
+                std::printf("pressed:");
+                for (const auto virtualKey : response->pressedKeys)
+                {
+                    const auto name = mpfshost::virtualKeyName(virtualKey);
+                    if (name.empty())
+                    {
+                        std::printf(" 0x%02x", static_cast<unsigned>(virtualKey));
+                    }
+                    else
+                    {
+                        std::printf(" %.*s(0x%02x)",
+                                    static_cast<int>(name.size()),
+                                    name.data(),
+                                    static_cast<unsigned>(virtualKey));
+                    }
+                }
+                std::printf("\n");
+            }
+            const auto dump = mpfshost::formatHexDump(response->state, response->keyStateAddress);
+            std::fputs(dump.c_str(), stdout);
             return 0;
         }
 

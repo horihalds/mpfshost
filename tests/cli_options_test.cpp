@@ -88,6 +88,7 @@ namespace
         "input-key",
         "input-text",
         "input-mouse",
+        "keyboard-state",
     };
 
     std::vector<std::string_view> makeArgs(std::string_view command, bool withTarget)
@@ -842,4 +843,24 @@ TEST_CASE("input commands parse their flags", "[cli-options][input]")
     const auto misplaced = parse({"--client", "debug-status", "vm1", "--key", "a"});
     REQUIRE_FALSE(misplaced.options.has_value());
     CHECK(misplaced.error.find("--key") != std::string::npos);
+}
+
+TEST_CASE("keyboard state parses its session", "[cli-options][keyboard]")
+{
+    const auto automatic = parse({"--client", "keyboard-state", "vm1"});
+    REQUIRE(automatic.options.has_value());
+    CHECK(automatic.options->keyboardSession == 0);
+    CHECK_FALSE(automatic.options->keyboardSessionSet);
+
+    const auto explicitSession = parse({"--client", "keyboard-state", "vm1", "--session", "2"});
+    REQUIRE(explicitSession.options.has_value());
+    CHECK(explicitSession.options->keyboardSession == 2);
+    CHECK(explicitSession.options->keyboardSessionSet);
+
+    const auto tooLarge = parse({"--client", "keyboard-state", "vm1", "--session", "65"});
+    REQUIRE_FALSE(tooLarge.options.has_value());
+
+    const auto misplaced = parse({"--client", "input-key", "vm1", "--key", "a", "--session", "1"});
+    REQUIRE_FALSE(misplaced.options.has_value());
+    CHECK(misplaced.error.find("--session") != std::string::npos);
 }

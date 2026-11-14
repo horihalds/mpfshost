@@ -104,6 +104,8 @@ namespace mpfshost
         bool                                inputButtonSet {};
         bool                                inputDown {};
         bool                                inputUp {};
+        std::uint32_t                       keyboardSession {};
+        bool                                keyboardSessionSet {};
     };
 
     // `args` is the ordered subsequence of the command line that the server-flag loop did not consume,

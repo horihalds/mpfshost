@@ -150,6 +150,7 @@ namespace mpfshost
         DebugBacktraceRequest        = 0x004D,
         DebugSetRegisterRequest      = 0x004E,
         InputEventRequest            = 0x004F,
+        KeyboardStateRequest         = 0x0050,
         ListTargetsResponse          = 0x8001,
         BindResponse                 = 0x8002,
         ProcessListResponse          = 0x8003,
@@ -260,6 +261,7 @@ namespace mpfshost
         DebugWatchHeartbeat          = 0x8072,
         DebugSetRegisterResponse     = 0x8073,
         InputEventResponse           = 0x8074,
+        KeyboardStateResponse        = 0x8075,
         ErrorResponse                = 0x8FFF,
     };
 

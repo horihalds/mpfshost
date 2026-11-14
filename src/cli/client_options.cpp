@@ -85,7 +85,7 @@ namespace mpfshost
                 || command == "debug-remove-watch" || command == "debug-breakpoints" || command == "debug-watchpoints"
                 || command == "debug-wait" || command == "debug-resume" || command == "debug-threads"
                 || command == "disassemble" || command == "debug-backtrace" || command == "input-key"
-                || command == "input-text" || command == "input-mouse";
+                || command == "input-text" || command == "input-mouse" || command == "keyboard-state";
         }
 
         // The commands whose MemProcFS call documents dwPID = (DWORD)-1 as the target's physical memory.
@@ -209,6 +209,16 @@ namespace mpfshost
             if ((command == "input-key" || command == "input-mouse") && options.inputDown && options.inputUp)
             {
                 error = "--down and --up cannot be combined";
+                return false;
+            }
+            if (command != "keyboard-state" && options.keyboardSessionSet)
+            {
+                error = "--session is only valid for --client keyboard-state";
+                return false;
+            }
+            if (command == "keyboard-state" && options.keyboardSession > kMaxKeyboardSessions)
+            {
+                error = "--session must be between 0 and " + std::to_string(kMaxKeyboardSessions);
                 return false;
             }
             if (command == "debug-watch" || command == "debug-arm-watch")
@@ -1353,6 +1363,23 @@ namespace mpfshost
             if (argument == "--up")
             {
                 options.inputUp = true;
+                continue;
+            }
+            if (argument == "--session")
+            {
+                if (index + 1 >= args.size())
+                {
+                    error = "--session needs a session id";
+                    return std::nullopt;
+                }
+                const auto parsed = mpfshost::parseDecimalU32(args[++index]);
+                if (!parsed || *parsed > mpfshost::kMaxKeyboardSessions)
+                {
+                    error = "--session needs a value between 0 and " + std::to_string(mpfshost::kMaxKeyboardSessions);
+                    return std::nullopt;
+                }
+                options.keyboardSession    = *parsed;
+                options.keyboardSessionSet = true;
                 continue;
             }
             if (argument == "--client")

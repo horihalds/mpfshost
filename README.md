@@ -239,6 +239,7 @@ to it automatically.
  `--client input-key <vm>` | Press and release one `--key` through QEMU's input core; `--down` or `--up` holds or releases it instead. Key names include `a`, `ret`, `esc`, `ctrl` and `f5`. Destructive. |
  `--client input-text <vm>` | Type printable ASCII `--text` with a US layout, including shift for uppercase and shifted symbols. Destructive. |
  `--client input-mouse <vm>` | Move the pointer with `--x`/`--y` (absolute 0–32767, or signed deltas with `--relative`) or press `--button left\|middle\|right`; no `--down`/`--up` clicks. Absolute movement needs a tablet device. Destructive. |
+ `--client keyboard-state <vm>` | Read the guest's Windows async key-state bitmap; `--session <n>` picks a logon session (0, the default, uses the first proxy process). Prints the pressed virtual keys and the raw state. Needs Windows 11 22H2 or newer. Read-only. |
  `--client debug-attach <vm>` | Start one persistent GDB stub owned by this connection and hold it until Enter or Ctrl-C. Pauses a running guest. Destructive. |
  `--client debug-detach <vm>` | End an attachment or stop an active GDB stub, including one left by an earlier host process, and report the run state. Destructive. |
  `--client read <vm>` / `write <vm>` | Process virtual memory read (hex dump) / write. |

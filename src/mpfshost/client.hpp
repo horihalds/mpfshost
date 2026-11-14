@@ -144,6 +144,19 @@ namespace mpfshost
         std::uint32_t pdbDisplacement {};
     };
 
+    struct KeyboardState
+    {
+        std::uint32_t             sessionId {};
+        std::uint32_t             proxyPid {};
+        std::uint32_t             windowsBuild {};
+        std::uint64_t             keyStateAddress {};
+        std::uint64_t             moduleBase {};
+        std::uint64_t             keyStateOffset {};
+        std::string               moduleName;
+        std::vector<std::byte>    state;
+        std::vector<std::uint8_t> pressedKeys;
+    };
+
     struct DebugWatchOptions
     {
         std::uint32_t    pid {};
@@ -323,6 +336,7 @@ namespace mpfshost
         [[nodiscard]] Result<DebugStatus>                      debugState();
         [[nodiscard]] Result<DebugStatus>                      debugControl(DebugControlAction action);
         [[nodiscard]] Result<InputEventResponse>               sendInput(std::vector<InputEvent> events);
+        [[nodiscard]] Result<KeyboardState>                    keyboardState(std::uint32_t sessionId = 0);
         [[nodiscard]] Result<std::vector<DebugRegisterRecord>> debugRegisters(std::uint32_t vcpu = kDebugAllVcpus);
         [[nodiscard]] Result<std::vector<DebugThreadRecord>>   debugThreads();
         [[nodiscard]] Result<DisassembleResponse>

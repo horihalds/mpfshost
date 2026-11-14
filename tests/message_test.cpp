@@ -2333,3 +2333,69 @@ TEST_CASE("input event responses round trip", "[ipc][message][input]")
     const std::vector<std::byte> empty;
     REQUIRE_FALSE(mpfshost::decodeInputEventResponse(empty).has_value());
 }
+
+TEST_CASE("keyboard state requests round trip", "[ipc][message][keyboard]")
+{
+    const auto decoded = mpfshost::decodeKeyboardStateRequest(mpfshost::encodeKeyboardStateRequest({3}));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->sessionId == 3);
+
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateRequest({}).has_value());
+
+    auto trailing = mpfshost::encodeKeyboardStateRequest({0});
+    trailing.push_back(std::byte {0});
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateRequest(trailing).has_value());
+
+    mpfshost::ByteWriter tooManySessions;
+    tooManySessions.writeU32(mpfshost::kMaxKeyboardSessions + 1);
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateRequest(tooManySessions.bytes()).has_value());
+}
+
+TEST_CASE("keyboard state responses round trip", "[ipc][message][keyboard]")
+{
+    mpfshost::KeyboardStateResponse response;
+    response.sessionId       = 2;
+    response.proxyPid        = 4321;
+    response.windowsBuild    = 26100;
+    response.keyStateAddress = 0xFFFF800012345678;
+    response.moduleBase      = 0xFFFF800001000000;
+    response.keyStateOffset  = 0x3808;
+    response.moduleName      = "win32k.sys";
+    response.state.assign(mpfshost::kKeyboardStateBytes, std::byte {0});
+    response.pressedKeys = {0x10, 0x41};
+
+    const auto decoded = mpfshost::decodeKeyboardStateResponse(mpfshost::encodeKeyboardStateResponse(response));
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->sessionId == 2);
+    REQUIRE(decoded->proxyPid == 4321);
+    REQUIRE(decoded->windowsBuild == 26100);
+    REQUIRE(decoded->keyStateAddress == 0xFFFF800012345678);
+    REQUIRE(decoded->moduleBase == 0xFFFF800001000000);
+    REQUIRE(decoded->keyStateOffset == 0x3808);
+    REQUIRE(decoded->moduleName == "win32k.sys");
+    REQUIRE(decoded->state.size() == mpfshost::kKeyboardStateBytes);
+    REQUIRE(decoded->pressedKeys == response.pressedKeys);
+}
+
+TEST_CASE("malformed keyboard state responses are rejected", "[ipc][message][keyboard]")
+{
+    const std::vector<std::byte> empty;
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateResponse(empty).has_value());
+
+    mpfshost::KeyboardStateResponse response;
+    response.sessionId       = 1;
+    response.proxyPid        = 4;
+    response.windowsBuild    = 26100;
+    response.keyStateAddress = 0x1000;
+    response.moduleBase      = 0x2000;
+    response.keyStateOffset  = 0x3808;
+    response.moduleName      = "win32k.sys";
+    response.state.assign(mpfshost::kKeyboardStateBytes - 1, std::byte {0});
+
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateResponse(mpfshost::encodeKeyboardStateResponse(response)).has_value());
+
+    response.state.assign(mpfshost::kKeyboardStateBytes, std::byte {0});
+    auto trailing = mpfshost::encodeKeyboardStateResponse(response);
+    trailing.push_back(std::byte {0});
+    REQUIRE_FALSE(mpfshost::decodeKeyboardStateResponse(trailing).has_value());
+}

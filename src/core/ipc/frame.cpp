@@ -492,6 +492,8 @@ namespace mpfshost
             return "DebugSetRegisterRequest";
         case MessageType::InputEventRequest:
             return "InputEventRequest";
+        case MessageType::KeyboardStateRequest:
+            return "KeyboardStateRequest";
         case MessageType::DebugWatchData:
             return "DebugWatchData";
         case MessageType::DebugWatchEnd:
@@ -672,6 +674,8 @@ namespace mpfshost
             return "DebugSetRegisterResponse";
         case MessageType::InputEventResponse:
             return "InputEventResponse";
+        case MessageType::KeyboardStateResponse:
+            return "KeyboardStateResponse";
         case MessageType::DebugWatchHeartbeat:
             return "DebugWatchHeartbeat";
         case MessageType::ProcessInfoResponse:

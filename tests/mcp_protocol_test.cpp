@@ -284,6 +284,7 @@ TEST_CASE("MCP tool catalogue covers every client capability", "[mcp][tools]")
         "debug_backtrace",
         "debug_list_breaks",
         "debug_list_watches",
+        "keyboard_state",
     };
     const std::vector<std::string> writeCapabilities = {
         "config_set",         "write_memory",    "write_vfs",          "write_physical_memory",

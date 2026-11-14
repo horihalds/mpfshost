@@ -62,6 +62,7 @@ add_library(mpfshost_ipc STATIC
     src/core/ipc/message_debug.cpp
     src/core/ipc/message_disasm.cpp
     src/core/ipc/message_input.cpp
+    src/core/ipc/message_keyboard.cpp
 )
 mpfshost_set_common_flags(mpfshost_ipc)
 mpfshost_set_client_include(mpfshost_ipc)
@@ -79,6 +80,8 @@ add_library(mpfshost_util STATIC
     src/core/util/number.cpp
     src/core/util/identity.cpp
     src/core/util/key_map.cpp
+    src/core/util/keyboard_state.cpp
+    src/core/util/signature.cpp
     src/core/util/page_range.cpp
     src/core/util/symbol_expression.cpp
     src/core/util/text.cpp
@@ -98,6 +101,7 @@ add_library(mpfshost_client STATIC
     src/core/client/client_debug.cpp
     src/core/client/client_disasm.cpp
     src/core/client/client_input.cpp
+    src/core/client/client_keyboard.cpp
     src/core/client/client_system.cpp
     src/core/client/client_transport.cpp
     src/core/client/client_vfs.cpp
@@ -126,6 +130,7 @@ add_library(mpfshost_server STATIC
     src/core/server/session_debug.cpp
     src/core/server/session_disasm.cpp
     src/core/server/session_input.cpp
+    src/core/server/session_keyboard.cpp
     src/core/server/access_policy.cpp
     src/core/server/handle_cache.cpp
     src/core/server/memory_provider.cpp
@@ -192,6 +197,7 @@ add_library(mpfshost_host STATIC
     src/host/vmm_debug.cpp
     src/host/vmm_disasm.cpp
     src/host/vmm_input.cpp
+    src/host/vmm_keyboard.cpp
     src/host/vmm_vm.cpp
 )
 mpfshost_set_common_flags(mpfshost_host)

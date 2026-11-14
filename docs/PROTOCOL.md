@@ -144,6 +144,7 @@ range.
  `DebugStepRequest` | `0x0040` | `DebugStepResponse` `0x8064` | single | `debug-step` |
  `DebugSetRegisterRequest` | `0x004E` | `DebugSetRegisterResponse` `0x8073` | single | — |
  `InputEventRequest` | `0x004F` | `InputEventResponse` `0x8074` | single | `input-key` / `input-text` / `input-mouse` |
+ `KeyboardStateRequest` | `0x0050` | `KeyboardStateResponse` `0x8075` | single | `keyboard-state` |
  `DebugDetachRequest` | `0x0041` | `DebugDetachResponse` `0x8065` | single | `debug-detach` |
  `DebugAttachRequest` | `0x0042` | `DebugAttachResponse` `0x8066` | single | `debug-attach` |
  `DebugBreakpointArmRequest` | `0x0043` | `DebugBreakpointArmResponse` `0x8067` | single | `debug-arm-break` |
@@ -557,6 +558,22 @@ The client resolves user-facing key names (for example `enter` → `ret`, `escap
 expands text into key events for a US layout, including `shift` transitions for uppercase and shifted symbols.
 Only printable ASCII text is accepted; non-ASCII input is rejected instead of guessed. The wire carries qcodes, not
 text, so a malformed name is answered with `MalformedPayload`.
+
+## Keyboard state
+
+`KeyboardStateRequest` carries a `u32` session id; `0` selects the session of the first available proxy process
+(`winlogon.exe`, `explorer.exe`, `dwm.exe`, `taskhostw.exe` or `smartscreen.exe`). Values above
+`kMaxKeyboardSessions` (`64`) are rejected as `MalformedPayload`.
+
+`KeyboardStateResponse` reports the resolved session, the proxy pid, the Windows build, the module that owns
+`gSessionGlobalSlots` and its base, the key-state offset inside the session state, the absolute key-state address,
+the raw 64-byte bitmap and the virtual-key codes whose down bit is set. The bitmap packs two bits per key:
+`state[vk / 4] & (1 << ((vk % 4) * 2))` is the down bit for virtual key `vk`.
+
+Resolution reads `win32kbase.sys` and either `win32ksgd.sys` (Windows 11 22H2/23H2) or `win32k.sys` (24H2 and
+later) from guest memory and scans for the `gSessionGlobalSlots` load and the `_GetAsyncKeyState` key-state offset.
+It needs Windows 11 build 22621 or newer; an older or non-Windows target is `CapabilityUnavailable`. The request
+never writes guest state and never uses QEMU or a debugger stub.
 
 Absolute movement needs an absolute pointer device such as `virtio-tablet-pci`. A relative-only device such as
 `virtio-mouse-pci` needs relative deltas. QEMU's `input-send-event` has no wheel axis, so wheel input is not exposed.

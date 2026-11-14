@@ -76,6 +76,16 @@ namespace mpfshost
                                                               const std::vector<InputEvent>& events,
                                                               std::string&                   error);
 
+    struct KeyboardStateQuery
+    {
+        std::string   targetName;
+        std::uint32_t sessionId {}; // 0 selects the session of the first available proxy process
+    };
+
+    // Reads the guest's Windows async key-state bitmap without changing anything.
+    [[nodiscard]] std::optional<KeyboardStateResponse>
+    keyboardState(const std::filesystem::path& socketPath, const KeyboardStateQuery& query, std::string& error);
+
     struct DebugRegistersQuery
     {
         std::string   targetName;

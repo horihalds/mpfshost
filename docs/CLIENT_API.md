@@ -120,6 +120,26 @@ text with an internal key-map helper; the library itself takes qcodes and explic
 `middle` or `right`. Absolute movement needs a tablet-like device; relative movement works with `virtio-mouse`.
 See `examples/guest_input.cpp` for a complete keyboard and pointer example.
 
+## Guest keyboard state
+
+`ClientSession::keyboardState` reads the Windows async key-state bitmap from guest memory. It needs Windows 11
+22H2 or newer, works while the guest runs and does not touch QEMU or a debugger stub:
+
+```cpp
+auto state = session->keyboardState(); // 0 selects the first proxy session
+if (state)
+{
+    for (const auto key : state->pressedKeys)
+    {
+        // key is a Windows virtual-key code, for example 0x10 for shift.
+    }
+}
+```
+
+`KeyboardState::state` is the raw 64-byte bitmap, `pressedKeys` is decoded from it, and `moduleName`,
+`moduleBase`, `keyStateOffset` and `keyStateAddress` describe the resolved `gafAsyncKeyState` location. Pass a
+non-zero session id to read a specific logon session.
+
 ## Compatibility
 
 There is no stable client API or ABI. The host and the library are built and deployed together. Public headers,

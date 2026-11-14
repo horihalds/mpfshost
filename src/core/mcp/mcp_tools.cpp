@@ -5,6 +5,7 @@
 #include "core/ipc/frame.hpp"
 #include "core/util/hex.hpp"
 #include "core/util/key_map.hpp"
+#include "core/util/keyboard_state.hpp"
 #include "core/util/number.hpp"
 #include "core/util/symbol_expression.hpp"
 
@@ -1110,6 +1111,11 @@ namespace mpfshost::mcp
                  {"button", "string", "left, middle or right; without down or up the button is clicked", false},
                  {"down", "boolean", "Press without releasing", false},
                  {"up", "boolean", "Release without pressing", false}}                                                       },
+                {      "keyboard_state",
+                 "Read keyboard state",                           "Read the guest's Windows async key-state bitmap and the pressed virtual keys. "
+                                     "Needs Windows 11 22H2 or newer. Read-only.", true,
+                 {target,
+                 {"session", "integer", "Logon session id (default 0: the first proxy session)", false}}                    },
                 {         "write_memory",
                  "Write process memory",                           "Write bytes into process virtual memory. Destructive: modifies the guest.",
                  false,                          {target,
@@ -3181,6 +3187,46 @@ namespace mpfshost::mcp
                 }
                 return success(Json {
                     {"events_sent", response->eventsSent}
+                });
+            }
+
+            if (name == "keyboard_state")
+            {
+                const auto response = keyboardState(
+                    socket,
+                    {requireString(args, "target"),
+                     u32Value(args, "session", false, 0, kMaxKeyboardSessions)},
+                    error);
+                if (!response)
+                {
+                    return failure(error);
+                }
+
+                Json pressed = Json::array();
+                for (const auto virtualKey : response->pressedKeys)
+                {
+                    const auto keyName = virtualKeyName(virtualKey);
+                    pressed.push_back(Json {
+                        { "code", virtualKey },
+                        { "name", std::string {keyName} },
+                    });
+                }
+                Json state = Json::array();
+                for (const auto value : response->state)
+                {
+                    state.push_back(std::to_integer<std::uint8_t>(value));
+                }
+
+                return success(Json {
+                    {        "session_id",        response->sessionId},
+                    {         "proxy_pid",          response->proxyPid},
+                    {     "windows_build",        response->windowsBuild},
+                    {            "module",          response->moduleName},
+                    {        "module_base",     hexString(response->moduleBase)},
+                    {   "key_state_offset",      hexSmall(response->keyStateOffset)},
+                    {  "key_state_address",   hexString(response->keyStateAddress)},
+                    {           "pressed",                  pressed},
+                    {             "state",                    state}
                 });
             }
 

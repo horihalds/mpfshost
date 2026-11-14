@@ -2066,3 +2066,65 @@ TEST_CASE("input failures reach the client as errors", "[ipc][client][input]")
     REQUIRE_FALSE(mpfshost::sendInput(fixture.socketPath(), {"vm-input"}, {}, error).has_value());
     REQUIRE_FALSE(error.empty());
 }
+
+TEST_CASE("client reads the guest keyboard state", "[ipc][client][keyboard]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-keyboard", 111, fixture.root() / "vm-keyboard.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+
+    mpfshost::KeyboardStateResponse canned;
+    canned.sessionId       = 2;
+    canned.proxyPid        = 4321;
+    canned.windowsBuild    = 26100;
+    canned.keyStateAddress = 0xFFFF800012345678;
+    canned.moduleBase      = 0xFFFF800001000000;
+    canned.keyStateOffset  = 0x3808;
+    canned.moduleName      = "win32k.sys";
+    canned.state.assign(mpfshost::kKeyboardStateBytes, std::byte {0});
+    canned.pressedKeys                = {0x10, 0x41};
+    backend.keyboardState()->response = canned;
+
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-keyboard");
+    REQUIRE(session.has_value());
+
+    const auto state = session->keyboardState(2);
+    REQUIRE(state.has_value());
+    REQUIRE(state->sessionId == 2);
+    REQUIRE(state->proxyPid == 4321);
+    REQUIRE(state->windowsBuild == 26100);
+    REQUIRE(state->keyStateAddress == 0xFFFF800012345678);
+    REQUIRE(state->moduleName == "win32k.sys");
+    REQUIRE(state->pressedKeys == canned.pressedKeys);
+
+    REQUIRE(backend.keyboardState()->calls == 1);
+    REQUIRE(backend.keyboardState()->lastRequest.has_value());
+    REQUIRE(backend.keyboardState()->lastRequest->sessionId == 2);
+}
+
+TEST_CASE("keyboard state failures reach the client as errors", "[ipc][client][keyboard]")
+{
+    EndToEndFixture                     fixture;
+    mpfshost::testing::FakeTargetSource targets;
+    targets.setTargets({
+        {"vm-keyboard", 111, fixture.root() / "vm-keyboard.sock"}
+    });
+    mpfshost::testing::FakeBackend backend;
+    backend.keyboardState()->failure     = "the target is not a Windows system";
+    backend.keyboardState()->unavailable = true;
+    RunningServer server {fixture.socketPath(), targets, backend};
+
+    mpfshost::Client client {fixture.socketPath()};
+    auto             session = client.bind("vm-keyboard");
+    REQUIRE(session.has_value());
+
+    const auto state = session->keyboardState();
+    REQUIRE_FALSE(state.has_value());
+    REQUIRE(state.error().code == mpfshost::ErrorCode::CapabilityUnavailable);
+}

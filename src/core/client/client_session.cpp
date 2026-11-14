@@ -31,6 +31,7 @@ namespace mpfshost
         using ::mpfshost::debugWait;
         using ::mpfshost::debugWatch;
         using ::mpfshost::disassemble;
+        using ::mpfshost::keyboardState;
         using ::mpfshost::listAllProcesses;
         using ::mpfshost::listExports;
         using ::mpfshost::listHandles;
@@ -1171,6 +1172,32 @@ namespace mpfshost
                                             {
                                                 return legacy::sendInput({}, {targetName()}, events, error);
                                             });
+    }
+
+    Result<KeyboardState> ClientSession::keyboardState(std::uint32_t sessionId)
+    {
+        return runBound<KeyboardState>(fd(),
+                                       targetName(),
+                                       [&](std::string& error)
+                                       {
+                                           const auto response =
+                                               legacy::keyboardState({}, {targetName(), sessionId}, error);
+                                           if (!response)
+                                           {
+                                               return std::optional<KeyboardState> {};
+                                           }
+                                           KeyboardState state;
+                                           state.sessionId       = response->sessionId;
+                                           state.proxyPid        = response->proxyPid;
+                                           state.windowsBuild    = response->windowsBuild;
+                                           state.keyStateAddress = response->keyStateAddress;
+                                           state.moduleBase      = response->moduleBase;
+                                           state.keyStateOffset  = response->keyStateOffset;
+                                           state.moduleName      = response->moduleName;
+                                           state.state           = response->state;
+                                           state.pressedKeys     = response->pressedKeys;
+                                           return std::optional<KeyboardState> {std::move(state)};
+                                       });
     }
 
     Result<std::vector<DebugRegisterRecord>> ClientSession::debugRegisters(std::uint32_t vcpu)

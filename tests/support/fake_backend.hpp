@@ -13,6 +13,7 @@
 #include "core/server/kernel_device_provider.hpp"
 #include "core/server/kernel_driver_provider.hpp"
 #include "core/server/kernel_object_provider.hpp"
+#include "core/server/keyboard_provider.hpp"
 #include "core/server/memory_map_provider.hpp"
 #include "core/server/memory_provider.hpp"
 #include "core/server/memory_search_provider.hpp"
@@ -421,6 +422,15 @@ namespace mpfshost::testing
         std::uint32_t                     calls {};
     };
 
+    struct FakeKeyboardState
+    {
+        KeyboardStateResponse               response;
+        std::string                         failure;
+        bool                                unavailable {};
+        std::uint32_t                       calls {};
+        std::optional<KeyboardStateRequest> lastRequest;
+    };
+
     struct FakeDebugState
     {
         DebugStatus                       status;
@@ -691,6 +701,7 @@ namespace mpfshost::testing
                        public ConfigProvider,
                        public DebugProvider,
                        public InputProvider,
+                       public KeyboardProvider,
                        public DisasmProvider
     {
     public:
@@ -727,6 +738,7 @@ namespace mpfshost::testing
                    std::shared_ptr<FakePfnState>            pfnState,
                    std::shared_ptr<FakeConfigState>         configState,
                    std::shared_ptr<FakeDebugState>          debugState,
+                   std::shared_ptr<FakeKeyboardState>       keyboardState,
                    std::shared_ptr<FakeDisasmState>         disasmState)
             : _name {std::move(name)}, _processState {std::move(processState)},
               _processInfoState {std::move(processInfoState)}, _moduleLookupState {std::move(moduleLookupState)},
@@ -744,7 +756,7 @@ namespace mpfshost::testing
               _kernelDeviceState {std::move(kernelDeviceState)}, _kernelObjectState {std::move(kernelObjectState)},
               _pteState {std::move(pteState)}, _poolState {std::move(poolState)}, _pfnState {std::move(pfnState)},
               _configState {std::move(configState)}, _debugState {std::move(debugState)},
-              _disasmState {std::move(disasmState)}
+              _keyboardState {std::move(keyboardState)}, _disasmState {std::move(disasmState)}
         {
         }
 
@@ -1720,6 +1732,20 @@ namespace mpfshost::testing
             return true;
         }
 
+        [[nodiscard]] std::optional<KeyboardStateResponse>
+        keyboardState(const KeyboardStateRequest& request, std::string& error, bool& unavailable) override
+        {
+            ++_keyboardState->calls;
+            _keyboardState->lastRequest = request;
+            if (!_keyboardState->failure.empty())
+            {
+                unavailable = _keyboardState->unavailable;
+                error       = _keyboardState->failure;
+                return std::nullopt;
+            }
+            return _keyboardState->response;
+        }
+
         [[nodiscard]] std::optional<InputEventResponse>
         input(const InputEventRequest& request, std::string& error, bool& unavailable) override
         {
@@ -2191,6 +2217,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePfnState>            _pfnState;
         std::shared_ptr<FakeConfigState>         _configState;
         std::shared_ptr<FakeDebugState>          _debugState;
+        std::shared_ptr<FakeKeyboardState>       _keyboardState;
         std::shared_ptr<FakeDisasmState>         _disasmState;
     };
 
@@ -2685,6 +2712,11 @@ namespace mpfshost::testing
             return _debugState;
         }
 
+        [[nodiscard]] std::shared_ptr<FakeKeyboardState> keyboardState() const
+        {
+            return _keyboardState;
+        }
+
         void setDebugRegisters(std::vector<DebugRegisterRecord> records)
         {
             _debugState->registers = std::move(records);
@@ -2909,6 +2941,7 @@ namespace mpfshost::testing
                                                       _pfnState,
                                                       _configState,
                                                       _debugState,
+                                                      _keyboardState,
                                                       _disasmState);
             }
             _handles.push_back(handle);
@@ -2973,6 +3006,7 @@ namespace mpfshost::testing
         std::shared_ptr<FakePfnState>            _pfnState {std::make_shared<FakePfnState>()};
         std::shared_ptr<FakeConfigState>         _configState {std::make_shared<FakeConfigState>()};
         std::shared_ptr<FakeDebugState>          _debugState {std::make_shared<FakeDebugState>()};
+        std::shared_ptr<FakeKeyboardState>       _keyboardState {std::make_shared<FakeKeyboardState>()};
         std::shared_ptr<FakeDisasmState>         _disasmState {std::make_shared<FakeDisasmState>()};
     };
 

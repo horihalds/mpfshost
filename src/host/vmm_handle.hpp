@@ -14,6 +14,7 @@
 #include "core/server/kernel_device_provider.hpp"
 #include "core/server/kernel_driver_provider.hpp"
 #include "core/server/kernel_object_provider.hpp"
+#include "core/server/keyboard_provider.hpp"
 #include "core/server/memory_map_provider.hpp"
 #include "core/server/memory_provider.hpp"
 #include "core/server/memory_search_provider.hpp"
@@ -38,6 +39,7 @@
 #include "core/server/vfs_provider.hpp"
 #include "core/server/virtual_query_provider.hpp"
 #include "core/server/vm_provider.hpp"
+#include "host/vmm_keyboard.hpp"
 #include "host/vmm_lookup_cache.hpp"
 
 #include <cstdint>
@@ -88,6 +90,7 @@ namespace mpfshost
                       public ConfigProvider,
                       public DebugProvider,
                       public InputProvider,
+                      public KeyboardProvider,
                       public DisasmProvider,
                       public debug::DebugInspector
     {
@@ -268,6 +271,9 @@ namespace mpfshost
         debugControl(DebugControlAction action, bool& busy, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<InputEventResponse>
         input(const InputEventRequest& request, std::string& error, bool& unavailable) override;
+
+        [[nodiscard]] std::optional<KeyboardStateResponse>
+        keyboardState(const KeyboardStateRequest& request, std::string& error, bool& unavailable) override;
         [[nodiscard]] std::optional<std::vector<DebugRegisterRecord>>
                                                                     debugRegisters(const DebugRegistersRequest& request,
                                                                                    bool&                        invalidState,
@@ -381,6 +387,7 @@ namespace mpfshost
         std::string            _targetName;
         LookupCache            _lookupCache;
         debug::DebugController _debug;
+        VmmKeyboardResolver    _keyboard;
     };
 } // namespace mpfshost
 

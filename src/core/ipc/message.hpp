@@ -960,6 +960,30 @@ namespace mpfshost
         std::uint32_t eventsSent {}; // QMP events emitted, so a pointer move counts as two
     };
 
+    // The Windows async key-state bitmap is 256 keys packed into two bits each. Reading it never changes the
+    // guest; the raw bitmap keeps the latch bit that GetAsyncKeyState clears untouched.
+    inline constexpr std::size_t   kKeyboardStateBytes      = 64;
+    inline constexpr std::size_t   kKeyboardVirtualKeyCount = 256;
+    inline constexpr std::uint32_t kMaxKeyboardSessions     = 64;
+
+    struct KeyboardStateRequest
+    {
+        std::uint32_t sessionId {}; // 0 selects the session of the first available proxy process
+    };
+
+    struct KeyboardStateResponse
+    {
+        std::uint32_t             sessionId {};       // the session whose state was read
+        std::uint32_t             proxyPid {};        // process used to read the session state
+        std::uint32_t             windowsBuild {};    // VMMDLL_OPT_WIN_VERSION_BUILD
+        std::uint64_t             keyStateAddress {}; // absolute address of the bitmap
+        std::uint64_t             moduleBase {};      // base of the module that owns the session global
+        std::uint64_t             keyStateOffset {};  // offset into the session state structure
+        std::string               moduleName;         // win32ksgd.sys or win32k.sys
+        std::vector<std::byte>    state;              // exactly kKeyboardStateBytes bytes
+        std::vector<std::uint8_t> pressedKeys;        // virtual-key codes whose down bit is set
+    };
+
     struct DebugAttachRequest
     {
         // Empty payload; the target comes from the binding and the owner is the requesting session.
@@ -2381,6 +2405,12 @@ namespace mpfshost
 
     [[nodiscard]] std::vector<std::byte>            encodeInputEventResponse(const InputEventResponse& message);
     [[nodiscard]] std::optional<InputEventResponse> decodeInputEventResponse(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte>              encodeKeyboardStateRequest(const KeyboardStateRequest& message);
+    [[nodiscard]] std::optional<KeyboardStateRequest> decodeKeyboardStateRequest(std::span<const std::byte> payload);
+
+    [[nodiscard]] std::vector<std::byte> encodeKeyboardStateResponse(const KeyboardStateResponse& message);
+    [[nodiscard]] std::optional<KeyboardStateResponse> decodeKeyboardStateResponse(std::span<const std::byte> payload);
 
     [[nodiscard]] std::vector<std::byte>             encodeDebugAttachRequest(const DebugAttachRequest& message);
     [[nodiscard]] std::optional<DebugAttachRequest>  decodeDebugAttachRequest(std::span<const std::byte> payload);
